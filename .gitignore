@@ -1,0 +1,44 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+*.spec
+
+# ===== 虚拟环境 =====
+# 注：pt-exporter/env/ 是源码目录（调试探针脚本），不是虚拟环境，故只忽略 venv
+# 注意：不要写 ENV/ —— Windows 下 git 不区分大小写，会连 env/ 一起忽略
+venv/
+.venv/
+src/**/env/venv/
+src/**/env/Scripts/
+src/**/env/pyvenv.cfg
+
+# ===== 本地配置 / 环境变量 =====
+.env
+*.local.json
+config.local.json
+
+# ===== PyInstaller =====
+# 注：*.spec 由 build.ps1 自动重生成，无需入库
+*build.log
+
+# ===== 编辑器 / 系统 =====
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== 临时 / 备份 =====
+*.tmp
+*.bak
+*.log
+
+# ===== 保留：工具依赖的第三方 exe（jy-draftc）=====
+!src/jianying-draft-toolkit/tools/jy-draftc/jy-draftc-amd64-windows/jy-draftc.exe

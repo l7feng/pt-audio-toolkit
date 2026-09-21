@@ -1,0 +1,608 @@
+#!/usr/bin/env python3
+"""
+剪映工程工具包 — 图形界面（三标签页）
+=====================================
+
+一个 exe，三件事，三页配置彼此完全独立：
+
+  ① 导出音频     剪映草稿 → 切片导出（不需要 Pro Tools）
+  ② 导入多轨     .ptx（需 PT 在线）/ 交付包 json（离线）→ 写剪映草稿
+  ③ 生成交付包   json 路径相对化 + 音频随包（只做数据，给剪辑用）
+
+用法：
+  python gui.py          # 源码模式
+  或打包为 exe 后双击运行（导出到同一入口）
+
+与 CLI 共存：GUI 的配置写在 exe 旁（源码模式为包根）的 config.json，
+CLI 参数行为不变。
+"""
+
+import json
+import queue
+import sys
+import tkinter as tk
+from pathlib import Path
+from tkinter import ttk, messagebox
+
+import main as core
+from tabs.export_tab import ExportTab
+from tabs.import_tab import ImportTab
+from tabs.delivery_tab import DeliveryTab
+from tabs.paths_dialog import PathsDialog
+from core.host import StatusProbe
+from core import menus as menu_actions
+
+# 拖拽支持（tkinterdnd2）。未安装时优雅降级为普通选择。
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+    DND_AVAILABLE = True
+except Exception:                                    # pragma: no cover
+    DND_FILES = None
+    TkinterDnD = None
+    DND_AVAILABLE = False
+
+APP_TITLE = f"剪映工程工具包 v{core.APP_VERSION} ({core.app_build_date()})"
+
+
+def make_root() -> tk.Tk:
+    """优先用支持拖拽的根窗口；tkinterdnd2 缺失时降级为普通 Tk。"""
+    if DND_AVAILABLE:
+        try:
+            return TkinterDnD.Tk()  # type: ignore[union-attr]
+        except Exception:
+            pass
+    return tk.Tk()
+
+
+def parse_drop_paths(data: str) -> list:
+    """把 tkinter 拖拽事件里的路径串解析为 Path 列表。
+
+    Windows 下含空格的路径会被 {} 包裹，如：
+      {C:/a b/c.mp4} D:/d.mp4
+    """
+    paths, buf, in_brace = [], "", False
+    for ch in data:
+        if ch == "{":
+            in_brace, buf = True, ""
+        elif ch == "}":
+            in_brace = False
+            if buf:
+                paths.append(buf)
+            buf = ""
+        elif ch == " " and not in_brace:
+            if buf:
+                paths.append(buf)
+                buf = ""
+        else:
+            buf += ch
+    if buf:
+        paths.append(buf)
+    return [Path(p) for p in paths if p]
+
+
+class JianYingToolkitApp:
+    """主窗口：三个标签页 + 共享消息队列 + 拖放转发。"""
+
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title(APP_TITLE)
+        self.root.geometry("900x780")
+        self.root.minsize(820, 680)
+
+        self.msg_queue = queue.Queue()
+        self._tabs = []
+
+        # ⚠️ 顺序有讲究：_probe 必须在 _build_ui 之前建好 ——
+        # 各标签页构造时会调 refresh_states()，而它读的是 self.app._probe 的缓存。
+        self._probe = StatusProbe()
+
+        self._load_cfg()
+        self._build_menu()          # 必须在 _build_ui 之前：菜单挂在 root 上
+        self._build_ui()
+        self._setup_dnd()
+        self.root.after(100, self._poll_queue)
+        self._refresh_status()
+
+    # ───────────── 配置 ─────────────
+
+    def _load_cfg(self):
+        """载入配置：导出页字段走 DEFAULT_CONFIG，导入页字段并入同一份文件。"""
+        path = core.config_path()
+        disk = {}
+        if path.is_file():
+            try:
+                disk = json.loads(path.read_text(encoding="utf-8")) or {}
+            except Exception as e:
+                print(f"[cfg] 读取失败，用默认值: {e}")
+        self.cfg = {**core.DEFAULT_CONFIG,
+                    **core.DEFAULT_IMPORT_CONFIG,
+                    **disk}
+
+    # ───────────── 菜单栏 ─────────────
+
+    def _build_menu(self):
+        """构建菜单栏：文件 / 设置 / 工具 / 帮助。
+
+        动作实现在 ``core/menus.py``（不放 UI 层，便于复用与单测）；
+        本方法只负责「画菜单 + 绑回调」。
+
+        「设置 → 默认路径设置…」是本菜单的核心项 —— 三页路径集中一处设置，
+        省得每次换工作目录都要切页逐个改。
+        """
+        bar = tk.Menu(self.root)
+
+        # ── 文件 ──
+        m_file = tk.Menu(bar, tearoff=0)
+        m_file.add_command(label="保存全部配置", accelerator="Ctrl+S",
+                           command=self.save_all)
+        m_file.add_command(label="重新载入配置（丢弃未保存改动）",
+                           command=self._menu_reload)
+        m_file.add_separator()
+        m_file.add_command(label="打开配置文件所在文件夹",
+                           command=self._menu_open_cfg_dir)
+        m_file.add_command(label="打开配置文件（记事本）",
+                           command=self._menu_open_cfg_file)
+        m_file.add_separator()
+        m_file.add_command(label="退出", accelerator="Alt+F4",
+                           command=self._menu_quit)
+        bar.add_cascade(label="文件", menu=m_file)
+
+        # ── 设置 ──
+        m_set = tk.Menu(bar, tearoff=0)
+        m_set.add_command(label="默认路径设置…",
+                          command=self._menu_paths)
+        m_set.add_separator()
+        m_set.add_command(label="恢复出厂默认（仅路径）",
+                          command=self._menu_restore_paths)
+        bar.add_cascade(label="设置", menu=m_set)
+
+        # ── 工具 ──
+        m_tool = tk.Menu(bar, tearoff=0)
+        m_tool.add_command(label="刷新状态（PT / 剪映）",
+                           command=self._refresh_status)
+        m_tool.add_command(label="环境自检（Python / ffmpeg / 剪映 / jy-draftc）",
+                           command=self._menu_env_check)
+        m_tool.add_separator()
+        m_tool.add_command(label="清理立体声合成缓存",
+                           command=self._menu_clear_cache)
+        m_tool.add_command(label="打开临时目录",
+                           command=self._menu_open_temp)
+        bar.add_cascade(label="工具", menu=m_tool)
+
+        # ── 帮助 ──
+        m_help = tk.Menu(bar, tearoff=0)
+        m_help.add_command(label="使用说明（01-使用说明.txt）",
+                           command=self._menu_manual)
+        m_help.add_command(label="打开程序目录",
+                           command=lambda: self._menu_open_dir(menu_actions.app_dir()))
+        m_help.add_separator()
+        m_help.add_command(label="关于", command=self._menu_about)
+        bar.add_cascade(label="帮助", menu=m_help)
+
+        self.root.configure(menu=bar)
+        self.menubar = bar
+
+        # 快捷键：保存
+        try:
+            self.root.bind_all("<Control-s>", lambda _e: self.save_all())
+        except Exception:
+            pass
+
+    # ───────────── 菜单动作 ─────────────
+
+    def _menu_reload(self):
+        """从磁盘重读配置并刷回三页控件。
+
+        用途：用户按了「打开配置文件」手改 JSON 之后，不必重启程序。
+        """
+        if self._any_running():
+            messagebox.showwarning("有任务在跑", "请等当前任务结束后再重新载入配置。")
+            return
+        if not messagebox.askyesno(
+                "重新载入配置",
+                "将丢弃三页未保存的界面改动，从配置文件重读。继续？"):
+            return
+        try:
+            self.cfg = menu_actions.reload_config()
+            self._apply_cfg_to_tabs()
+            self.log_to_current("\n· 配置已重新载入。\n")
+        except Exception as e:
+            messagebox.showerror("载入失败", f"读取配置失败：{e}")
+
+    def _apply_cfg_to_tabs(self):
+        """把 self.cfg 的值刷回各页控件（各页自己实现 apply_config）。"""
+        for t in self._tabs:
+            fn = getattr(t, "apply_config", None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:
+                    pass
+
+    def _menu_paths(self):
+        """设置 → 默认路径设置…（核心项）"""
+        if self._any_running():
+            messagebox.showwarning("有任务在跑", "请等当前任务结束后再改路径。")
+            return
+        dlg = PathsDialog(self.root)
+        self.root.wait_window(dlg)
+        if getattr(dlg, "saved", False):
+            # 路径写盘了，同步刷新内存与各页显示
+            try:
+                self.cfg = menu_actions.reload_config()
+                self._apply_cfg_to_tabs()
+            except Exception:
+                pass
+            self.log_to_current("\n· 默认路径已更新并写入配置。\n")
+
+    def _menu_restore_paths(self):
+        if self._any_running():
+            messagebox.showwarning("有任务在跑", "请等当前任务结束后再操作。")
+            return
+        if not messagebox.askyesno(
+                "恢复出厂默认",
+                "把 5 个**路径**字段重置为出厂默认（输出目录 → D:/导出音频，其余留空）。\n\n"
+                "命名模板 / 规格 / 开关等参数不受影响。继续？"):
+            return
+        try:
+            changed = menu_actions.restore_default_paths()
+            self.cfg = menu_actions.reload_config()
+            self._apply_cfg_to_tabs()
+            if changed:
+                self.log_to_current("\n· 路径已恢复出厂默认：" +
+                                    "、".join(changed.keys()) + "\n")
+            else:
+                self.log_to_current("\n· 路径本来就是出厂默认，无需改动。\n")
+        except Exception as e:
+            messagebox.showerror("恢复失败", f"操作失败：{e}")
+
+    def _menu_env_check(self):
+        """工具 → 环境自检：切到导出页并触发那边的自检（复用同一实现）。"""
+        try:
+            self.notebook.select(0)
+        except Exception:
+            pass
+        for t in self._tabs:
+            fn = getattr(t, "run_check", None)
+            if callable(fn):
+                fn()
+                return
+
+    def _menu_clear_cache(self):
+        n, size = menu_actions.stereo_cache_info()
+        if n == 0:
+            messagebox.showinfo(
+                "缓存已是空的",
+                f"没有找到立体声合成缓存。\n\n目录：\n{menu_actions.stereo_cache_dir()}")
+            return
+        if not messagebox.askyesno(
+                "清理立体声合成缓存",
+                f"将删除 {n} 个文件（{menu_actions.human_size(size)}）。\n\n"
+                f"位置：{menu_actions.stereo_cache_dir()}\n\n"
+                "说明：这是导入时把 PT 的 L/R 两个单声道合成成对立体声的中间产物，\n"
+                "删掉不影响任何草稿与交付包 —— 下次导入会按需重新生成。\n\n继续？"):
+            return
+        try:
+            dn, dsize = menu_actions.clear_stereo_cache()
+        except Exception as e:
+            messagebox.showerror("清理失败", f"删除失败：{e}")
+            return
+        self.log_to_current(
+            f"\n· 已清理立体声合成缓存：{dn} 个文件，释放 {menu_actions.human_size(dsize)}。\n")
+
+    def _menu_open_temp(self):
+        import tempfile
+        self._menu_open_dir(Path(tempfile.gettempdir()))
+
+    def _menu_open_cfg_dir(self):
+        self._menu_open_dir(menu_actions.config_file().parent)
+
+    def _menu_open_cfg_file(self):
+        import os
+        p = menu_actions.config_file()
+        try:
+            if not p.exists():
+                menu_actions.apply_paths({})       # 没有就先生成一份
+            os.startfile(str(p))                   # type: ignore[attr-defined]
+        except Exception as e:
+            messagebox.showerror("打开失败", f"无法打开配置文件：{e}\n{p}")
+
+    def _menu_manual(self):
+        """帮助 → 使用说明：找 exe 旁 / 程序目录里的说明书。"""
+        cands = [
+            menu_actions.app_dir() / "01-使用说明.txt",
+            menu_actions.app_dir() / "README.md",
+            menu_actions.app_dir().parent / "01-使用说明.txt",
+        ]
+        for p in cands:
+            if p.exists():
+                try:
+                    import os
+                    os.startfile(str(p))           # type: ignore[attr-defined]
+                    return
+                except Exception:
+                    break
+        messagebox.showinfo(
+            "使用说明",
+            "没找到说明书文件（01-使用说明.txt）。\n\n"
+            "说明：说明书与导入 exe 是「一次性固定资产」，通常与 exe 同目录；\n"
+            f"若确实缺失，位置应为：\n{menu_actions.app_dir()}\\01-使用说明.txt")
+
+    def _menu_open_dir(self, path):
+        try:
+            menu_actions.reveal(Path(path))
+        except Exception as e:
+            messagebox.showerror("无法打开", f"打开失败：{e}\n{path}")
+
+    def _menu_about(self):
+        messagebox.showinfo(
+            "关于",
+            "\n".join(menu_actions.about_lines(core.APP_VERSION,
+                                              core.app_build_date())))
+
+    def _menu_quit(self):
+        if self._any_running():
+            if not messagebox.askyesno(
+                    "有任务在跑",
+                    "还有任务正在执行，现在退出会中断它（已写入的文件不会回滚）。\n\n"
+                    "确定退出？"):
+                return
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
+    # ───────────── 菜单辅助 ─────────────
+
+    def _any_running(self) -> bool:
+        return any(getattr(t, "running", False) for t in self._tabs)
+
+    def log_to_current(self, text: str):
+        tab = self._current_tab()
+        if tab is not None:
+            try:
+                tab.log(text)
+            except Exception:
+                pass
+
+    # ───────────── UI ─────────────
+
+    def _setup_styles(self):
+        """定义自定义 ttk 样式。
+
+        ``Accent.TButton`` 此前被三处 tab 引用但**从未定义** → ttk 静默回落到
+        默认样式（不报错，只是「主按钮」和普通按钮长得一样）。这里补上，
+        让「开始导出 / 导入到剪映草稿 / 生成交付包 / 保存」这几个主按钮真正突出。
+        """
+        try:
+            st = ttk.Style(self.root)
+            # 优先用 vista 主题（Windows 原生），拿不到就用默认
+            if "vista" in st.theme_names():
+                st.theme_use("vista")
+            st.configure("Accent.TButton", font=("Microsoft YaHei UI", 9, "bold"))
+            # 悬停/按下时也加粗，避免交互时字重跳变
+            st.map("Accent.TButton", foreground=[("disabled", "#8a8a8a")])
+        except Exception:
+            pass
+
+    def _build_ui(self):
+        self._setup_styles()
+
+        # 顶部标题条
+        head = ttk.Frame(self.root, padding=(12, 8, 12, 0))
+        head.pack(fill="x")
+        ttk.Label(head, text=APP_TITLE,
+                  font=("Microsoft YaHei UI", 13, "bold")).pack(side="left")
+        self.var_status = tk.StringVar(value="检测中…")
+        self.lbl_status = ttk.Label(head, textvariable=self.var_status,
+                                    foreground="#666", cursor="hand2")
+        self.lbl_status.pack(side="right")
+        self.lbl_status.bind("<Button-1>", lambda _e: self._refresh_status())
+
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=8, pady=(6, 8))
+        self.notebook = nb
+
+        for cls in (ExportTab, ImportTab, DeliveryTab):
+            tab = cls(nb, self)
+            nb.add(tab, text=tab.title)
+            self._tabs.append(tab)
+
+        nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+        # 底部状态条
+        foot = ttk.Frame(self.root, padding=(12, 0, 12, 8))
+        foot.pack(fill="x")
+        ttk.Label(foot, text=f"配置文件：{core.CONFIG_PATH}",
+                  foreground="#999").pack(side="left")
+        self.btn_refresh = ttk.Button(foot, text="刷新状态",
+                                       command=self._refresh_status)
+        self.btn_refresh.pack(side="right", padx=(0, 8))
+        self.btn_save_all = ttk.Button(foot, text="保存全部配置",
+                                       command=self.save_all)
+        self.btn_save_all.pack(side="right")
+
+    def _on_tab_changed(self, _evt=None):
+        tab = self._current_tab()
+        if tab is not None:
+            try:
+                tab.on_show()
+            except Exception:
+                pass
+        self._refresh_status()
+
+    def _current_tab(self):
+        try:
+            idx = self.notebook.index(self.notebook.select())
+            return self._tabs[idx]
+        except Exception:
+            return None
+
+    def save_all(self):
+        for t in self._tabs:
+            t.save_config(quiet=True)
+        try:
+            path = core.config_path()
+            disk = {k: self.cfg.get(k) for k in self.cfg}
+            path.write_text(json.dumps(disk, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+            messagebox.showinfo("已保存", f"三页配置已写入：\n{path}")
+        except Exception as e:
+            messagebox.showerror("保存失败", f"配置写入失败：{e}")
+
+    def _refresh_status(self):
+        """触发后台探测 PT / 剪映状态（不再阻塞主线程，不再 6 秒轮询）。
+
+        探测放进 worker 线程跑，结果经 ``_on_probe_done`` 回调回到 UI 线程渲染。
+        轮询策略改为：启动一次 + 切页时（_on_tab_changed）+ 手动刷新（点状态条 / 底部按钮）。
+        """
+        draft_dir = (core.DEFAULT_JIANYING_DRAFT_ROOT
+                     if core.DEFAULT_JIANYING_DRAFT_ROOT.is_dir()
+                     else Path.cwd())
+        self._probe.request(draft_dir, self._on_probe_done)
+
+    def _on_probe_done(self, pt, jy):
+        # 在 worker 线程被调用，必须切回 UI 线程更新 Tkinter 控件
+        self.root.after(0, lambda: self._apply_status(pt, jy))
+
+    def _apply_status(self, pt, jy):
+        parts = [
+            "PT " + ("在线" if pt[0] else "离线"),
+            "剪映 " + ("运行中（导入前请退出）" if jy else "未运行"),
+        ]
+        self.var_status.set(" ｜ ".join(parts))
+        # 探测结果回来后，让当前页的门控（按钮启用/禁用）跟着刷新 ——
+        # 各页 refresh_states 现在读的是探测缓存，必须有人通知它们「有结果了」。
+        tab = self._current_tab()
+        if tab is not None and hasattr(tab, "refresh_states"):
+            try:
+                tab.refresh_states()
+            except Exception:
+                pass
+
+    # ───────────── 拖放 ─────────────
+
+    def _setup_dnd(self):
+        if not DND_AVAILABLE:
+            return
+        tab = self._tabs[0]
+        targets = [tab.drop_label]
+        entry = getattr(tab, "entry_input_dir", None)
+        if entry is not None:
+            targets.append(entry)
+        for t in targets:
+            try:
+                t.drop_target_register(DND_FILES)
+                t.dnd_bind("<<Drop>>", self._on_drop)
+                t.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+                t.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+            except Exception as e:
+                print(f"[dnd] 注册失败 {t}: {e}")
+
+    def _on_drag_enter(self, event):
+        try:
+            self._tabs[0].drop_label.configure(bg="#3a5a3a", fg="#b5f5b5")
+        except Exception:
+            pass
+        return event.action
+
+    def _on_drag_leave(self, event):
+        try:
+            self._tabs[0].drop_label.configure(bg="#2b2b2b", fg="#9cdcfe")
+        except Exception:
+            pass
+        return event.action
+
+    def _on_drop(self, event):
+        try:
+            self._tabs[0].drop_label.configure(bg="#2b2b2b", fg="#9cdcfe")
+        except Exception:
+            pass
+        paths = parse_drop_paths(getattr(event, "data", "") or "")
+        if not paths:
+            return
+        self.notebook.select(0)                   # 拖入即切到导出页
+        self._tabs[0].on_drop(paths)
+
+    # ───────────── 消息泵 ─────────────
+
+    def _poll_queue(self):
+        try:
+            while True:
+                item = self.msg_queue.get_nowait()
+                if isinstance(item, tuple) and item and item[0] == "__tablog__":
+                    _, tab, text = item
+                    if tab._log is not None:
+                        tab._log.configure(state="normal")
+                        tab._log.insert("end", text)
+                        tab._log.see("end")
+                        tab._log.configure(state="disabled")
+                elif isinstance(item, tuple) and item and item[0] == "__done__":
+                    _, tab, on_done, err = item
+                    btn = getattr(tab, "btn_run", None) or getattr(tab, "btn_import", None)
+                    idle = getattr(tab, "btn_run", None)
+                    tab.finish(on_done, err,
+                               self._busy_button(tab),
+                               self._idle_text(tab))
+                else:
+                    tab = self._current_tab()
+                    if tab is not None and tab._log is not None:
+                        tab._log.configure(state="normal")
+                        tab._log.insert("end", item)
+                        tab._log.see("end")
+                        tab._log.configure(state="disabled")
+        except queue.Empty:
+            pass
+        self.root.after(100, self._poll_queue)
+
+    @staticmethod
+    def _busy_button(tab):
+        """找出该页正在跑任务时被禁用的那个按钮。"""
+        for name in ("btn_run", "btn_import", "btn_parse", "btn_preview", "btn_dry"):
+            b = getattr(tab, name, None)
+            if b is not None and str(b["state"]) == "disabled":
+                return b
+        return None
+
+    @staticmethod
+    def _idle_text(tab):
+        """按按钮身份还原正确文案。"""
+        b = JianYingToolkitApp._busy_button(tab)
+        if b is None:
+            return ""
+        mapping = {
+            "btn_run": ("▶ 开始导出", "生成交付包"),
+            "btn_import": "② 导入到剪映草稿",
+            "btn_parse": "① 解析 PT 工程",
+            "btn_preview": "预演（不写入）",
+            "btn_dry": "预演（只列素材不复制）",
+        }
+        val = getattr(tab, "_idle_label", None)
+        if val:
+            return val
+        m = mapping.get(_button_name(tab, b))
+        if isinstance(m, tuple):
+            # 导出页与交付页都叫 btn_run，用页标题区分
+            return m[0] if tab.title.startswith("①") else m[1]
+        return m or "执行"
+
+
+def _button_name(tab, btn) -> str:
+    for name in ("btn_run", "btn_import", "btn_parse", "btn_preview", "btn_dry"):
+        if getattr(tab, name, None) is btn:
+            return name
+    return ""
+
+
+def main():
+    try:
+        core._safe_io()          # --windowed 打包时 stdout/stderr 可能为 None
+    except Exception:
+        pass
+    root = make_root()
+    JianYingToolkitApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
