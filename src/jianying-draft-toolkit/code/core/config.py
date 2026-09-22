@@ -194,9 +194,15 @@ def init_config(config_path: Path) -> dict:
 
     # 1. 输出目录（必填）
     output_dir = ask("音频输出目录（必填）", current.get("output_dir", DEFAULT_CONFIG["output_dir"]) or DEFAULT_CONFIG["output_dir"])
-    while not output_dir:
+    # 兜底：连续空输入时回落到默认目录，避免 while 死循环把 CLI 卡死
+    tries = 0
+    while not output_dir and tries < 3:
         print("  ⚠ 输出目录不能为空")
         output_dir = ask("音频输出目录（必填）").strip() or ""
+        tries += 1
+    if not output_dir:
+        output_dir = DEFAULT_CONFIG["output_dir"]
+        print(f"  · 多次未输入，改用默认输出目录: {output_dir}")
     try:
         Path(output_dir).parent.mkdir(parents=True, exist_ok=True)
     except Exception as e:
@@ -234,7 +240,14 @@ def init_config(config_path: Path) -> dict:
     # 10. 备注（模板字段 {备注}）
     remarks = ask("备注文案（命名模板 {备注} 字段，可留空）", current.get("remarks", ""))
 
-    cfg = {
+    # ⚠️ 合并式落盘（不是整体替换）：
+    # 向导只管它问到的这几个字段，其余字段（name_templates / name_templates_active /
+    # export_mode / track_name_template / track_spec / export_aaf / aaf_media_mode …）
+    # 必须原样保留 —— 早期写成「新建 dict 整体覆盖」，导致重跑 --init 会把用户
+    # 在界面里调好的多模板 / 多模式 / AAF 设置静默清空（2026-09-23 修复）。
+    cfg = dict(DEFAULT_CONFIG)
+    cfg.update(current or {})          # 先叠磁盘现有值，保住用户自调项
+    cfg.update({                       # 再用本次向导结果覆盖问到的字段
         "input_dir": input_dir,
         "output_dir": output_dir,
         "name_template": name_template,
@@ -246,7 +259,7 @@ def init_config(config_path: Path) -> dict:
         "skip_existing": skip_existing,
         "temp_dir": current.get("temp_dir", ""),
         "remarks": remarks,
-    }
+    })
 
     config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n✅ 配置已保存: {config_path}")

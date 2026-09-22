@@ -474,17 +474,21 @@ class App(tk.Tk):
                             created += 1
                             self._log("建目录: %s" % path)
                         elif action == "copy":
+                            # ⚠️ 必须先确认「源可复制」再动目标文件。
+                            #    早期写成「先 os.remove 旧文件 → 再判断源是否存在」，
+                            #    一旦模板 .ptx 在规划后被移走/改名，就会删掉旧文件却不复制
+                            #    回来（不可逆数据丢失）。2026-09-23 调整顺序修复。
+                            if not (src_ptx and os.path.exists(src_ptx)):
+                                skipped += 1
+                                continue
                             if os.path.exists(path):
                                 if skip:
                                     skipped += 1
                                     continue
                                 os.remove(path)
-                            if src_ptx and os.path.exists(src_ptx):
-                                shutil.copy2(src_ptx, path)
-                                created += 1
-                                self._log("复制: %s" % path)
-                            else:
-                                skipped += 1
+                            shutil.copy2(src_ptx, path)
+                            created += 1
+                            self._log("复制: %s" % path)
                     except Exception as e:
                         failed += 1
                         self._log("失败: %s -> %s" % (path, e))

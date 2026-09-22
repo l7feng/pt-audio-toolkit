@@ -4,7 +4,8 @@ $AppName   = "PT工程文件夹生成器"
 $Script    = "folder_builder_gui.py"
 $DistName  = "pt-project-folder-builder"
 $ToolDir   = $PSScriptRoot
-$Py        = "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe"
+$PySys     = "C:\Users\$env:USERNAME\AppData\Local\Programs\Python\Python312\python.exe"
+if (Test-Path -LiteralPath $PySys) { $Py = $PySys } else { $Py = (Get-Command python).Source }
 $ScriptAbs = Join-Path $ToolDir $Script
 
 Write-Host "Building $AppName (PyInstaller windowed onedir) ..."
