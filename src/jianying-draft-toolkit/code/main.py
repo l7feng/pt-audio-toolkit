@@ -939,8 +939,8 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
                 # 命名与归档
                 base_name = render_name(template, seg, i, remarks)
                 category = TYPE_CATEGORY.get(seg.track_type, "audio")
-                tpl_root = (Path(cfg.get("output_dir", "D:/导出音频")) / f"模板{ti}") if multi \
-                    else Path(cfg.get("output_dir", "D:/导出音频"))
+                tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
+                    else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
                 category_dir = tpl_root / category
                 category_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1106,8 +1106,8 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
 
             base_name = render_name(template, seg, 1, remarks)
             category = TYPE_CATEGORY.get(seg.track_type, "audio")
-            tpl_root = (Path(cfg.get("output_dir", "D:/导出音频")) / f"模板{ti}") if multi \
-                else Path(cfg.get("output_dir", "D:/导出音频"))
+            tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
+                else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
             category_dir = tpl_root / category
             category_dir.mkdir(parents=True, exist_ok=True)
 

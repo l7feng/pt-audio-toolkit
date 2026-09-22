@@ -241,7 +241,7 @@ class JianYingToolkitApp:
             return
         if not messagebox.askyesno(
                 "恢复出厂默认",
-                "把 5 个**路径**字段重置为出厂默认（输出目录 → D:/导出音频，其余留空）。\n\n"
+                f"把 5 个**路径**字段重置为出厂默认（输出目录 → {core.DEFAULT_CONFIG['output_dir']}，其余留空）。\n\n"
                 "命名模板 / 规格 / 开关等参数不受影响。继续？"):
             return
         try:

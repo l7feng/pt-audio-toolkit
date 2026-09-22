@@ -19,6 +19,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from core import menus
+from core.config import DEFAULT_CONFIG
 
 
 class PathsDialog(tk.Toplevel):
@@ -106,7 +107,7 @@ class PathsDialog(tk.Toplevel):
         if not messagebox.askyesno(
                 "恢复出厂默认",
                 "将把 5 个路径字段重置为出厂默认值：\n\n"
-                "  · 输出目录 → D:/导出音频\n"
+                f"  · 输出目录 → {DEFAULT_CONFIG['output_dir']}\n"
                 "  · 其余路径 → 留空（自动定位）\n\n"
                 "命名模板 / 规格 / 开关等参数**不受影响**。继续？"):
             return

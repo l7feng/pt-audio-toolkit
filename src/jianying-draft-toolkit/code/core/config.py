@@ -73,7 +73,7 @@ LEGACY_CONFIG_PATH: Path = SCRIPT_DIR / "config.json"
 
 DEFAULT_CONFIG = {
     "input_dir": "",
-    "output_dir": "D:/导出音频",
+    "output_dir": "D:/My-Temporary/jianying-out/导出音频",
     "name_template": "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
     # ── 命名模板多选（2026-09-22 新增）──
     "name_templates": NAMING_PRESETS,                 # 命名模板库（候选清单，可增删）

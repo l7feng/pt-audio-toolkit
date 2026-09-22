@@ -1,6 +1,6 @@
 {
   "input_dir": "",
-  "output_dir": "D:/导出音频",
+  "output_dir": "D:/My-Temporary/jianying-out/导出音频",
   "name_template": "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
   "audio_format": "mp3",
   "bitrate_kbps": 192,

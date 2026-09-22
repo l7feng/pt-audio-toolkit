@@ -44,7 +44,35 @@ from pathlib import Path
 
 # ---------- 常量 ----------
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DRAFTC = Path(r"D:\Ai-Files\Agent-Preset\Skills\my-skills\jianying-audio-exporter\tools\jy-draftc\jy-draftc-amd64-windows\jy-draftc.exe")
+
+
+def _default_draftc() -> Path:
+    """定位 jy-draftc.exe 的默认路径。
+
+    源码模式取包内 ``tools/``（SCRIPT_DIR 的父目录），frozen 模式取 exe 旁 ``tools/``。
+    候选顺序与 ``main.find_jy_draftc()`` 一致，但本模块是独立 CLI，不 import GUI 层。
+
+    ⚠️ 禁止写死绝对路径：旧实现硬编码指向已下线的 skill 目录，
+    目录一旦搬迁/回收，CLI 的 --draftc 默认值即静默失效。
+    """
+    if getattr(sys, "frozen", False):
+        app_dir = Path(sys.executable).resolve().parent
+    else:
+        app_dir = SCRIPT_DIR.parent
+    base = app_dir / "tools" / "jy-draftc"
+    cands = [
+        base / "jy-draftc-amd64-windows" / "jy-draftc.exe",
+        base / "jy-draftc.exe",
+        app_dir / "tools" / "jy-draftc.exe",
+        app_dir / "jy-draftc.exe",
+    ]
+    for c in cands:
+        if c.is_file():
+            return c
+    return cands[0]                  # 未命中时返回标准路径，报错信息更有指向性
+
+
+DEFAULT_DRAFTC = _default_draftc()
 
 # 类别前缀 -> 素材 type（剪映 audios 素材 type 枚举）
 CATEGORY_MAP = {
