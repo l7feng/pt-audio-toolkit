@@ -142,10 +142,11 @@ def locate_template_ptx(template_root):
 
 def plan_creation(episodes, name, seq, level, date_str, username,
                  output_root, template_root, ep_placement, ptx_mode, ep_naming):
-    """返回 (project_root, [(action, path), ...], warnings)
+    """返回 (project_root, [(action, path), ...], warnings, ep_names)
 
     action ∈ {"mkdir", "copy"}；path 为将要创建/复制的目标路径。
     不实际写入磁盘，只规划。
+    注意：本函数与 _compute() 均返回 4 / 6 元组，调用处解包个数必须一致。
     """
     warnings = []
     proj_dir_name = build_project_name(seq, name, level, date_str, username)
@@ -437,7 +438,7 @@ class App(tk.Tk):
 
     def _on_build(self):
         try:
-            eps, errs, project_root, steps, warns = self._compute()
+            eps, errs, project_root, steps, warns, ep_names = self._compute()
         except Exception as e:
             messagebox.showerror("规划失败", str(e))
             return
