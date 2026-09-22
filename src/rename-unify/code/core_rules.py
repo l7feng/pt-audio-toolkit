@@ -77,6 +77,106 @@ DEFAULT_FIELDS = {
 
 
 # ---------------------------------------------------------------------------
+# 命名实体清单（可勾选）
+# ---------------------------------------------------------------------------
+# 用户在页1 勾选「本次要产出哪些交付类型、对哪些集生效」。
+# 未勾选的类型在计划阶段即判为 excluded，不动盘 —— 这样「第 1 集只交 BUS、
+# 第 4 集只交 STEM」这类按集差异，不需要改模板、不需要挪文件。
+#
+# 结构：list[dict]
+#   type    输出类型（与规则输出列同值，如 BUS-DX / MIX-MASTER / STEM-MX-02）
+#   enabled 是否启用
+#   eps     生效集数，逗号/空格分隔；留空 = 全部集
+#   note    备注（给人看，不参与逻辑）
+#
+# type 支持两种匹配：
+#   - 精确：'BUS-FX'
+#   - 通配：'STEM-MX-*'（星号匹配任意后缀）
+# 清单里已有精确项时，通配项对同一具体类型不重复生效。
+#
+# ⚠️ STEM 类型自带**序号**（STEM-DX-01、STEM-MX-02 ...），所以默认项必须带尾随 *，
+#    写成 'STEM-DX' 会导致一条都匹配不上（曾经的坑）。
+DEFAULT_ENABLED_TYPES = [
+    {"type": "BUS-DX", "enabled": True, "eps": "", "note": "对白总线分轨"},
+    {"type": "BUS-FX", "enabled": True, "eps": "", "note": "音效总线分轨"},
+    {"type": "BUS-MX", "enabled": True, "eps": "", "note": "音乐总线分轨"},
+    {"type": "MIX", "enabled": True, "eps": "", "note": "混音成品"},
+    {"type": "MIX-MASTER", "enabled": True, "eps": "", "note": "混音终稿"},
+    {"type": "STEM-DX-*", "enabled": True, "eps": "", "note": "对白分段素材（序号不限）"},
+    {"type": "STEM-FX-*", "enabled": True, "eps": "", "note": "音效分段素材（序号不限）"},
+    {"type": "STEM-MX-*", "enabled": True, "eps": "", "note": "音乐分段素材（序号不限）"},
+]
+
+
+def _type_matches(pattern, type_str):
+    """清单条目是否覆盖某个具体输出类型。通配符 * 匹配任意后缀（含空）。
+
+    比较**不做大小写折叠**以外的事：两边 strip 后按 casefold 比。
+    """
+    p = str(pattern or "").strip().casefold()
+    t = str(type_str or "").strip().casefold()
+    if not p:
+        return False
+    if "*" not in p:
+        return p == t
+    head, _, tail = p.partition("*")
+    if not t.startswith(head):
+        return False
+    return t.endswith(tail) if tail else True
+
+
+def parse_eps(raw):
+    """把「1,3-5」这类集数表达式解析成集合。
+
+    支持：逗号/空格/顿号分隔的单项，以及 a-b 区间。
+    返回 set[int]；空输入返回空 set（= 不限集数）。
+    非法片段忽略。
+    """
+    out = set()
+    s = str(raw or "").replace("，", ",").replace("、", ",").replace(";", ",")
+    for chunk in s.replace(",", " ").split():
+        c = chunk.strip()
+        if not c:
+            continue
+        if "-" in c:
+            a, _, b = c.partition("-")
+            if a.strip().isdigit() and b.strip().isdigit():
+                lo, hi = int(a), int(b)
+                if lo > hi:
+                    lo, hi = hi, lo
+                out.update(range(lo, hi + 1))
+        elif c.isdigit():
+            out.add(int(c))
+    return out
+
+
+def enabled_state(enabled_types, type_str, ep_raw):
+    """判断某个 (输出类型, 集数) 是否允许命名。
+
+    返回 (allowed: bool, reason: str)。
+    reason 仅在 allowed=False 时有意义，用于计划表的「说明」列。
+    """
+    if not enabled_types:
+        # 未配置清单 = 不启用该功能，全部放行（向后兼容旧 config.json）
+        return True, ""
+    covered = [e for e in enabled_types if _type_matches(e.get("type"), type_str)]
+    if not covered:
+        return False, "清单未列出该类型"
+    # 任一覆盖项被启用且集数放行 → 放行
+    for e in covered:
+        if not e.get("enabled", True):
+            continue
+        eps = parse_eps(e.get("eps"))
+        if not eps or ep_int(ep_raw) in eps:
+            return True, ""
+    # 全部被禁用或被集数限制挡住
+    if any(not e.get("enabled", True) for e in covered):
+        return False, "清单中已取消勾选"
+    lo = min((e for e in covered), key=lambda e: str(e.get("eps") or ""))
+    return False, "清单限定集数不含 %s 集" % (normalize_ep(ep_raw),)
+
+
+# ---------------------------------------------------------------------------
 # 宽占位符展开：把 {剧名} 这类模糊占位符变成捕获组
 # ---------------------------------------------------------------------------
 
@@ -264,7 +364,7 @@ class PlanItem(object):
         self.dst = dst
         self.type_str = type_str
         self.ep = ep
-        self.status = status          # rename / skip / error / conflict
+        self.status = status          # rename / skip / error / conflict / excluded
         self.note = note
 
     @property
@@ -272,13 +372,14 @@ class PlanItem(object):
         return os.path.normcase(self.src) != os.path.normcase(self.dst)
 
 
-def make_plan(paths, template, rules, fields):
+def make_plan(paths, template, rules, fields, enabled_types=None):
     """生成计划：返回 (items, stats)。
 
     安全闸：
       - 目标名重复 → conflict
       - 目标名已被别的现存文件占用 → conflict
       - 识别失败 → error
+      - 命名实体清单未勾选 / 集数不匹配 → excluded（跳过，不动盘）
       - 新旧名相同 → skip
     """
     items = []
@@ -292,9 +393,15 @@ def make_plan(paths, template, rules, fields):
             items.append(PlanItem(p, p, status="error", note="无规则命中"))
             continue
         dst, type_str, ep = r
-        items.append(PlanItem(p, dst, type_str, ep))
+        item = PlanItem(p, dst, type_str, ep)
+        # ---- 命名实体清单过滤（在冲突检测之前，排除项不参与占位）----
+        ok, why = enabled_state(enabled_types, type_str, ep)
+        if not ok:
+            item.status = "excluded"
+            item.note = why
+        items.append(item)
 
-    # ---- 冲突检测 ----
+    # ---- 冲突检测（只看仍然待改名的项）----
     dst_counter = Counter(os.path.normcase(i.dst) for i in items if i.status == "")
     # 现存文件集合（排除本次计划里将被改名的那些）
     src_set = {os.path.normcase(i.src) for i in items}
@@ -328,6 +435,7 @@ def make_plan(paths, template, rules, fields):
         "skip": sum(1 for i in items if i.status == "skip"),
         "error": sum(1 for i in items if i.status == "error"),
         "conflict": sum(1 for i in items if i.status == "conflict"),
+        "excluded": sum(1 for i in items if i.status == "excluded"),
     }
     return items, stats
 
@@ -448,6 +556,11 @@ def undo_from_log(log_path, dry_run=False):
             done.append((new_p, old_p))
             continue
         try:
+            # ⚠️ 归位记录的目标父目录（集目录\BUS 等）可能已被 apply_regroup
+            # 的「清理空文件夹」删掉 —— 反向移动前必须先补回来，否则整批撤销失败。
+            parent = os.path.dirname(old_p)
+            if parent and not os.path.isdir(parent):
+                os.makedirs(parent, exist_ok=True)
             os.rename(new_p, old_p)
             done.append((new_p, old_p))
         except OSError as e:
@@ -467,3 +580,147 @@ def _try_short_to_long(path):
         return buf.value if n else None
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# 按集归位（原 FinalMix按集归位.ps1 的能力，移植为跨平台纯 Python）
+# ---------------------------------------------------------------------------
+# 把分类平铺结构：
+#     FinalMix/MIX/x.wav   FinalMix/BUS/x.wav   FinalMix/Stem/x.wav
+# 重组为按集分文件夹：
+#     FinalMix/前夫 01集 0920 V01/            <- MIX / MIX-MASTER 放集根
+#     FinalMix/前夫 01集 0920 V01/BUS/        <- BUS-*
+#     FinalMix/前夫 01集 0920 V01/STEM/       <- STEM-*
+#
+# 安全语义与原 ps1 完全一致：只移动绝不覆盖；解析不了跳过并报告；
+# 搬空后清理类别空文件夹。
+
+# 归类文件夹名（大小写沿用原 ps1 的 BUS / STEM）
+SCAN_CATEGORIES = ("MIX", "BUS", "Stem")
+
+
+def regroup_target(type_str):
+    """由输出类型决定归位子目录：BUS / STEM / ''（集根）。"""
+    t = str(type_str or "").upper()
+    if t.startswith("BUS-"):
+        return "BUS"
+    if t.startswith("STEM-"):
+        return "STEM"
+    return ""
+
+
+def find_category_dirs(root):
+    """找出 root 下存在的分类平铺目录（大小写不敏感匹配 SCAN_CATEGORIES）。"""
+    found = []
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return found
+    low = {e.casefold(): e for e in entries}
+    for cat in SCAN_CATEGORIES:
+        real = low.get(cat.casefold())
+        if real:
+            p = os.path.join(root, real)
+            if os.path.isdir(p):
+                found.append(p)
+    return found
+
+
+def build_regroup_plan(root, rules, fields, split_mark=" 7F_"):
+    """扫描分类目录，算出「平铺 → 按集」的移动计划。
+
+    返回 (items, stats)；item 是 PlanItem 复用体：
+        src  源文件绝对路径
+        dst  目标绝对路径
+        status: ''（待移动）/ skip / error
+    split_mark 原本用于从模块名切出「集前缀」；但本工具已有强识别引擎，
+    优先走 identify()（能处理 -DX Folder / 裸集数等历史写法），
+    识别不出再回退到 split_mark 的字面切分。
+    """
+    items = []
+    if not os.path.isdir(root):
+        return items, {"total": 0, "move": 0, "skip": 0, "error": 0}
+
+    for cat_dir in find_category_dirs(root):
+        try:
+            names = sorted(os.listdir(cat_dir))
+        except OSError:
+            continue
+        for fn in names:
+            src = os.path.join(cat_dir, fn)
+            if not os.path.isfile(src) or fn.startswith("."):
+                continue
+            stem, ext = os.path.splitext(fn)
+
+            ep_prefix = ""
+            type_str = ""
+            hit = identify(stem, rules, fields)
+            if hit is not None:
+                _d, ep, type_str = hit
+                # 集前缀 = 新命名去掉类型段后的部分
+                full = render(DEFAULT_TEMPLATE, ep, type_str, fields)
+                tail = "_" + str(type_str)
+                ep_prefix = full[: -len(tail)] if full.endswith(tail) else full
+            else:
+                # 回退：按分隔标记字面切分（与原 ps1 行为一致）
+                idx = stem.find(split_mark)
+                if idx < 1:
+                    items.append(PlanItem(src, src, status="error",
+                                          note="无法解析集前缀"))
+                    continue
+                ep_prefix = stem[:idx]
+                type_str = stem[idx + len(split_mark):]
+
+            sub = regroup_target(type_str)
+            ep_dir = os.path.join(root, ep_prefix)
+            target = os.path.join(ep_dir, sub) if sub else ep_dir
+            dst = os.path.join(target, fn)
+
+            item = PlanItem(src, dst, type_str)
+            if os.path.normcase(src) == os.path.normcase(dst):
+                item.status = "skip"
+                item.note = "已在该集目录"
+            elif os.path.exists(dst):
+                item.status = "error"
+                item.note = "目标已存在（不覆盖，已跳过）"
+            items.append(item)
+
+    stats = {
+        "total": len(items),
+        "move": sum(1 for i in items if i.status == ""),
+        "skip": sum(1 for i in items if i.status == "skip"),
+        "error": sum(1 for i in items if i.status == "error"),
+    }
+    return items, stats
+
+
+def apply_regroup(items, cleanup_empty=True):
+    """执行归位移动，返回 (done, failed, cleaned)。
+
+    done 每项为 (源绝对路径, 目标绝对路径)，供写回溯日志。
+    cleanup_empty 为真时，把搬空的分类文件夹删掉（仅当确实为空）。
+    """
+    done, failed, touched_dirs = [], [], set()
+    for i in items:
+        if i.status != "":
+            continue
+        target_dir = os.path.dirname(i.dst)
+        try:
+            if not os.path.isdir(target_dir):
+                os.makedirs(target_dir, exist_ok=True)
+            os.replace(i.src, i.dst)
+            done.append((os.path.abspath(i.src), os.path.abspath(i.dst)))
+            touched_dirs.add(os.path.dirname(i.src))
+        except OSError as e:
+            failed.append((i.src, i.dst, str(e)))
+
+    cleaned = []
+    if cleanup_empty:
+        for d in sorted(touched_dirs, key=len, reverse=True):
+            try:
+                if os.path.isdir(d) and not os.listdir(d):
+                    os.rmdir(d)
+                    cleaned.append(d)
+            except OSError:
+                pass
+    return done, failed, cleaned

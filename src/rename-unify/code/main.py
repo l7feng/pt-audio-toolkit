@@ -18,11 +18,12 @@ GUI 只负责收集参数 → 调 core → 展示计划。core 可独立跑测�
 """
 import os
 import sys
+import datetime
 import threading
 import traceback
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -59,6 +60,7 @@ STATUS_COLOR = {
     "skip": "#757575",      # 已是目标命名
     "error": COLOR_BAD,     # 识别失败
     "conflict": COLOR_WARN,  # 命名冲突
+    "excluded": "#8e24aa",   # 按命名清单排除
 }
 STATUS_TEXT = {
     "": "待改名",
@@ -66,6 +68,7 @@ STATUS_TEXT = {
     "skip": "已是目标名",
     "error": "识别失败",
     "conflict": "命名冲突",
+    "excluded": "按清单排除",
 }
 
 
@@ -132,13 +135,16 @@ class App(tk.Tk):
         self.nb = nb
 
         self.tab_rule = ttk.Frame(nb)
+        self.tab_types = ttk.Frame(nb)
         self.tab_run = ttk.Frame(nb)
         self.tab_undo = ttk.Frame(nb)
         nb.add(self.tab_rule, text="  1 · 项目信息与模板  ")
-        nb.add(self.tab_run, text="  2 · 预览与执行  ")
-        nb.add(self.tab_undo, text="  3 · 回溯与撤销  ")
+        nb.add(self.tab_types, text="  2 · 命名清单（勾选）  ")
+        nb.add(self.tab_run, text="  3 · 预览与执行  ")
+        nb.add(self.tab_undo, text="  4 · 回溯与撤销  ")
 
         self._build_rule_tab()
+        self._build_types_tab()
         self._build_run_tab()
         self._build_undo_tab()
 
@@ -251,7 +257,132 @@ class App(tk.Tk):
         self._refresh_preview()
         self._log("已恢复内置识别规则")
 
-    # ============ 页2：预览与执行 ============
+    # ============ 页2：命名清单（勾选） ============
+    def _build_types_tab(self):
+        """可勾选的命名实体清单。
+
+        为什么要这一页：交付类型并非每集都一样 —— 第 1 集可能只交 BUS，
+        第 4 集才补 STEM。用「勾选 + 集数限定」表达这种差异，
+        比改模板或事后挪文件都安全（未勾选的项在计划阶段就跳过，不动盘）。
+
+        交互用**直接编辑表格**（双击勾选格切换、双击集数格输入），
+        避免再开一个对话框。
+        """
+        f = self.tab_types
+
+        ttk.Label(
+            f, justify="left", style="Hint.TLabel",
+            text=("勾选本次要产出的交付类型。未勾选的类型在「生成计划」时会被标为"
+                  "「按清单排除」并跳过，不会改名、不会移动。\n"
+                  "「生效集数」留空 = 全部集；填 1 或 1,3-5 可只对指定集生效"
+                  "（例：第 1 集只需命名 BUS → 只勾 BUS-*，其余取消勾选）。")
+        ).pack(anchor="w", padx=12, pady=(10, 6))
+
+        wrap = ttk.LabelFrame(f, text="命名实体清单（双击「启用」格切换勾选，双击「生效集数」格输入）")
+        wrap.pack(fill="both", expand=True, padx=10, pady=6)
+
+        cols = ("enabled", "type", "eps", "note")
+        self.tree_types = ttk.Treeview(wrap, columns=cols, show="headings", height=14)
+        self.tree_types.heading("enabled", text="启用")
+        self.tree_types.heading("type", text="输出类型")
+        self.tree_types.heading("eps", text="生效集数")
+        self.tree_types.heading("note", text="备注")
+        self.tree_types.column("enabled", width=70, anchor="center", stretch=False)
+        self.tree_types.column("type", width=170, anchor="w", stretch=False)
+        self.tree_types.column("eps", width=140, anchor="center", stretch=False)
+        self.tree_types.column("note", width=420)
+        ts = ttk.Scrollbar(wrap, orient="vertical", command=self.tree_types.yview)
+        self.tree_types.configure(yscrollcommand=ts.set)
+        ts.pack(side="right", fill="y", pady=6)
+        self.tree_types.pack(fill="both", expand=True, side="left", padx=(6, 0), pady=6)
+
+        self.tree_types.tag_configure("on", foreground=COLOR_OK)
+        self.tree_types.tag_configure("off", foreground="#9e9e9e")
+        self.tree_types.tag_configure("limited", foreground=COLOR_WARN)
+
+        self.tree_types.bind("<Double-Button-1>", self._on_type_dblclick)
+
+        # 载入清单：配置为空 → 用内置默认（首次打开就能看到全部类型）
+        self.enabled_types = self._load_enabled_types()
+        self._reload_types()
+
+        btns = ttk.Frame(f)
+        btns.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(btns, text="保存为默认", command=self._save_cfg).pack(side="right", padx=4)
+        ttk.Button(btns, text="全不选", command=lambda: self._set_all_types(False)).pack(side="right", padx=4)
+        ttk.Button(btns, text="全选", command=lambda: self._set_all_types(True)).pack(side="right", padx=4)
+        ttk.Button(btns, text="恢复内置清单", command=self._reset_types).pack(side="right", padx=4)
+
+    def _load_enabled_types(self):
+        cfg_types = CFG.load_config().get("enabled_types") or []
+        if cfg_types:
+            return [dict(e) for e in cfg_types]
+        return [dict(e) for e in CORE.DEFAULT_ENABLED_TYPES]
+
+    def _reload_types(self):
+        self.tree_types.delete(*self.tree_types.get_children())
+        for idx, e in enumerate(self.enabled_types):
+            self.tree_types.insert("", "end", iid=str(idx),
+                                   values=self._type_row_values(e),
+                                   tags=(self._type_row_tag(e),))
+
+    @staticmethod
+    def _type_row_values(e):
+        return ("[√] 启用" if e.get("enabled", True) else "[ ] 停用",
+                e.get("type", ""),
+                e.get("eps", "") or "（全部集）",
+                e.get("note", ""))
+
+    @staticmethod
+    def _type_row_tag(e):
+        if not e.get("enabled", True):
+            return "off"
+        if CORE.parse_eps(e.get("eps")):
+            return "limited"
+        return "on"
+
+    def _on_type_dblclick(self, event):
+        """双击：点「启用」列切换勾选，点「生效集数」列弹输入框。"""
+        row = self.tree_types.identify_row(event.y)
+        col = self.tree_types.identify_column(event.x)
+        if not row:
+            return
+        try:
+            e = self.enabled_types[int(row)]
+        except (ValueError, IndexError):
+            return
+
+        if col == "#1":                      # 启用列
+            e["enabled"] = not e.get("enabled", True)
+        elif col == "#3":                    # 生效集数列
+            cur = e.get("eps", "")
+            new = simpledialog.askstring(
+                "生效集数",
+                "只对哪些集生效？（留空 = 全部集）\n例：1 或 1,3-5",
+                initialvalue=cur, parent=self)
+            if new is None:                  # 取消
+                return
+            e["eps"] = new.strip()
+        else:
+            return
+        self._reload_types()
+        self._refresh_preview()
+
+    def _set_all_types(self, flag):
+        for e in self.enabled_types:
+            e["enabled"] = flag
+        self._reload_types()
+        self._refresh_preview()
+
+    def _reset_types(self):
+        if not messagebox.askokcancel("恢复内置清单", "将丢弃当前清单，恢复内置默认清单？"):
+            return
+        self.enabled_types = [dict(e) for e in CORE.DEFAULT_ENABLED_TYPES]
+        self._reload_types()
+        self._refresh_preview()
+        self._log("已恢复内置命名实体清单")
+
+    # ============ 页3：预览与执行 ============
     def _build_run_tab(self):
         f = self.tab_run
 
@@ -273,6 +404,35 @@ class App(tk.Tk):
         ttk.Label(opt, text="扩展名:").pack(side="left")
         self.var_exts = tk.StringVar(value=self.cfg["exts"])
         ttk.Entry(opt, textvariable=self.var_exts, width=30).pack(side="left", padx=6)
+
+        # ---- 归位选项（原 FinalMix按集归位.ps1 的能力）----
+        rg = ttk.LabelFrame(f, text="按集归位（可选：把平铺的分类目录重组为「每集一个文件夹」）")
+        rg.pack(fill="x", padx=10, pady=(0, 6))
+        rg.columnconfigure(1, weight=1)
+
+        self.var_regroup = tk.BooleanVar(value=bool(self.cfg.get("regroup_after")))
+        ttk.Checkbutton(
+            rg, text="重命名完成后，自动按集归位", variable=self.var_regroup,
+            command=self._refresh_preview).grid(row=0, column=0, columnspan=3,
+                                                sticky="w", padx=6, pady=(4, 2))
+
+        ttk.Label(rg, text="归位目标:").grid(row=1, column=0, sticky="w", padx=6)
+        self.var_regroup_root = tk.StringVar(value=self.cfg.get("regroup_root", ""))
+        ttk.Entry(rg, textvariable=self.var_regroup_root).grid(
+            row=1, column=1, sticky="ew", padx=6)
+        ttk.Button(rg, text="浏览…", command=self._pick_regroup_root).grid(
+            row=1, column=2, padx=6)
+
+        self.var_regroup_clean = tk.BooleanVar(value=bool(self.cfg.get("regroup_cleanup", True)))
+        ttk.Checkbutton(rg, text="归位后清理搬空的类别文件夹（MIX / BUS / Stem）",
+                        variable=self.var_regroup_clean).grid(
+            row=2, column=0, columnspan=3, sticky="w", padx=6)
+
+        ttk.Label(rg, foreground="#666", justify="left",
+                  text=("归位规则：MIX / MIX-MASTER 放集根目录；BUS-* → 集目录\\BUS；"
+                        "STEM-* → 集目录\\STEM。只移动、绝不覆盖，解析不了的跳过并报告。\n"
+                        "目标留空 = 直接用上面的「目标目录」。")).grid(
+            row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
 
         # ---- 状态指示灯 + 按钮 ----
         act = ttk.Frame(f)
@@ -381,6 +541,17 @@ class App(tk.Tk):
             self.var_root.set(p)
             self._refresh_preview()
 
+    def _pick_regroup_root(self):
+        cur = self.var_regroup_root.get() or self.var_root.get() or "D:\\"
+        p = filedialog.askdirectory(initialdir=cur)
+        if p:
+            self.var_regroup_root.set(p)
+            self._refresh_preview()
+
+    def _regroup_root(self):
+        return (self.var_regroup_root.get() or "").strip() or \
+               (self.var_root.get() or "").strip()
+
     def _pick_log(self):
         p = filedialog.askopenfilename(
             initialdir=self.var_root.get() or "D:\\",
@@ -421,7 +592,8 @@ class App(tk.Tk):
             paths = CORE.scan_dir(root, recursive=self.var_rec.get(),
                                   exts=self._exts())
             items, stats = CORE.make_plan(paths, self.var_template.get(),
-                                          self.rules, self._fields())
+                                          self.rules, self._fields(),
+                                          enabled_types=self.enabled_types)
         except Exception as e:
             self.items, self.stats = [], {}
             self._set_plan_state("规划失败: %s" % e, "bad")
@@ -438,13 +610,15 @@ class App(tk.Tk):
             self._set_plan_state("该目录下没有可处理的文件", "warn")
             self.btn_apply.configure(state="disabled")
         elif s["rename"] == 0:
-            n = s["skip"] + s["error"] + s["conflict"]
-            self._set_plan_state("无需改动（%d 个文件均已符合命名）" % n, "ok")
+            n = s["skip"] + s["error"] + s["conflict"] + s.get("excluded", 0)
+            self._set_plan_state("无需改动（%d 个文件均已符合命名或已排除）" % n, "ok")
             self.btn_apply.configure(state="disabled")
         else:
             msg = "待改名 %d" % s["rename"]
             if s["skip"]:
                 msg += " / 已合规 %d" % s["skip"]
+            if s.get("excluded"):
+                msg += " / 清单排除 %d" % s["excluded"]
             if s["error"]:
                 msg += " / 识别失败 %d" % s["error"]
             if s["conflict"]:
@@ -494,16 +668,46 @@ class App(tk.Tk):
         self.btn_apply.configure(state="disabled")
         self._log("=== 开始执行：待改名 %d ===" % len(todo))
 
+        do_regroup = bool(self.var_regroup.get())
+        rg_root = self._regroup_root()
+        rg_clean = bool(self.var_regroup_clean.get())
+        rules_snapshot = [list(r) for r in self.rules]
+        fields_snapshot = self._fields()
+
         def worker():
             try:
-                done, failed, logp = CORE.apply_plan(self.items)
-                self._log("完成: 成功 %d / 失败 %d" % (len(done), len(failed)))
+                done, failed, logp = CORE.apply_plan(self.items, write_log=False)
+                self._log("改名完成: 成功 %d / 失败 %d" % (len(done), len(failed)))
                 for src, dst, err in failed:
                     self._log("  失败: %s -> %s (%s)" % (os.path.basename(src),
                                                          os.path.basename(dst), err))
+
+                moved = []
+                if do_regroup and os.path.isdir(rg_root):
+                    self._log("=== 按集归位: %s ===" % rg_root)
+                    ritems, rstats = CORE.build_regroup_plan(
+                        rg_root, rules_snapshot, fields_snapshot)
+                    self._log("归位计划: 待移动 %d / 已就位 %d / 跳过 %d"
+                              % (rstats["move"], rstats["skip"], rstats["error"]))
+                    for i in ritems:
+                        if i.status == "error":
+                            self._log("  跳过: %s (%s)" % (os.path.basename(i.src), i.note))
+                    moved, mfail, cleaned = CORE.apply_regroup(
+                        ritems, cleanup_empty=rg_clean)
+                    self._log("归位完成: 移动 %d / 失败 %d" % (len(moved), len(mfail)))
+                    for src, dst, err in mfail:
+                        self._log("  失败: %s (%s)" % (os.path.basename(src), err))
+                    for c in cleaned:
+                        self._log("  清理空文件夹: %s" % c)
+                elif do_regroup:
+                    self._log("!! 归位目标不存在，已跳过归位: %s" % rg_root)
+
+                # 改名 + 归位写进**同一份**日志，撤销顺序天然是「先归位后改名」
+                logp = self._write_combined_log(done, moved)
                 if logp:
                     self.last_log = logp
-                    self._log("回溯日志: %s" % logp)
+                    self._log("回溯日志: %s（含改名 %d 条 + 归位 %d 条）"
+                              % (logp, len(done), len(moved)))
                     self.var_logfile.set(logp)
             except Exception:
                 self._log(traceback.format_exc())
@@ -512,6 +716,32 @@ class App(tk.Tk):
                 self.after(0, self._after_apply)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _write_combined_log(self, renamed, moved):
+        """把改名记录与归位记录合并成一份可撤销日志。
+
+        撤销按**倒序**执行：先反向归位（集目录 → 分类目录），
+        再反向改名（新名 → 原名），正好是执行顺序的镜像。
+        日志位置落在归位根（或首条源文件所在目录）。
+        """
+        rows = list(renamed) + list(moved)
+        if not rows:
+            return None
+        base = self._regroup_root() if self.var_regroup.get() else ""
+        if not (base and os.path.isdir(base)):
+            base = os.path.dirname(rows[0][0]) or "."
+        path = os.path.join(base, "rename_log_%s.csv"
+                            % datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+        try:
+            import csv
+            with open(path, "w", encoding="utf-8-sig", newline="") as fp:
+                w = csv.writer(fp)
+                w.writerow(CORE.LOG_HEADER)
+                w.writerows(rows)
+            return path
+        except OSError as e:
+            self._log("  警告: 日志写入失败 (%s)" % e)
+            return None
 
     def _after_apply(self):
         self._log("=== 执行结束，重新扫描 ===")
@@ -635,6 +865,10 @@ class App(tk.Tk):
         cfg["template"] = self.var_template.get()
         cfg["fields"] = self._fields()
         cfg["rules"] = [list(r) for r in self.rules]
+        cfg["enabled_types"] = [dict(e) for e in self.enabled_types]
+        cfg["regroup_after"] = bool(self.var_regroup.get())
+        cfg["regroup_root"] = self.var_regroup_root.get()
+        cfg["regroup_cleanup"] = bool(self.var_regroup_clean.get())
         try:
             cfg["window"] = self.geometry().split("+")[0]
         except Exception:

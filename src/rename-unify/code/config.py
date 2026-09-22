@@ -9,7 +9,7 @@ import os
 import sys
 
 APP_NAME = "rename-unify"
-APP_VERSION = "v1.0.0"
+APP_VERSION = "v1.1.0"
 
 
 def app_dir():
@@ -35,6 +35,12 @@ DEFAULTS = {
     "template": "{片名} {集数}集 {日期} {版本} {档位}_{类型}",
     "fields": {"片名": "前夫", "日期": "0920", "版本": "V01", "档位": "7F"},
     "rules": [],          # 空 = 用 core_rules.DEFAULT_RULES
+    # 命名实体清单（可勾选）：空 = 不启用过滤（等于旧行为）；见 core_rules.DEFAULT_ENABLED_TYPES
+    "enabled_types": [],
+    # 执行完改名后自动按集归位（平铺分类目录 → 集文件夹）
+    "regroup_after": False,
+    "regroup_root": "",       # 归位目标；空 = 用 last_root
+    "regroup_cleanup": True,  # 归位后清理搬空的类别文件夹
     "window": "1180x760",
 }
 
@@ -55,6 +61,29 @@ def load_config():
     if isinstance(cfg.get("fields"), dict):
         f.update({str(k): str(v) for k, v in cfg["fields"].items()})
     out["fields"] = f
+    # enabled_types 逐项清洗，容忍手改配置写坏结构
+    out["enabled_types"] = _clean_enabled_types(cfg.get("enabled_types"))
+    return out
+
+
+def _clean_enabled_types(raw):
+    """规范化命名实体清单：只留已知字段，补齐缺省，丢掉无 type 的项。"""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for e in raw:
+        if not isinstance(e, dict):
+            continue
+        t = str(e.get("type", "")).strip()
+        if not t:
+            continue
+        en = e.get("enabled", True)
+        out.append({
+            "type": t,
+            "enabled": bool(en) if isinstance(en, bool) else str(en).strip().lower() not in ("0", "false", "no", ""),
+            "eps": str(e.get("eps", "") or "").strip(),
+            "note": str(e.get("note", "") or "").strip(),
+        })
     return out
 
 
