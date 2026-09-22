@@ -31,18 +31,21 @@ class ExportTab(BaseTab):
     def build(self):
         outer = self
 
-        # ── 导出模式（整轨默认 / 片段备选）──
-        mode_box = ttk.LabelFrame(outer, text="导出模式", padding=8)
+        # ── 导出模式（整轨 / 片段 可多选，同时勾选则一次导出两种产物）──
+        mode_box = ttk.LabelFrame(
+            outer, text="导出模式（可多选：同时勾选则一次导出「整轨 + 片段」）", padding=8)
         mode_box.pack(fill="x", padx=8, pady=(0, 6))
 
-        self.var_mode = tk.StringVar(value=self.cfg.get("export_mode", "tracks"))
-        ttk.Radiobutton(
+        mset = self._mode_set()
+        self.var_mode_tracks = tk.BooleanVar(value="tracks" in mset)
+        self.var_mode_clips = tk.BooleanVar(value="clips" in mset)
+        ttk.Checkbutton(
             mode_box, text="① 导出音频轨道（整轨：一条轨一个 WAV，等长对齐，导入 PT 即就位）",
-            value="tracks", variable=self.var_mode, command=self._sync_mode,
+            variable=self.var_mode_tracks, command=self._sync_mode,
         ).grid(row=0, column=0, columnspan=4, sticky="w", padx=4, pady=2)
-        ttk.Radiobutton(
+        ttk.Checkbutton(
             mode_box, text="② 导出音频素材（片段：一段一个文件，用于取素材/建素材库）",
-            value="clips", variable=self.var_mode, command=self._sync_mode,
+            variable=self.var_mode_clips, command=self._sync_mode,
         ).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=2)
 
         ttk.Label(mode_box, text="整轨规格").grid(row=2, column=0, sticky="w", padx=4, pady=3)
@@ -92,11 +95,24 @@ class ExportTab(BaseTab):
                       lambda: self._pick_dir(self.var_output_dir),
                       "按 类型/素材 自动分目录")
 
-        # 命名模板
-        ttk.Label(cfg_box, text="命名模板").grid(row=2, column=0, sticky="w", padx=4, pady=3)
-        self.var_template = tk.StringVar(value=self.cfg.get("name_template", ""))
-        ttk.Entry(cfg_box, textvariable=self.var_template, width=66).grid(
-            row=2, column=1, columnspan=3, sticky="we", padx=4, pady=3)
+        # 命名模板（多选：勾选多个 → 各生成一份输出）
+        ttk.Label(cfg_box, text="命名模板（可多选）").grid(row=2, column=0, sticky="nw", padx=4, pady=3)
+        nt_frame = ttk.Frame(cfg_box)
+        nt_frame.grid(row=2, column=1, columnspan=3, sticky="we", padx=4, pady=3)
+        self._seed_templates()
+        self.lb_templates = tk.Listbox(nt_frame, height=4, selectmode="extended",
+                                       exportselection=0)
+        self.lb_templates.grid(row=0, column=0, columnspan=4, sticky="we", padx=(0, 4))
+        row_nt = ttk.Frame(nt_frame)
+        row_nt.grid(row=1, column=0, columnspan=4, sticky="w", pady=(3, 0))
+        self.var_new_tpl = tk.StringVar()
+        ttk.Entry(row_nt, textvariable=self.var_new_tpl, width=42).pack(side="left", padx=(0, 4))
+        ttk.Button(row_nt, text="添加模板", command=self._add_template).pack(side="left", padx=2)
+        ttk.Button(row_nt, text="删除选中", command=self._remove_template).pack(side="left", padx=2)
+        ttk.Label(nt_frame,
+                  text="Ctrl/Shift 多选；勾选的模板会各生成一份输出（多模板时按「模板N」分目录）",
+                  foreground="#888").grid(row=2, column=0, columnspan=4, sticky="w")
+        self._fill_templates()
 
         # 格式 / 码率 / 重名
         ttk.Label(cfg_box, text="音频格式").grid(row=3, column=0, sticky="w", padx=4, pady=3)
@@ -187,11 +203,24 @@ class ExportTab(BaseTab):
 
         self._sync_mode()
 
+    def _mode_set(self) -> set:
+        """当前勾选的导出模式集合（兼容旧配置的单字符串值）。"""
+        m = self.cfg.get("export_mode", ["tracks"])
+        if isinstance(m, str):
+            m = [m]
+        return set(m) & {"tracks", "clips"}
+
     def collect(self):
         """只写本页字段，绝不触碰导入页/交付页的配置。"""
         self.cfg["input_dir"] = self.var_input_dir.get().strip()
         self.cfg["output_dir"] = self.var_output_dir.get().strip()
-        self.cfg["name_template"] = self.var_template.get().strip()
+        sel_idx = list(self.lb_templates.curselection())
+        lib = self.cfg["name_templates"]
+        active = [lib[i] for i in sel_idx if 0 <= i < len(lib)]
+        if not active:
+            active = [lib[0]] if lib else [core.DEFAULT_CLIPS_TEMPLATE]
+        self.cfg["name_templates_active"] = active
+        self.cfg["name_template"] = active[0]   # 兼容旧字段 / CLI
         self.cfg["audio_format"] = self.var_format.get()
         try:
             self.cfg["bitrate_kbps"] = int(self.var_bitrate.get())
@@ -202,7 +231,12 @@ class ExportTab(BaseTab):
         self.cfg["extract_video_tracks"] = bool(self.var_extract_video.get())
         self.cfg["skip_existing"] = bool(self.var_skip_existing.get())
         self.cfg["remarks"] = self.var_remarks.get().strip()
-        self.cfg["export_mode"] = self.var_mode.get()
+        sel = []
+        if self.var_mode_tracks.get():
+            sel.append("tracks")
+        if self.var_mode_clips.get():
+            sel.append("clips")
+        self.cfg["export_mode"] = sel
         self.cfg["track_name_template"] = self.var_track_tpl.get().strip() or core.DEFAULT_TRACK_TEMPLATE
         self.cfg["track_spec"] = self._read_spec()
         self.cfg["export_aaf"] = bool(self.var_aaf.get())
@@ -224,7 +258,12 @@ class ExportTab(BaseTab):
         self.var_extract_video.set(bool(c.get("extract_video_tracks", True)))
         self.var_skip_existing.set(bool(c.get("skip_existing", True)))
         self.var_remarks.set(c.get("remarks", ""))
-        self.var_mode.set(c.get("export_mode", "tracks"))
+        self._seed_templates()
+        self._fill_templates()
+        mraw = c.get("export_mode", ["tracks"])
+        mset = {mraw} if isinstance(mraw, str) else set(mraw)
+        self.var_mode_tracks.set("tracks" in mset)
+        self.var_mode_clips.set("clips" in mset)
         self.var_track_tpl.set(c.get("track_name_template")
                                or core.DEFAULT_TRACK_TEMPLATE)
         self.var_aaf.set(bool(c.get("export_aaf", False)))
@@ -232,6 +271,61 @@ class ExportTab(BaseTab):
         self._set_spec_display()
         self._set_aaf_display()
         self._sync_mode()
+
+    # ───────────── 命名模板库（多选）─────────────
+
+    def _seed_templates(self):
+        """向后兼容 + 初始化模板库：旧配置只有单 ``name_template`` 时，补出
+        ``name_templates`` / ``name_templates_active``。"""
+        if not self.cfg.get("name_templates"):
+            presets = list(core.NAMING_PRESETS)
+            legacy = self.cfg.get("name_template") or core.DEFAULT_CLIPS_TEMPLATE
+            if legacy and legacy not in presets:
+                presets.insert(0, legacy)
+            self.cfg["name_templates"] = presets
+        if not self.cfg.get("name_templates_active"):
+            legacy = self.cfg.get("name_template") or (
+                self.cfg["name_templates"][0] if self.cfg["name_templates"]
+                else core.DEFAULT_CLIPS_TEMPLATE)
+            active = [legacy] if legacy in self.cfg["name_templates"] else \
+                [self.cfg["name_templates"][0]]
+            self.cfg["name_templates_active"] = active
+
+    def _fill_templates(self):
+        """把模板库渲染进 Listbox，并选中 active 项。"""
+        self.lb_templates.delete(0, "end")
+        for tpl in self.cfg["name_templates"]:
+            self.lb_templates.insert("end", tpl)
+        active = set(self.cfg.get("name_templates_active", []))
+        for i, tpl in enumerate(self.cfg["name_templates"]):
+            if tpl in active:
+                self.lb_templates.selection_set(i)
+
+    def _add_template(self):
+        new = self.var_new_tpl.get().strip()
+        if not new:
+            return
+        if new not in self.cfg["name_templates"]:
+            self.cfg["name_templates"].append(new)
+        if new not in self.cfg["name_templates_active"]:
+            self.cfg["name_templates_active"].append(new)
+        self.var_new_tpl.set("")
+        self._fill_templates()
+
+    def _remove_template(self):
+        idxs = list(self.lb_templates.curselection())
+        if not idxs:
+            return
+        for i in sorted(idxs, reverse=True):
+            if 0 <= i < len(self.cfg["name_templates"]):
+                removed = self.cfg["name_templates"].pop(i)
+                if removed in self.cfg["name_templates_active"]:
+                    self.cfg["name_templates_active"].remove(removed)
+        if not self.cfg["name_templates"]:
+            self.cfg["name_templates"] = [core.DEFAULT_CLIPS_TEMPLATE]
+        if not self.cfg["name_templates_active"]:
+            self.cfg["name_templates_active"] = [self.cfg["name_templates"][0]]
+        self._fill_templates()
 
     # ───────────── 规格 / AAF 下拉的「值 ↔ 显示」转换 ─────────────
 
@@ -263,24 +357,27 @@ class ExportTab(BaseTab):
         return v[0] if v else "media"
 
     def _sync_mode(self):
-        """按模式开关控件：整轨模式下片段专属项（格式/码率/去重）不适用。
+        """按勾选模式开关控件：整轨专属项（规格/整轨命名/AAF）仅在勾了整轨时可用；
+        片段专属项（格式/码率/去重）仅在勾了片段时可用。
 
         门控思路与导入页一致 —— 不满足条件直接置灰，而不是等点了才报错。
         """
-        tracks = self.var_mode.get() == "tracks"
+        mset = self._mode_set()
+        tracks = "tracks" in mset
+        clip = "clips" in mset
         state = "normal" if tracks else "disabled"
         for w in (self.cb_spec, self.entry_track_tpl, self.chk_aaf):
             try:
                 w.configure(state=state)
             except Exception:
                 pass
-        # AAF 交付方式只在勾了 AAF 时可改
+        # AAF 交付方式只在勾了整轨且勾了 AAF 时可改
         try:
             self.cb_aaf.configure(state="normal" if (tracks and self.var_aaf.get()) else "disabled")
         except Exception:
             pass
         # 片段专属项（整轨固定 WAV，码率/去重无意义）
-        clip_state = "disabled" if tracks else "normal"
+        clip_state = "normal" if clip else "disabled"
         for w in (self.cb_format, self.cb_bitrate, self.chk_dedupe):
             try:
                 w.configure(state=clip_state)
@@ -377,6 +474,11 @@ class ExportTab(BaseTab):
         if self.running:
             return
         self.collect()
+
+        if not self._mode_set():
+            messagebox.showwarning("未选择导出模式",
+                                   "请至少勾选一种导出模式（整轨 / 片段）。")
+            return
 
         if not self.cfg.get("output_dir"):
             messagebox.showwarning("缺少输出目录", "请先填写「输出目录」，或点「浏览…」选择。")

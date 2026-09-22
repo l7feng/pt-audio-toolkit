@@ -32,6 +32,18 @@ DEFAULT_TRACK_TEMPLATE = "{项目名}_{轨道名}"
 # 规格预设键（完整 SPEC_PRESETS 表仍在 main.py，此处只放默认键）
 DEFAULT_SPEC_KEY = "keep"
 
+# 片段命名默认模板（兼容旧配置 / CLI 回退）
+DEFAULT_CLIPS_TEMPLATE = "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s"
+
+# 命名模板预设库（「多选命名模板」的候选，用户可在界面增删）
+NAMING_PRESETS = [
+    "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
+    "{原始名}",
+    "{素材类型}_{序号:03d}_{原始名}",
+    "{项目名}_{序号:03d}_{原始名}",
+    "{项目名}_{素材类型}_{序号:03d}_{原始名}",
+]
+
 
 # ──────────────────── 路径锚点（由 main 注入）────────────────────
 
@@ -63,6 +75,9 @@ DEFAULT_CONFIG = {
     "input_dir": "",
     "output_dir": "D:/导出音频",
     "name_template": "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
+    # ── 命名模板多选（2026-09-22 新增）──
+    "name_templates": NAMING_PRESETS,                 # 命名模板库（候选清单，可增删）
+    "name_templates_active": [NAMING_PRESETS[0]],     # 当前勾选的模板（多选 → 各生成一份）
     "audio_format": "mp3",
     "bitrate_kbps": 192,
     "conflict": "rename",
@@ -97,7 +112,9 @@ DEFAULT_IMPORT_CONFIG = {
 CONFIG_FIELDS = {
     "input_dir": ("剪映草稿输入目录", "留空 = 自动定位剪映默认草稿目录"),
     "output_dir": ("音频输出目录（必填）", ""),
-    "name_template": ("命名模板", "{项目名}/{素材类型}/{序号:03d}/{原始名}/{日期}/{时长}/{备注}，示例 `{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s`"),
+    "name_template": ("命名模板（主模板/兼容字段）", "{项目名}/{素材类型}/{序号:03d}/{原始名}/{日期}/{时长}/{备注}，示例 `{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s`"),
+    "name_templates": ("命名模板库（多选）", "片段导出可用的命名模板清单，界面可增删"),
+    "name_templates_active": ("当前勾选的命名模板", "多选；勾选的每套模板都会各生成一份输出（多模板时按 模板N 分目录）"),
     "audio_format": ("音频格式", "mp3 或 wav"),
     "bitrate_kbps": ("比特率 kbps（仅 mp3）", "如 128 / 192 / 320"),
     "conflict": ("重名冲突策略", "rename=自动重命名 | cover=覆盖 | skip=跳过"),

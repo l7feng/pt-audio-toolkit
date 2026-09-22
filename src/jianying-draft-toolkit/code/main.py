@@ -33,7 +33,8 @@ from typing import List, Optional, Tuple
 #        → v2.0.0 整轨+AAF+三标签页合并（09-18）→ v2.1.0 L0/L1 分层（09-18）
 #        → v2.2.0 L0.5 黑窗+切页卡顿根治（09-19）
 #        → v2.3.0 菜单栏（文件/设置/工具/帮助）+ 默认路径设置对话框（09-21）
-APP_VERSION = "2.3.0"
+#        → v2.4.0 导出模式多选 + 命名模板多选 + 整轨源文件相对路径解析修复（09-21）
+APP_VERSION = "2.4.0"
 
 
 def app_build_date() -> str:
@@ -82,6 +83,7 @@ from core.config import (              # noqa: E402
     DEFAULT_CONFIG, DEFAULT_IMPORT_CONFIG, CONFIG_FIELDS,
     CONFIG_PATH, LEGACY_CONFIG_PATH,
     DEFAULT_TRACK_TEMPLATE, DEFAULT_SPEC_KEY,
+    DEFAULT_CLIPS_TEMPLATE, NAMING_PRESETS,
     config_path, load_config, save_config, ask, parse_bool, init_config,
 )
 
@@ -426,7 +428,9 @@ def parse_draft_json(draft_dir: Path, json_path: Path, extract_video_tracks: boo
             for seg in track.get("segments", []):
                 mat_id = seg.get("material_id", "")
                 mat = materials_map.get(mat_id, {})
-                source_path = mat.get("path", "")
+                raw_path = mat.get("path", "")
+                resolved = resolve_source_path(raw_path, draft_dir)
+                source_path = str(resolved) if resolved else raw_path
                 mat_name = mat.get("material_name", Path(source_path).stem if source_path else "")
                 # 用 source_timerange（素材原始时间码）切片，target 为时间线位置
                 time_range = seg.get("source_timerange", seg.get("target_timerange", {}))
@@ -447,7 +451,9 @@ def parse_draft_json(draft_dir: Path, json_path: Path, extract_video_tracks: boo
             for seg in track.get("segments", []):
                 mat_id = seg.get("material_id", "")
                 mat = materials_map.get(mat_id, {})
-                source_path = mat.get("path", "")
+                raw_path = mat.get("path", "")
+                resolved = resolve_source_path(raw_path, draft_dir)
+                source_path = str(resolved) if resolved else raw_path
                 if not source_path:
                     continue
                 mat_name = mat.get("material_name", Path(source_path).stem if source_path else "")
@@ -569,7 +575,9 @@ def parse_draft_tracks(draft_dir: Path, json_path: Path,
         segs: List[TrackSegment] = []
         for seg in track.get("segments", []) or []:
             mat = materials_map.get(seg.get("material_id", ""), {})
-            src_path = mat.get("path", "")
+            raw_path = mat.get("path", "")
+            resolved = resolve_source_path(raw_path, draft_dir)
+            src_path = str(resolved) if resolved else raw_path
             if not src_path:
                 continue
             s_start, s_dur = _range_us(seg.get("source_timerange"))
@@ -675,18 +683,32 @@ def render_track_name(template: str, project: str, track_name: str,
 
 
 def extract_track_audio(track: AudioTrack, total_us: int, output_file: Path,
-                        spec_key: str = DEFAULT_SPEC_KEY, log=print) -> bool:
+                        spec_key: str = DEFAULT_SPEC_KEY, log=print,
+                        draft_dir: Optional[Path] = None) -> bool:
     """把一条轨道渲染成**整轨 WAV**：片段按时间线落点摆放，空白补真静音。
 
     ffmpeg 一次调用成型（无中间文件）：
         每段 → atrim(取材区间) → asetpts → aformat → adelay(落点) → apad → atrim(总长)
         多段 → amix(normalize=0) 求和（同一轨的片段本就不重叠，求和等价拼接）
     空白段是**全零采样**（volumedetect ≈ -91dB 数字静音），不是"没有音频"。
+
+    源文件解析：素材 path 多数相对草稿根，但工具以 exe 目录为 CWD，按原样判断会
+    误报缺失。先 `resolve_source_path` 再判定；仍找不到才告警留静音（并提示素材
+    可能位于草稿目录之外）。
     """
     segs = [s for s in track.segments if s.tl_dur_us > 0]
-    missing = [s for s in segs if not Path(s.source_path).exists()]
-    for s in missing:
-        log(f"  [warn] 源文件不存在，该片段留静音: {Path(s.source_path).name}")
+    for s in segs:
+        sp = Path(s.source_path)
+        if not sp.exists():
+            found = resolve_source_path(s.source_path, draft_dir) if draft_dir else None
+            if found:
+                s.source_path = str(found)
+            else:
+                log(f"  [warn] 源文件不存在，该片段留静音: {Path(s.source_path).name}")
+                log(f"         原始 path: {s.source_path}")
+                if draft_dir:
+                    log("         已在草稿目录内按文件名查找，未命中 → "
+                        "素材可能位于草稿目录之外（剪映素材库 / 原始导入位置），需手动定位")
     segs = [s for s in segs if Path(s.source_path).exists()]
     if not segs:
         log("  ✗ 该轨道所有片段源文件均缺失")
@@ -887,60 +909,64 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
     conflict = cfg.get("conflict", "rename")
     audio_format = cfg.get("audio_format", "mp3")
     bitrate = cfg.get("bitrate_kbps", 192)
-    template = cfg.get("name_template", "{项目名}_{素材类型}_{序号:03d}_{原始名}")
     remarks = cfg.get("remarks", "")
+    # 命名模板多选：勾选的每套模板各生成一份输出
+    templates = cfg.get("name_templates_active") or [cfg.get("name_template") or DEFAULT_CLIPS_TEMPLATE]
+    templates = [t for t in templates if t] or [DEFAULT_CLIPS_TEMPLATE]
+    multi = len(templates) > 1
+    seen_per_tpl = [dict() for _ in templates]   # 每模板独立去重，保证各模板都出全
 
     for i, seg in enumerate(segments, 1):
-        try:
-            # 源文件存在性
-            src = Path(seg.source_path)
-            if not src.exists():
-                # 尝试在草稿目录/输入目录下递归搜索同名文件
-                print(f"  [warn] 源文件不存在，尝试重建路径: {src.name}")
-                found = find_source_file(seg, draft_dir)
-                if found is None:
-                    print(f"  ⏭ 跳过（找不到源文件）: {src.name}")
-                    logging.warning(f"[SKIP] 源文件缺失: {src}")
+        # 源文件存在性（按草稿根解析 + 树内按名查找，一次性，多模板复用）
+        resolved = resolve_source_path(seg.source_path, draft_dir)
+        if resolved is None:
+            print(f"  ⏭ 跳过（找不到源文件）: {Path(seg.source_path).name}")
+            logging.warning(f"[SKIP] 源文件缺失: {seg.source_path}")
+            stats["skipped"] += 1
+            continue
+        seg.source_path = str(resolved)
+
+        for ti, template in enumerate(templates, 1):
+            try:
+                # 去重（键 = 文件内容 + 时间切片；按模板隔离）
+                if cfg.get("dedupe", True):
+                    dup = dedupe_check(seg.source_path, seg.start_us, seg.end_us, seen_per_tpl[ti - 1])
+                    if dup:
+                        print(f"  ⏭ 去重跳过（与 {dup} 重复）: {seg.material_name}")
+                        stats["skipped"] += 1
+                        continue
+
+                # 命名与归档
+                base_name = render_name(template, seg, i, remarks)
+                category = TYPE_CATEGORY.get(seg.track_type, "audio")
+                tpl_root = (Path(cfg.get("output_dir", "D:/导出音频")) / f"模板{ti}") if multi \
+                    else Path(cfg.get("output_dir", "D:/导出音频"))
+                category_dir = tpl_root / category
+                category_dir.mkdir(parents=True, exist_ok=True)
+
+                out_file = category_dir / f"{base_name}.{audio_format}"
+                resolved_out = resolve_conflict(out_file, conflict)
+                if resolved_out is None:
+                    print(f"  ⏭ 跳过（已存在）: {out_file.name}")
                     stats["skipped"] += 1
                     continue
-                seg.source_path = str(found)
 
-            # 去重（键 = 文件内容 + 时间切片）
-            if cfg.get("dedupe", True):
-                dup = dedupe_check(seg.source_path, seg.start_us, seg.end_us, seen_ids)
-                if dup:
-                    print(f"  ⏭ 去重跳过（与 {dup} 重复）: {seg.material_name}")
-                    stats["skipped"] += 1
-                    continue
-
-            # 命名与归档
-            base_name = render_name(template, seg, i, remarks)
-            category = TYPE_CATEGORY.get(seg.track_type, "audio")
-            category_dir = Path(cfg.get("output_dir", "D:/导出音频")) / category
-            category_dir.mkdir(parents=True, exist_ok=True)
-
-            out_file = category_dir / f"{base_name}.{audio_format}"
-            resolved = resolve_conflict(out_file, conflict)
-            if resolved is None:
-                print(f"  ⏭ 跳过（已存在）: {out_file.name}")
-                stats["skipped"] += 1
-                continue
-
-            # ffmpeg 提取到临时文件再原子移动到归档位置
-            temp_file = temp_dir / f"tmp_{i}_{base_name}.{audio_format}"
-            if extract_audio(seg, temp_file, audio_format, bitrate):
-                temp_file.replace(resolved)
-                print(f"  ✓ 导出: {category}/{resolved.name} ({seg.duration_s:.1f}s)")
-                logging.info(f"[OK] {draft_dir.name} → {category}/{resolved.name}")
-                stats["success"] += 1
-            else:
-                print(f"  ✗ ffmpeg 提取失败: {seg.source_path}")
-                logging.error(f"[FAIL] ffmpeg 提取失败: {seg.source_path}")
+                # ffmpeg 提取到临时文件再原子移动到归档位置
+                temp_file = temp_dir / f"tmp_{ti}_{i}_{base_name}.{audio_format}"
+                if extract_audio(seg, temp_file, audio_format, bitrate):
+                    temp_file.replace(resolved_out)
+                    tag = f"模板{ti} " if multi else ""
+                    print(f"  ✓ 导出: {tag}{category}/{resolved_out.name} ({seg.duration_s:.1f}s)")
+                    logging.info(f"[OK] {draft_dir.name} → {tag}{category}/{resolved_out.name}")
+                    stats["success"] += 1
+                else:
+                    print(f"  ✗ ffmpeg 提取失败: {seg.source_path}")
+                    logging.error(f"[FAIL] ffmpeg 提取失败: {seg.source_path}")
+                    stats["failed"] += 1
+            except Exception as e:
+                print(f"  ✗ 片段处理异常: {e}")
+                logging.error(f"[ERROR] {draft_dir.name} 片段异常: {e}", exc_info=True)
                 stats["failed"] += 1
-        except Exception as e:
-            print(f"  ✗ 片段处理异常: {e}")
-            logging.error(f"[ERROR] {draft_dir.name} 片段异常: {e}", exc_info=True)
-            stats["failed"] += 1
 
 
 def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict):
@@ -989,7 +1015,7 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
                 stats["skipped"] += 1
                 continue
             temp_file = temp_dir / f"trk_{t.index}_{base}.wav"
-            if extract_track_audio(t, total_us, temp_file, spec_key):
+            if extract_track_audio(t, total_us, temp_file, spec_key, draft_dir=draft_dir):
                 temp_file.replace(resolved)
                 print(f"  ✓ 整轨: {resolved.name}（{len(t.segments)} 段 / {total_s:.3f}s）")
                 logging.info(f"[OK] {draft_dir.name} → {resolved.name}")
@@ -1045,7 +1071,6 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
     conflict = cfg.get("conflict", "rename")
     audio_format = cfg.get("audio_format", "mp3")
     bitrate = cfg.get("bitrate_kbps", 192)
-    template = cfg.get("name_template", "{项目名}_{素材类型}_{序号:03d}_{原始名}")
     remarks = cfg.get("remarks", "")
 
     # 项目名用文件名本身（比所在文件夹名更有辨识度）
@@ -1064,48 +1089,80 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
 
     print(f"\n[process] 文件: {media_file.name}")
 
-    if cfg.get("dedupe", True):
-        dup = dedupe_check(seg.source_path, 0, 0, seen_ids)
-        if dup:
-            print(f"  ⏭ 去重跳过（与 {dup} 重复）: {media_file.name}")
-            stats["skipped"] += 1
-            return
+    # 命名模板多选：勾选的每套模板各生成一份输出
+    templates = cfg.get("name_templates_active") or [cfg.get("name_template") or DEFAULT_CLIPS_TEMPLATE]
+    templates = [t for t in templates if t] or [DEFAULT_CLIPS_TEMPLATE]
+    multi = len(templates) > 1
+    seen_per_tpl = [dict() for _ in templates]
 
-    try:
-        base_name = render_name(template, seg, 1, remarks)
-        category = TYPE_CATEGORY.get(seg.track_type, "audio")
-        category_dir = Path(cfg.get("output_dir", "D:/导出音频")) / category
-        category_dir.mkdir(parents=True, exist_ok=True)
+    for ti, template in enumerate(templates, 1):
+        try:
+            if cfg.get("dedupe", True):
+                dup = dedupe_check(seg.source_path, 0, 0, seen_per_tpl[ti - 1])
+                if dup:
+                    print(f"  ⏭ 去重跳过（与 {dup} 重复）: {media_file.name}")
+                    stats["skipped"] += 1
+                    continue
 
-        out_file = category_dir / f"{base_name}.{audio_format}"
-        resolved = resolve_conflict(out_file, conflict)
-        if resolved is None:
-            print(f"  ⏭ 跳过（已存在）: {out_file.name}")
-            stats["skipped"] += 1
-            return
+            base_name = render_name(template, seg, 1, remarks)
+            category = TYPE_CATEGORY.get(seg.track_type, "audio")
+            tpl_root = (Path(cfg.get("output_dir", "D:/导出音频")) / f"模板{ti}") if multi \
+                else Path(cfg.get("output_dir", "D:/导出音频"))
+            category_dir = tpl_root / category
+            category_dir.mkdir(parents=True, exist_ok=True)
 
-        temp_file = temp_dir / f"tmp_direct_{base_name}.{audio_format}"
-        if extract_audio(seg, temp_file, audio_format, bitrate):
-            temp_file.replace(resolved)
-            print(f"  ✓ 导出: {category}/{resolved.name}")
-            logging.info(f"[OK] {media_file.name} → {category}/{resolved.name}")
-            stats["success"] += 1
-        else:
-            print(f"  ✗ ffmpeg 提取失败: {media_file}")
-            logging.error(f"[FAIL] ffmpeg 提取失败: {media_file}")
-            stats["failed"] += 1
-    except Exception as e:
-        print(f"  ✗ 文件处理异常: {e}")
+            out_file = category_dir / f"{base_name}.{audio_format}"
+            resolved = resolve_conflict(out_file, conflict)
+            if resolved is None:
+                print(f"  ⏭ 跳过（已存在）: {out_file.name}")
+                stats["skipped"] += 1
+                continue
+
+            temp_file = temp_dir / f"tmp_direct_{ti}_{base_name}.{audio_format}"
+            if extract_audio(seg, temp_file, audio_format, bitrate):
+                temp_file.replace(resolved)
+                tag = f"模板{ti} " if multi else ""
+                print(f"  ✓ 导出: {tag}{category}/{resolved.name}")
+                logging.info(f"[OK] {media_file.name} → {tag}{category}/{resolved.name}")
+                stats["success"] += 1
+            else:
+                print(f"  ✗ ffmpeg 提取失败: {media_file}")
+                logging.error(f"[FAIL] ffmpeg 提取失败: {media_file}")
+                stats["failed"] += 1
+        except Exception as e:
+            print(f"  ✗ 文件处理异常: {e}")
         logging.error(f"[ERROR] {media_file} 处理异常: {e}", exc_info=True)
         stats["failed"] += 1
 
 
-def find_source_file(seg: AudioSegment, draft_dir: Path) -> Optional[Path]:
-    """按文件名在草稿目录递归搜索源文件，重建失效路径"""
-    name = Path(seg.source_path).name
-    for root, _, files in os.walk(draft_dir):
-        if name in files:
-            return Path(root) / name
+def resolve_source_path(src: str, draft_dir: Path) -> Optional[Path]:
+    """把素材 path 解析成真实存在的绝对路径。
+
+    剪映 audio/video 素材的 `path` 通常是**相对草稿根**的相对路径
+    （如 `audio/FX_xxx.wav` 或 `./audio/...`）。工具以 exe 目录为 CWD 运行，
+    直接 `Path(path).exists()` 会因相对基准错误而找不到本就存在的文件
+    （表现为「工程内有声、导出却报源文件缺失」）。
+
+    解析顺序：
+      1. 原样（绝对路径，或恰好相对 CWD 命中）；
+      2. 相对草稿根（`draft_dir / path`）—— 修复 CWD 基准 bug；
+      3. 草稿目录树内按文件名递归查找（path 写法/层级差异兜底）。
+    都失败返回 None —— 此时素材确实不在草稿内（可能在剪映素材库或原始导入位置），
+    应告警而非静默。
+    """
+    if not src:
+        return None
+    p = Path(src)
+    if p.exists():
+        return p.resolve()
+    rel = draft_dir / p
+    if rel.exists():
+        return rel.resolve()
+    name = p.name
+    if name:
+        for root, _, files in os.walk(draft_dir):
+            if name in files:
+                return (Path(root) / name).resolve()
     return None
 
 
@@ -1244,8 +1301,15 @@ def execute_export(cfg: dict, root: Path, log_file: Optional[Path] = None,
         log_file = output_dir / "导出日志.log"
     setup_logger(log_file)
 
-    mode = cfg.get("export_mode", "tracks")
-    mode_label = "整轨（一条轨一个 WAV，等长对齐）" if mode == "tracks" else "片段（一段一个文件）"
+    mode = cfg.get("export_mode", ["tracks"])
+    if isinstance(mode, str):
+        mode = [mode]
+    mode_set = set(mode) & {"tracks", "clips"}
+    if not mode_set:
+        mode_set = {"tracks"}
+    mode_label = "、".join(
+        ("整轨（一条轨一个 WAV，等长对齐）" if m == "tracks"
+         else "片段（一段一个文件）") for m in ("tracks", "clips") if m in mode_set)
     print(f"剪映草稿目录: {root}")
     print(f"输出目录:     {output_dir}")
     print(f"导出模式:     {mode_label}\n")
@@ -1266,9 +1330,9 @@ def execute_export(cfg: dict, root: Path, log_file: Optional[Path] = None,
         if skip_existing and d.name in processed:
             print(f"[skip] 已处理草稿，跳过: {d.name}")
             continue
-        if mode == "tracks":
+        if "tracks" in mode_set:
             process_draft_tracks(d, cfg, temp_dir, stats)
-        else:
+        if "clips" in mode_set:
             process_draft(d, cfg, temp_dir, seen_ids, stats)
         save_processed(output_dir, d.name, processed)
 
