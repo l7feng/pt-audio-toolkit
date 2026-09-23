@@ -212,10 +212,10 @@ class ExportTab(BaseTab):
                       tip=("用法：① 把草稿/文件夹拖进拖拽区（或填草稿目录）"
                            "‣ ② 填输出目录 ‣ ③ 点开始导出。\n"
                            "本页功能完全独立，不需要 Pro Tools。\n"
-                           "产物按类型分组（v2.6.0）：\n"
-                           "  · 01-多条WAV/<草稿名>/<集名>/ —— 整轨模式（一条轨一个 WAV，等长对齐）\n"
-                           "  · 02-素材片段/<music|audio…>/<集名>/ —— 片段模式\n"
-                           "  · 03-AAF/<草稿名>/<集名>/ —— AAF（整轨一个 / 分包每集一个，可直接交 PT）\n"
+                        "产物按类型分组（v2.6.1）：\n"
+                        "  · <草稿名>/<集名>/01-多条WAV/ —— 整轨模式（一条轨一个 WAV，等长对齐）\n"
+                        "  · <草稿名>/<集名>/02-素材片段/ —— 片段模式\n"
+                        "  · <草稿名>/<集名>/03-AAF/ —— AAF（整轨一个 / 分包每集一个，可直接交 PT）\n"
                            "日志与断点续跑记录在「默认路径设置」指定的日志/数据目录，不混在产物里。\n\n"))
 
         self._sync_mode()
@@ -519,6 +519,11 @@ class ExportTab(BaseTab):
         else:
             root_str = self.cfg.get("input_dir", "").strip()
             root = Path(root_str) if root_str else core.DEFAULT_JIANYING_DRAFT_ROOT
+            # 浏览按钮选中的目录也走递归草稿识别（与拖拽一致），避免只扫直接子目录
+            if root_str:
+                found, _, _ = core.resolve_input_paths([root])
+                if found:
+                    draft_dirs = found
 
         # 分包模式：先解析视频名，判断不出的项目名**先问人**再跑（工具不猜）
         if self.cfg.get("split_by_video"):

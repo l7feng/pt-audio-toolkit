@@ -38,7 +38,10 @@ from typing import List, Optional, Tuple
 #        → v2.5.1 片段模式也按视频窗归类（music/法老6/…，时间线落点归属）（09-23）
 #        → v2.6.0 产物目录分组（01-多条WAV/02-素材片段/03-AAF）+ 分包下按集导出 AAF
 #          + 日志/运行数据独立目录（log_dir/data_dir）+ {轨道类别} 占位符（09-23）
-APP_VERSION = "2.6.0"
+#        → v2.6.1 文件夹结构反转（<草稿名|集名>/01-多条WAV/ 而非 01-多条WAV/<草稿名>/<集名>/）
+#          + 素材片段去掉 audio/music 子目录 + render_name KeyError 循环移除未知字段后重新 format
+#          + 浏览按钮选中的目录走递归草稿识别（与拖拽一致）（09-23）
+APP_VERSION = "2.6.1"
 
 
 def app_build_date() -> str:
@@ -813,10 +816,16 @@ def render_track_name(template: str, project: str, track_name: str,
         fields.update(extra)
     try:
         return sanitize_filename(template.format(**fields))
-    except KeyError as e:
-        key = e.args[0] if e.args else str(e)
-        logging.warning(f"[namer] 模板含有未知字段 {{{key}}}，已忽略")
-        return sanitize_filename(template.replace("{" + key + "}", ""))
+    except KeyError:
+        # 移除所有未知字段后重新 format（此前只移除一个就返回，导致其余占位符残留）
+        import re as _re
+        known = set(fields.keys())
+        cleaned = _re.sub(
+            r"\{(\w+)(?::[^}]*)?\}",
+            lambda m: m.group(0) if m.group(1) in known else "",
+            template,
+        )
+        return sanitize_filename(cleaned.format(**fields))
 
 
 def write_silence_wav(output_file: Path, total_s: float, sr: int, bits: int,
@@ -1016,10 +1025,16 @@ def render_name(template: str, seg: AudioSegment, seq_index: int, remarks: str =
         fields.update({k: v for k, v in extra.items() if v})
     try:
         return sanitize_filename(template.format(**fields))
-    except KeyError as e:
-        key = e.args[0] if e.args else str(e)
-        logging.warning(f"[namer] 模板含有未知字段 {{{key}}}，已忽略")
-        return sanitize_filename(template.replace("{" + key + "}", ""))
+    except KeyError:
+        # 移除所有未知字段后重新 format（此前只移除一个就返回，导致其余占位符残留）
+        import re as _re
+        known = set(fields.keys())
+        cleaned = _re.sub(
+            r"\{(\w+)(?::[^}]*)?\}",
+            lambda m: m.group(0) if m.group(1) in known else "",
+            template,
+        )
+        return sanitize_filename(cleaned.format(**fields))
 
 
 def chunk_index_for_tl(chunks: List[VideoChunk], tl_start_us: int) -> Optional[int]:
@@ -1192,14 +1207,13 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
 
                 # 命名与归档
                 base_name = render_name(template, seg, i, remarks, extra=extra)
-                category = TYPE_CATEGORY.get(seg.track_type, "audio")
-                # v2.6.0 产物目录分组：片段统一进「02-素材片段/」，
-                # 内部再按素材类型（music/audio/voice/sfx）分目录
+                # v2.6.1 产物目录分组：<草稿名|集名>/02-素材片段/（不再按 audio/music 分子目录）
                 tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
                     else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
-                category_dir = tpl_root / "02-素材片段" / category
                 if chunk_dir:
-                    category_dir = category_dir / chunk_dir
+                    category_dir = tpl_root / chunk_dir / "02-素材片段"
+                else:
+                    category_dir = tpl_root / draft_dir.name / "02-素材片段"
                 category_dir.mkdir(parents=True, exist_ok=True)
 
                 out_file = category_dir / f"{base_name}.{audio_format}"
@@ -1214,8 +1228,8 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
                 if extract_audio(seg, temp_file, audio_format, bitrate):
                     temp_file.replace(resolved_out)
                     tag = f"模板{ti} " if multi else ""
-                    print(f"  ✓ 导出: {tag}{category}/{resolved_out.name} ({seg.duration_s:.1f}s)")
-                    logging.info(f"[OK] {draft_dir.name} → {tag}{category}/{resolved_out.name}")
+                    print(f"  ✓ 导出: {tag}{resolved_out.name} ({seg.duration_s:.1f}s)")
+                    logging.info(f"[OK] {draft_dir.name} → {tag}{resolved_out.name}")
                     stats["success"] += 1
                 else:
                     print(f"  ✗ ffmpeg 提取失败: {seg.source_path}")
@@ -1257,10 +1271,9 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
     spec_key = cfg.get("track_spec", DEFAULT_SPEC_KEY)
     template = cfg.get("track_name_template") or DEFAULT_TRACK_TEMPLATE
     remarks = cfg.get("remarks", "")
-    # v2.6.0 产物目录分组：整轨 WAV 统一进「01-多条WAV/<草稿名>/」，
-    # AAF 统一进「03-AAF/<草稿名>/」—— 大类一眼可辨，不再与片段产物混居。
+    # v2.6.1 产物目录分组：<草稿名>/01-多条WAV/ —— 集名在上层，产物类型在下层
     output_root = Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
-    out_root = output_root / "01-多条WAV" / draft_dir.name
+    out_root = output_root / draft_dir.name / "01-多条WAV"
     out_root.mkdir(parents=True, exist_ok=True)
     # 临时目录自建，不依赖调用方（execute_export 建了，但单独调用本函数时没有）
     Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -1291,7 +1304,7 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
             if info.need_input:
                 print(f"  ⚠ 视频「{ch.material_name}」缺项目名（{info.reason}）"
                       f" → 先用原名建文件夹：{folder}")
-            out_dir = out_root / folder
+            out_dir = output_root / folder / "01-多条WAV"
             out_dir.mkdir(parents=True, exist_ok=True)
             proj_for_name = info.project or info.raw or draft_dir.name
             extra = info.as_fields()
@@ -1331,7 +1344,7 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
             if cfg.get("export_aaf"):
                 try:
                     from aaf_writer import write_aaf
-                    aaf_dir = output_root / "03-AAF" / draft_dir.name / folder
+                    aaf_dir = output_root / folder / "03-AAF"
                     ok, msg = write_aaf(tracks, ch.tl_dur_us, folder, aaf_dir, cfg,
                                         win_start_us=ch.tl_start_us,
                                         win_end_us=ch.tl_end_us)
@@ -1374,11 +1387,11 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
             logging.error(f"[ERROR] {draft_dir.name} 轨道异常: {e}", exc_info=True)
             stats["failed"] += 1
 
-    # AAF（可选，默认关）—— v2.6.0 落点统一到 03-AAF/<草稿名>/
+    # AAF（可选，默认关）—— v2.6.1 落点统一到 <草稿名>/03-AAF/
     if cfg.get("export_aaf"):
         try:
             from aaf_writer import write_aaf
-            aaf_dir = output_root / "03-AAF" / draft_dir.name
+            aaf_dir = output_root / draft_dir.name / "03-AAF"
             ok, msg = write_aaf(tracks, total_us, draft_dir.name, aaf_dir, cfg)
             if ok:
                 print(f"  ✓ AAF: {msg}")
@@ -1453,11 +1466,10 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
                     continue
 
             base_name = render_name(template, seg, 1, remarks)
-            category = TYPE_CATEGORY.get(seg.track_type, "audio")
-            # v2.6.0 产物目录分组：拖入文件提取的音频同样进「02-素材片段/」
+            # v2.6.1 产物目录分组：拖入文件提取的音频进「02-素材片段/」（不再分子目录）
             tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
                 else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
-            category_dir = tpl_root / "02-素材片段" / category
+            category_dir = tpl_root / "02-素材片段"
             category_dir.mkdir(parents=True, exist_ok=True)
 
             out_file = category_dir / f"{base_name}.{audio_format}"
@@ -1471,8 +1483,8 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
             if extract_audio(seg, temp_file, audio_format, bitrate):
                 temp_file.replace(resolved)
                 tag = f"模板{ti} " if multi else ""
-                print(f"  ✓ 导出: {tag}{category}/{resolved.name}")
-                logging.info(f"[OK] {media_file.name} → {tag}{category}/{resolved.name}")
+                print(f"  ✓ 导出: {tag}{resolved.name}")
+                logging.info(f"[OK] {media_file.name} → {tag}{resolved.name}")
                 stats["success"] += 1
             else:
                 print(f"  ✗ ffmpeg 提取失败: {media_file}")
