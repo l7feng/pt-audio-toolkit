@@ -10,7 +10,7 @@ import sys
 
 APP_NAME = "rename-unify"
 # 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），显示时补 v（见 title()）。
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 
 def app_dir():
@@ -33,15 +33,18 @@ DEFAULTS = {
     "last_root": r"D:\DAW-Project",
     "recursive": True,
     "exts": ".wav .aif .aiff .mp3 .flac .w64",
-    "template": "{片名} {集数}集 {日期} {版本} {档位}_{类型}",
-    "fields": {"片名": "前夫", "日期": "0920", "版本": "V01", "档位": "7F"},
+    # 全局模板：目标没在「目标表」里单独配模板时用它兜底
+    "template": "{片名} {集数}集 {日期} {版本} {用户}_{轨道信息}",
+    "fields": {"片名": "前夫", "日期": "0920", "版本": "V01", "用户": "7F"},
     "rules": [],          # 空 = 用 core_rules.DEFAULT_RULES
-    # 命名实体清单（可勾选）：空 = 不启用过滤（等于旧行为）；见 core_rules.DEFAULT_ENABLED_TYPES
+    # 模板库（页1 可增删改）：空 = 用 core_rules.DEFAULT_TEMPLATES
+    "templates": [],
+    # 目标表（页2「目标与归位」）：空 = 用 core_rules.DEFAULT_TARGETS
+    # 每项 = {name, dir, enabled, eps, note, templates[], tpl_name}
+    "targets": [],
+    # ⚠️ 仅作 v1.1.0 → v1.2.0 的迁移源：旧「命名清单」会被折成目标表
+    #    （core.migrate_enabled_types），新配置不再写这个键。
     "enabled_types": [],
-    # 执行完改名后自动按集归位（平铺分类目录 → 集文件夹）
-    "regroup_after": False,
-    "regroup_root": "",       # 归位目标；空 = 用 last_root
-    "regroup_cleanup": True,  # 归位后清理搬空的类别文件夹
     "window": "1180x760",
 }
 
@@ -58,9 +61,17 @@ def load_config():
     out = dict(DEFAULTS)
     out.update({k: v for k, v in cfg.items() if k in DEFAULTS})
     # fields 做逐键合并，避免用户配置缺键导致 KeyError
+    raw_fields = cfg.get("fields") if isinstance(cfg.get("fields"), dict) else {}
     f = dict(DEFAULTS["fields"])
-    if isinstance(cfg.get("fields"), dict):
-        f.update({str(k): str(v) for k, v in cfg["fields"].items()})
+    if raw_fields:
+        f.update({str(k): str(v) for k, v in raw_fields.items()})
+    # v1.1.0 的「档位」→ v1.2.0 的「用户」（7F 是用户代号，不是「档位」）。
+    # ⚠️ 判据必须看**旧配置原文** raw_fields，不能看合并后的 f：
+    #    DEFAULTS 里「用户」已带占位值 7F，用 f 判断会误认为「用户已设过」，
+    #    导致旧配置的「档位」被静默丢掉（2026-09-23 回归抓到的 bug）。
+    if "档位" in raw_fields and not str(raw_fields.get("用户", "") or "").strip():
+        f["用户"] = str(raw_fields["档位"])
+    f.pop("档位", None)
     out["fields"] = f
     # enabled_types 逐项清洗，容忍手改配置写坏结构
     out["enabled_types"] = _clean_enabled_types(cfg.get("enabled_types"))

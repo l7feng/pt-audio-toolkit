@@ -91,6 +91,9 @@ DEFAULT_CONFIG = {
     "track_spec": DEFAULT_SPEC_KEY,
     "export_aaf": False,
     "aaf_media_mode": "media",                   # media=AAF+Media 文件夹 | embed=单文件内嵌
+    # ── 按视频分包（v2.5.0）──
+    "split_by_video": False,                     # true=视频轨每个片段一个文件夹
+    "video_project_answers": {},                 # {视频素材名: 人类补的项目名}，记住后不再问
     # ── 导入页配置（与导出页完全独立，见 tabs/import_tab.py）──
     "import_json": "",
     "import_draft_dir": "",

@@ -19,6 +19,7 @@ class ExportTab(BaseTab):
         "input_dir", "output_dir", "name_template", "audio_format", "bitrate_kbps",
         "conflict", "dedupe", "extract_video_tracks", "skip_existing", "remarks",
         "export_mode", "track_name_template", "track_spec", "export_aaf", "aaf_media_mode",
+        "split_by_video", "video_project_answers",
     )
 
     def __init__(self, parent, app):
@@ -139,6 +140,8 @@ class ExportTab(BaseTab):
             value=bool(self.cfg.get("extract_video_tracks", True)))
         self.var_skip_existing = tk.BooleanVar(
             value=bool(self.cfg.get("skip_existing", True)))
+        self.var_split_video = tk.BooleanVar(
+            value=bool(self.cfg.get("split_by_video", False)))
         row = ttk.Frame(cfg_box)
         row.grid(row=4, column=0, columnspan=4, sticky="w", padx=4, pady=3)
         self.chk_dedupe = ttk.Checkbutton(row, text="按内容去重", variable=self.var_dedupe)
@@ -147,6 +150,16 @@ class ExportTab(BaseTab):
                         variable=self.var_extract_video).pack(side="left", padx=16)
         ttk.Checkbutton(row, text="断点续跑（跳过已处理草稿）",
                         variable=self.var_skip_existing).pack(side="left", padx=16)
+        # v2.5.0：按视频片段分包（一个视频 = 一个交付文件夹）
+        self.chk_split = ttk.Checkbutton(
+            row, text="按视频分包（一个视频片段一个文件夹）",
+            variable=self.var_split_video)
+        self.chk_split.pack(side="left", padx=16)
+        ttk.Label(cfg_box,
+                  text="分包时可用新占位符：{视频项目} {集数} {编号} {AiFX} {视频名}；"
+                       "视频名是纯数字或项目名超过 4 字时会弹窗请您补项目名。",
+                  foreground="#888").grid(row=6, column=0, columnspan=4, sticky="w",
+                                          padx=4, pady=(0, 4))
 
         # 备注
         ttk.Label(cfg_box, text="备注文案").grid(row=5, column=0, sticky="w", padx=4, pady=3)
@@ -241,6 +254,9 @@ class ExportTab(BaseTab):
         self.cfg["track_spec"] = self._read_spec()
         self.cfg["export_aaf"] = bool(self.var_aaf.get())
         self.cfg["aaf_media_mode"] = self._read_aaf_mode()
+        # 分包只在整轨模式下有意义（片段模式本来就是按片段出的）
+        self.cfg["split_by_video"] = bool(self.var_split_video.get()) and \
+            "tracks" in self._mode_set()
 
     def apply_config(self):
         """把 self.cfg 的值刷回控件（菜单「重新载入配置」「默认路径」后调用）。
@@ -268,6 +284,7 @@ class ExportTab(BaseTab):
                                or core.DEFAULT_TRACK_TEMPLATE)
         self.var_aaf.set(bool(c.get("export_aaf", False)))
         self.var_aaf_mode.set(c.get("aaf_media_mode", "media"))
+        self.var_split_video.set(bool(c.get("split_by_video", False)))
         self._set_spec_display()
         self._set_aaf_display()
         self._sync_mode()
@@ -366,6 +383,8 @@ class ExportTab(BaseTab):
         tracks = "tracks" in mset
         clip = "clips" in mset
         state = "normal" if tracks else "disabled"
+        # 分包依赖整轨（按视频区间切整轨），未勾整轨时置灰
+        self.chk_split.configure(state=state)
         for w in (self.cb_spec, self.entry_track_tpl, self.chk_aaf):
             try:
                 w.configure(state=state)
@@ -497,6 +516,11 @@ class ExportTab(BaseTab):
             root_str = self.cfg.get("input_dir", "").strip()
             root = Path(root_str) if root_str else core.DEFAULT_JIANYING_DRAFT_ROOT
 
+        # 分包模式：先解析视频名，判断不出的项目名**先问人**再跑（工具不猜）
+        if self.cfg.get("split_by_video"):
+            if not self._prepare_video_names(root, draft_dirs):
+                return
+
         self.save_config(quiet=True)
         cfg = dict(self.cfg)
 
@@ -507,6 +531,52 @@ class ExportTab(BaseTab):
                   f"跳过 {stats['skipped']}")
 
         self.run_async(job, btn=self.btn_run, busy_text="导出中…")
+
+    def _prepare_video_names(self, root, draft_dirs) -> bool:
+        """分包前的视频名解析 + 项目名补录。
+
+        流程：扫描草稿 → 取视频轨片段名 → 解析（已存过的答案直接沿用）→
+        仍有缺项就弹窗问 → 答案存进 `cfg["video_project_answers"]`（下次不再问）。
+
+        返回 `False` = 用户取消，调用方应中止导出。
+        """
+        from core.videoname import parse_many, pending_map, suggest_project
+        from .videoname_dialog import ask_video_projects
+
+        names = []
+        dirs = list(draft_dirs or [])
+        if not dirs and root:
+            try:
+                dirs = core.scan_drafts(Path(root))
+            except Exception as e:
+                self.log(f"  [warn] 扫描草稿失败：{e}\n")
+        for d in dirs:
+            try:
+                raw = core.resolve_draft_content_file(Path(d))
+                dec = core.decrypt_draft_file(raw)
+                for ch in core.parse_video_chunks(Path(d), dec):
+                    if ch.material_name:
+                        names.append(ch.material_name)
+            except Exception as e:
+                self.log(f"  [warn] 视频名解析失败（{Path(d).name}）：{e}\n")
+        if not names:
+            return True
+
+        infos = core.apply_project(
+            parse_many(names), self.cfg.get("video_project_answers") or {})
+        pend = pending_map(infos)
+        if not pend:
+            return True
+
+        got = ask_video_projects(self.winfo_toplevel(), list(pend.values()),
+                                 suggest_project(infos))
+        if got is None:                      # 取消 → 中止，不带着缺项跑
+            return False
+        answers = dict(self.cfg.get("video_project_answers") or {})
+        answers.update({k: v for k, v in got.items() if v})
+        self.cfg["video_project_answers"] = answers
+        self.var_split_video.set(True)
+        return True
 
     def _collect_media_files(self):
         files = []

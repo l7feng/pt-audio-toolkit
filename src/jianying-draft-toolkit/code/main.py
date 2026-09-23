@@ -23,7 +23,7 @@ import shutil
 import logging
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple
 
 # ──────────────────── 配置 ────────────────────
@@ -34,7 +34,8 @@ from typing import List, Optional, Tuple
 #        → v2.2.0 L0.5 黑窗+切页卡顿根治（09-19）
 #        → v2.3.0 菜单栏（文件/设置/工具/帮助）+ 默认路径设置对话框（09-21）
 #        → v2.4.0 导出模式多选 + 命名模板多选 + 整轨源文件相对路径解析修复（09-21）
-APP_VERSION = "2.4.0"
+#        → v2.5.0 视频名提取字段（项目/集数/编号/AiFX）+ 按视频片段分包（09-23）
+APP_VERSION = "2.5.0"
 
 
 def app_build_date() -> str:
@@ -85,6 +86,12 @@ from core.config import (              # noqa: E402
     DEFAULT_TRACK_TEMPLATE, DEFAULT_SPEC_KEY,
     DEFAULT_CLIPS_TEMPLATE, NAMING_PRESETS,
     config_path, load_config, save_config, ask, parse_bool, init_config,
+)
+
+# 视频名解析（v2.5.0）：从视频素材名提取 项目/集数/编号/AiFX
+from core.videoname import (          # noqa: E402
+    parse_video_name, parse_many, pending_map, apply_project, suggest_project,
+    VideoNameInfo, MAX_PROJECT_LEN,
 )
 
 # jy-draftc 定位：优先包内 tools/，命中前先看 exe 旁（onedir 打包时 tools/ 在 exe 同级）
@@ -630,6 +637,83 @@ def resolve_timeline_length_us(data: dict, tracks: List[AudioTrack]) -> int:
     return int(data.get("duration", 0) or 0)
 
 
+# ──────────────────── 视频片段（分包单位）────────────────────
+
+@dataclass
+class VideoChunk:
+    """视频轨上的一个片段 —— 一「集」（或一段）的分包单位。
+
+    场景：一个草稿里放了 `法老2`、`法老3` 两个视频，音频轨是连续的三条。
+    按 chunk 切分后，每条音频轨在每个 chunk 区间内各出一份，
+    分别装进 `法老2/`、`法老3/` —— 交付时一集一个文件夹，不用再手工挑。
+    """
+    material_name: str
+    source_path: str
+    tl_start_us: int = 0
+    tl_dur_us: int = 0
+    index: int = 0
+
+    @property
+    def tl_end_us(self) -> int:
+        return self.tl_start_us + self.tl_dur_us
+
+    @property
+    def duration_s(self) -> float:
+        return self.tl_dur_us / 1e6
+
+
+def parse_video_chunks(draft_dir: Path, json_path: Path) -> List[VideoChunk]:
+    """取视频轨上的片段（按时间线落点排序）。
+
+    只取 `type == "video"` 的轨道 —— 决定"集"的永远是画面。
+    返回空列表 = 该草稿没有视频轨，调用方应退回整轨模式（不分包）。
+    """
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    materials_map = {}
+    for mat in data.get("materials", {}).get("videos", []):
+        materials_map[mat["id"]] = mat
+
+    chunks: List[VideoChunk] = []
+    for track in data.get("tracks", []):
+        if track.get("type") != "video":
+            continue
+        for seg in track.get("segments", []) or []:
+            mat = materials_map.get(seg.get("material_id", ""), {})
+            t_start, t_dur = _range_us(seg.get("target_timerange"))
+            if t_dur <= 0:
+                _, s_dur = _range_us(seg.get("source_timerange"))
+                t_dur = s_dur
+            if t_dur <= 0:
+                continue
+            raw_path = mat.get("path", "")
+            resolved = resolve_source_path(raw_path, draft_dir)
+            chunks.append(VideoChunk(
+                material_name=mat.get("material_name") or Path(raw_path).stem or "",
+                source_path=str(resolved) if resolved else raw_path,
+                tl_start_us=t_start,
+                tl_dur_us=t_dur,
+                index=len(chunks),
+            ))
+    chunks.sort(key=lambda c: c.tl_start_us)
+    for i, c in enumerate(chunks):
+        c.index = i
+    return chunks
+
+
+def chunk_video_infos(chunks: List[VideoChunk],
+                      answers: Optional[dict] = None) -> List[VideoNameInfo]:
+    """把视频片段名解析成字段；人类补过的项目名从 `answers` 回填。
+
+    `answers` = {原始视频名: 项目名}，来自 GUI 弹窗（存在 config 里，下次自动用）。
+    """
+    infos = parse_many([c.material_name for c in chunks])
+    if answers:
+        infos = apply_project(infos, answers)
+    return infos
+
+
 def probe_audio_spec(path: Path) -> Tuple[int, int, int]:
     """ffprobe 读音频流规格 → (采样率, 声道数, 位深)；失败退回 (48000, 2, 16)"""
     try:
@@ -663,8 +747,14 @@ def resolve_spec(spec_key: str, segments: List[TrackSegment]) -> Tuple[int, int,
 
 
 def render_track_name(template: str, project: str, track_name: str,
-                      index: int, duration_s: float, remarks: str = "") -> str:
-    """整轨命名：额外提供 {轨道名} 字段（片段模式没有这个概念）"""
+                      index: int, duration_s: float, remarks: str = "",
+                      extra: Optional[dict] = None) -> str:
+    """整轨命名：额外提供 {轨道名} 字段（片段模式没有这个概念）
+
+    v2.5.0：`extra` 可注入视频名解析出的字段 ——
+    `{视频项目}` `{集数}` `{编号}` `{AiFX}` `{视频名}`（见 core/videoname.py）。
+    分包模式下默认由调用方传入；未分包时为 None，模板里写了这些占位符会被忽略。
+    """
     import datetime
     fields = {
         "项目名": project,
@@ -674,6 +764,8 @@ def render_track_name(template: str, project: str, track_name: str,
         "时长": int(duration_s),
         "备注": remarks,
     }
+    if extra:
+        fields.update(extra)
     try:
         return sanitize_filename(template.format(**fields))
     except KeyError as e:
@@ -682,9 +774,34 @@ def render_track_name(template: str, project: str, track_name: str,
         return sanitize_filename(template.replace("{" + key + "}", ""))
 
 
+def write_silence_wav(output_file: Path, total_s: float, sr: int, bits: int,
+                      ch: int, log=print) -> bool:
+    """生成一段全静音 WAV（分包时补齐"这条轨在这段视频里没内容"的缺口）。
+
+    为什么必须补：同一集文件夹里的各条轨要**等长对齐**，缺一条就会在 DAW 里错位。
+    """
+    if total_s <= 0:
+        return False
+    layout = "stereo" if ch >= 2 else "mono"
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+           "-f", "lavfi", "-i", f"anullsrc=r={sr}:cl={layout}",
+           "-t", f"{total_s:.6f}",
+           "-ar", str(sr), "-ac", str(ch),
+           "-c:a", PCM_CODEC.get(bits, "pcm_s16le"), str(output_file)]
+    r = subprocess.run(cmd, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=600,
+                       **subprocess_kwargs())
+    if r.returncode != 0:
+        log(f"  ✗ ffmpeg 静音失败: {(r.stderr or '').strip()[-300:]}")
+        return False
+    return True
+
+
 def extract_track_audio(track: AudioTrack, total_us: int, output_file: Path,
                         spec_key: str = DEFAULT_SPEC_KEY, log=print,
-                        draft_dir: Optional[Path] = None) -> bool:
+                        draft_dir: Optional[Path] = None,
+                        win_start_us: Optional[int] = None,
+                        win_end_us: Optional[int] = None) -> bool:
     """把一条轨道渲染成**整轨 WAV**：片段按时间线落点摆放，空白补真静音。
 
     ffmpeg 一次调用成型（无中间文件）：
@@ -692,11 +809,41 @@ def extract_track_audio(track: AudioTrack, total_us: int, output_file: Path,
         多段 → amix(normalize=0) 求和（同一轨的片段本就不重叠，求和等价拼接）
     空白段是**全零采样**（volumedetect ≈ -91dB 数字静音），不是"没有音频"。
 
+    v2.5.0：`win_start_us/win_end_us` 指定后只渲染**该时间窗**（按视频分包用）。
+    实现上把每条片段裁到与窗口的重叠部分、落点减去窗起点 ——
+    窗外的部分根本不进 ffmpeg，长视频不会白算。
+
     源文件解析：素材 path 多数相对草稿根，但工具以 exe 目录为 CWD，按原样判断会
     误报缺失。先 `resolve_source_path` 再判定；仍找不到才告警留静音（并提示素材
     可能位于草稿目录之外）。
     """
     segs = [s for s in track.segments if s.tl_dur_us > 0]
+
+    # ── 时间窗裁剪（按视频分包）──
+    if win_start_us is not None and win_end_us is not None:
+        ws, we = int(win_start_us), int(win_end_us)
+        clipped = []
+        for s in segs:
+            o_start = max(s.tl_start_us, ws)
+            o_end = min(s.tl_start_us + s.tl_dur_us, we)
+            if o_end - o_start <= 0:
+                continue                      # 与窗口无重叠 → 整段丢弃
+            off = o_start - s.tl_start_us     # 窗口起点落在片段中间 → 取材同步偏移
+            clipped.append(replace(
+                s,
+                src_start_us=s.src_start_us + off,
+                src_dur_us=o_end - o_start,
+                tl_start_us=o_start - ws,     # 落点换算到窗口内相对坐标
+                tl_dur_us=o_end - o_start,
+            ))
+        segs = clipped
+        total_us = we - ws
+        windowed = True
+        if not segs:
+            # 该窗口内这条轨没有任何片段 → 仍需产出等长静音，保证各轨对齐
+            log("  · 该区间内无片段，输出全静音（保持各轨等长对齐）")
+    else:
+        windowed = False
     for s in segs:
         sp = Path(s.source_path)
         if not sp.exists():
@@ -711,6 +858,10 @@ def extract_track_audio(track: AudioTrack, total_us: int, output_file: Path,
                         "素材可能位于草稿目录之外（剪映素材库 / 原始导入位置），需手动定位")
     segs = [s for s in segs if Path(s.source_path).exists()]
     if not segs:
+        if windowed:
+            # 分包场景：某条轨在这段视频里本来就没内容 → 补等长静音，别让整批失败
+            sr, bits, ch = resolve_spec(spec_key, track.segments)
+            return write_silence_wav(output_file, total_us / 1e6, sr, bits, ch, log)
         log("  ✗ 该轨道所有片段源文件均缺失")
         return False
 
@@ -1003,6 +1154,70 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
     out_root.mkdir(parents=True, exist_ok=True)
     # 临时目录自建，不依赖调用方（execute_export 建了，但单独调用本函数时没有）
     Path(temp_dir).mkdir(parents=True, exist_ok=True)
+
+    # ── v2.5.0 按视频分包：视频轨上每个片段 = 一个交付文件夹 ──
+    chunks: List[VideoChunk] = []
+    if cfg.get("split_by_video"):
+        try:
+            chunks = parse_video_chunks(draft_dir, decrypted)
+        except Exception as e:
+            print(f"  [warn] 视频片段解析失败，退回整轨模式: {e}")
+            chunks = []
+        if not chunks:
+            print("  [info] 该草稿没有视频轨片段 → 退回整轨模式（不分包）")
+
+    if chunks:
+        answers = cfg.get("video_project_answers") or {}
+        infos = chunk_video_infos(chunks, answers)
+        used = set()
+        for ch, info in zip(chunks, infos):
+            folder = sanitize_filename(info.label or ch.material_name)
+            if folder in used:                       # 同集多个片段 → 加序号区分
+                i = 2
+                while f"{folder}-{i}" in used:
+                    i += 1
+                folder = f"{folder}-{i}"
+            used.add(folder)
+            if info.need_input:
+                print(f"  ⚠ 视频「{ch.material_name}」缺项目名（{info.reason}）"
+                      f" → 先用原名建文件夹：{folder}")
+            out_dir = out_root / folder
+            out_dir.mkdir(parents=True, exist_ok=True)
+            proj_for_name = info.project or info.raw or draft_dir.name
+            extra = info.as_fields()
+            print(f"  ▸ 视频片段 {ch.index + 1}/{len(chunks)}: {ch.material_name}"
+                  f" → {folder}/（{ch.duration_s:.3f}s）")
+            for t in tracks:
+                try:
+                    base = render_track_name(template, proj_for_name,
+                                             t.display_name, t.index,
+                                             ch.duration_s, remarks, extra=extra)
+                    out_file = out_dir / f"{base}.wav"
+                    resolved = resolve_conflict(out_file, conflict)
+                    if resolved is None:
+                        print(f"    ⏭ 跳过（已存在）: {out_file.name}")
+                        stats["skipped"] += 1
+                        continue
+                    temp_file = temp_dir / f"v{ch.index}_trk{t.index}_{base}.wav"
+                    if extract_track_audio(t, total_us, temp_file, spec_key,
+                                           draft_dir=draft_dir,
+                                           win_start_us=ch.tl_start_us,
+                                           win_end_us=ch.tl_end_us):
+                        temp_file.replace(resolved)
+                        print(f"    ✓ {folder}/{resolved.name}")
+                        logging.info(f"[OK] {draft_dir.name}/{folder} → {resolved.name}")
+                        stats["success"] += 1
+                    else:
+                        stats["failed"] += 1
+                except Exception as e:
+                    print(f"    ✗ 轨道处理异常: {e}")
+                    logging.error(f"[ERROR] {draft_dir.name}/{folder} 轨道异常: {e}",
+                                  exc_info=True)
+                    stats["failed"] += 1
+        # 分包模式下不产出 AAF：AAF 描述的是整条时间线，切成多段后语义不成立
+        if cfg.get("export_aaf"):
+            print("  [info] 分包模式下跳过 AAF（AAF 描述整条时间线，与分包语义冲突）")
+        return
 
     for t in tracks:
         try:

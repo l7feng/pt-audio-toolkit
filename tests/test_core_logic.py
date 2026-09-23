@@ -128,40 +128,73 @@ def _():
 sys.path.insert(0, os.path.join(SRC, "rename-unify", "code"))
 cr = importlib.import_module("core_rules")
 
+SHORT_TPL = "{片名} {集数}_{轨道信息}"
 
-@case("ru.identify 历史命名识别（4 类总线 + MIX + STEM）")
+
+def _tg(mix=None, bus=None, stem=None, aifx=None, **over):
+    """构造目标表：模板传 None = 不单独配（回落全局模板）。
+
+    over 用大写目标名传附加键，如 _tg(**{"BUS": {"enabled": False}})。
+    """
+    def one(name, d, tpl):
+        e = {"name": name, "dir": d, "templates": [tpl] if tpl else []}
+        e.update(over.get(name, {}))
+        return e
+    return cr.normalize_targets([one("MIX", "", mix), one("BUS", "BUS", bus),
+                                 one("STEM", "STEM", stem), one("AIFX", "STEM", aifx)])
+
+
+@case("ru.identify 目标 + 轨道信息两段式（含自由轨道信息）")
 def _():
-    R, F = cr.DEFAULT_RULES, cr.DEFAULT_FIELDS
+    R = cr.DEFAULT_RULES
     cases = [
-        ("前夫 10集 0920 V01 7F_DX BUS", ("BUS", "10", "BUS-DX")),
+        # 用户已交付的 17 集成品（全格式）—— 曾经 20/28 识别失败，现在必须全中
+        ("法老 17集 0922 V01 7F_Master", ("MIX", "17", "Master")),
+        ("法老 17集 0922 V01 7F_DX BUS", ("BUS", "17", "DX BUS")),
+        ("法老 17集 0922 V01 7F_Ai FX 1", ("AIFX", "17", "Ai FX 1")),
+        ("法老 17集 0922 V01 7F_MX Verb ST", ("STEM", "17", "MX Verb ST")),
+        ("法老 17集 0922 V01 7F_DX UI", ("STEM", "17", "DX UI")),
+        # 20 集源名（裸集数 + 自由轨道信息）
+        ("法老20_DX BUS", ("BUS", "20", "DX BUS")),
+        ("法老20_Master BUS", ("MIX", "20", "Master")),
+        ("法老20_DX 1", ("STEM", "20", "DX 1")),
+        ("法老20_Ai FX 3", ("AIFX", "20", "Ai FX 3")),
+        ("法老13_FX 1 MON", ("STEM", "13", "FX 1 MON")),
+        ("法老13_FX 2.dup1", ("STEM", "13", "FX 2.dup1")),
+        # 早期前夫集（含 " Folder" 结尾旧写法）
+        ("前夫 10集 0920 V01 7F_DX BUS", ("BUS", "10", "DX BUS")),
+        ("前夫 01集 0920 V01 7F_BUS-DX", ("BUS", "01", "BUS-DX")),
         ("前夫1_DX Folder", ("BUS", "1", "BUS-DX")),
         ("前夫2_BUS DX Folder", ("BUS", "2", "BUS-DX")),
-        ("前夫 01集 0920 V01 7F_BUS-DX", ("BUS", "01", "BUS-DX")),
-        ("前夫 1集 0920 V01 7F", ("MIX", "1", "MIX")),
-        ("前夫 10集 0920 V01 7F_Master", ("MIX", "10", "MIX-MASTER")),
-        ("前夫 10集 0920 V01 7F_MX 2", ("Stem", "10", "STEM-MX-2")),
-        ("前夫 10集 0920 V01 7F_STEM-DX-01", ("Stem", "10", "STEM-DX-01")),
+        ("前夫 1集 0920 V01 7F", ("MIX", "1", "Master")),
+        ("前夫 10集 0920 V01 7F_MX 2", ("STEM", "10", "MX 2")),
     ]
     bad = []
     for stem, want in cases:
-        got = cr.identify(stem, R, F)
+        h = cr.identify(stem, R)
+        got = None if h is None else (h.target, h.ep, h.info)
         if got != want:
             bad.append("%s -> %s (want %s)" % (stem, got, want))
     assert not bad, bad
-    assert cr.identify("完全乱写的东西", R, F) is None
+    assert cr.identify("完全乱写的东西", R) is None
     return "%d 条识别全部命中" % len(cases)
 
 
-@case("ru.render 模板渲染 + 序号补零 + 双扩展名防护")
+@case("ru.render 轨道信息原样保留（不补零）+ 双扩展名防护 + {档位} 兼容")
 def _():
-    assert cr.render(cr.DEFAULT_TEMPLATE, "10", "BUS-DX", cr.DEFAULT_FIELDS) == \
-        "前夫 10集 0920 V01 7F_BUS-DX"
-    assert cr.render(cr.DEFAULT_TEMPLATE, "1", "STEM-MX-2", cr.DEFAULT_FIELDS) == \
-        "前夫 01集 0920 V01 7F_STEM-MX-02"
-    assert cr.render(cr.DEFAULT_TEMPLATE + ".wav", "1", "MIX", cr.DEFAULT_FIELDS) == \
-        "前夫 01集 0920 V01 7F_MIX"
+    F = cr.DEFAULT_FIELDS
+    assert cr.render(cr.DEFAULT_TEMPLATE, "10", "DX BUS", F) == \
+        "前夫 10集 0920 V01 7F_DX BUS"
+    # ⚠️ 回归护栏：此处曾把窄序号补零（`MX 2` -> `MX 02`），会把用户已交付的
+    #    17 集成品（..._Ai FX 1.wav）改名 —— 已永久取消，见 core.normalize_info。
+    assert cr.render(cr.DEFAULT_TEMPLATE, "1", "MX 2", F) == \
+        "前夫 01集 0920 V01 7F_MX 2"
+    assert cr.render(cr.DEFAULT_TEMPLATE + ".wav", "1", "Master", F) == \
+        "前夫 01集 0920 V01 7F_Master"
+    # 旧占位符 {档位} 仍可用（归一化为 {用户}）
+    assert cr.render("{片名} {集数}集 {档位}", "1", "x", F) == "前夫 01集 7F"
     try:
-        cr.render("{不存在的字段}", "1", "MIX", cr.DEFAULT_FIELDS)
+        cr.render("{不存在的字段}", "1", "Master", F)
         raise AssertionError("未知占位符未报 RuleError")
     except cr.RuleError:
         pass
@@ -170,66 +203,112 @@ def _():
 
 @case("ru.build_item 扩展名沿用源文件")
 def _():
-    r = cr.build_item(r"D:\x\前夫 10集 0920 V01 7F_DX BUS.wav",
-                      cr.DEFAULT_TEMPLATE, cr.DEFAULT_RULES, cr.DEFAULT_FIELDS)
-    assert r and r[0].endswith("7F_BUS-DX.wav"), r
+    r = cr.build_item(r"D:\x\法老20_DX BUS.wav", cr.DEFAULT_TEMPLATE,
+                      cr.DEFAULT_RULES, cr.DEFAULT_FIELDS)
+    assert r and r[0].endswith("7F_DX BUS.wav"), r
     assert not r[0].endswith(".wav.wav"), r
     return r[0]
+
+
+@case("ru.模板与目标拆开：MIX 全格式 / BUS·STEM 短格式")
+def _():
+    F = cr.DEFAULT_FIELDS
+    tg = _tg(mix=cr.DEFAULT_TEMPLATE, bus=SHORT_TPL, stem=SHORT_TPL, aifx=SHORT_TPL)
+    r1 = cr.build_item(r"D:\x\20\法老20_Master BUS.wav", cr.DEFAULT_TEMPLATE,
+                       cr.DEFAULT_RULES, F, root=r"D:\x", targets=tg)
+    # 注意：源名里的「法老」会被捕获并**优先于**全局字段「前夫」，所以是法老
+    assert r1 and os.path.basename(r1[0]) == "法老 20集 0920 V01 7F_Master.wav", r1
+    r2 = cr.build_item(r"D:\x\20\法老20_DX BUS.wav", cr.DEFAULT_TEMPLATE,
+                       cr.DEFAULT_RULES, F, root=r"D:\x", targets=tg)
+    assert r2 and os.path.basename(r2[0]) == "法老 20_DX BUS.wav", r2
+    assert os.path.basename(os.path.dirname(r2[0])) == "BUS", r2
+    r3 = cr.build_item(r"D:\x\20\法老20_Ai FX 1.wav", cr.DEFAULT_TEMPLATE,
+                       cr.DEFAULT_RULES, F, root=r"D:\x", targets=tg)
+    assert r3 and os.path.basename(os.path.dirname(r3[0])) == "STEM", r3
+    return "Master 全格式 / BUS·AIFX 短格式 均生效"
+
+
+@case("ru.保持原名（只归类、不改名）")
+def _():
+    F = cr.DEFAULT_FIELDS
+    tg = _tg(mix=cr.DEFAULT_TEMPLATE, bus=cr.KEEP_NAME, stem=cr.KEEP_NAME)
+    r = cr.build_item(r"D:\x\20\法老20_DX BUS.wav", cr.DEFAULT_TEMPLATE,
+                      cr.DEFAULT_RULES, F, root=r"D:\x", targets=tg)
+    assert r and os.path.basename(r[0]) == "法老20_DX BUS.wav", r
+    assert os.path.basename(os.path.dirname(r[0])) == "BUS", r
+    return "只挪不改名"
+
+
+@case("ru.目录级字段继承（同一集不出现两个日期）")
+def _():
+    root = fresh("ru_dirdefault")
+    for f in ("法老 12集 0922 V01 7F_Master.wav", "法老12_DX BUS.wav"):
+        open(os.path.join(root, f), "wb").write(b"RIFF")
+    items, _st = cr.make_plan(cr.scan_dir(root), cr.DEFAULT_TEMPLATE,
+                              cr.DEFAULT_RULES, cr.DEFAULT_FIELDS, root=root)
+    dsts = [os.path.basename(i.dst) for i in items if i.status == ""]
+    assert dsts, "应至少规划出 1 条改名"
+    assert all("0922" in d for d in dsts), dsts          # 不许混进全局 0920
+    return str(dsts)
 
 
 @case("ru.make_plan 冲突/跳过/错误三类状态")
 def _():
     root = fresh("ru_plan")
-    files = ["前夫 10集 0920 V01 7F_DX BUS.wav",
-             "前夫 11集 0920 V01 7F_DX BUS.wav",
-             "乱写.wav",
-             "前夫 12集 0920 V01 7F_DX BUS.wav"]
+    files = ["法老20_DX BUS.wav", "法老20_MX BUS.wav",
+             "乱写.wav", "法老20_FX BUS.wav"]
     paths = []
     for f in files:
         p = os.path.join(root, f)
         open(p, "wb").write(b"RIFF")
         paths.append(p)
-    # 让 12 集的目标名已被占用 → conflict
-    open(os.path.join(root, "前夫 12集 0920 V01 7F_BUS-DX.wav"), "wb").write(b"RIFF")
+    # 让 FX 的目标名已被占用 → conflict（平铺布局下目标会新建集目录）
+    conf_dir = os.path.join(root, "法老 20集 0920 V01 7F", "BUS")
+    os.makedirs(conf_dir, exist_ok=True)
+    open(os.path.join(conf_dir, "法老 20集 0920 V01 7F_FX BUS.wav"), "wb").write(b"RIFF")
     items, stats = cr.make_plan(paths, cr.DEFAULT_TEMPLATE, cr.DEFAULT_RULES,
-                                cr.DEFAULT_FIELDS)
+                                cr.DEFAULT_FIELDS, root=root)
     assert stats["total"] == 4, stats
     assert stats["error"] == 1, stats
     assert stats["conflict"] == 1, stats
+    assert stats["rename"] == 2, stats
     return str(stats)
 
 
 @case("ru.make_plan + apply_plan + undo_from_log 端到端")
 def _():
     root = fresh("ru_e2e")
-    for f in ("前夫 10集 0920 V01 7F_DX BUS.wav", "前夫 10集 0920 V01 7F_MX 2.wav"):
+    for f in ("法老20_DX BUS.wav", "法老20_MX 2.wav"):
         open(os.path.join(root, f), "wb").write(b"RIFF")
     paths = cr.scan_dir(root)
     items, stats = cr.make_plan(paths, cr.DEFAULT_TEMPLATE, cr.DEFAULT_RULES,
-                                cr.DEFAULT_FIELDS)
+                                cr.DEFAULT_FIELDS, root=root)
     assert stats["rename"] == 2, stats
     log = os.path.join(root, "log.csv")
     done, failed, lp = cr.apply_plan(items, write_log=True, log_path=log)
     assert len(done) == 2 and not failed, (done, failed)
-    after = sorted(os.listdir(root))
-    assert "前夫 10集 0920 V01 7F_BUS-DX.wav" in after, after
-    assert "前夫 10集 0920 V01 7F_STEM-MX-02.wav" in after, after
-    # 撤销
+    ep_dir = os.path.join(root, "法老 20集 0920 V01 7F")
+    after = (sorted(os.listdir(os.path.join(ep_dir, "BUS"))) +
+             sorted(os.listdir(os.path.join(ep_dir, "STEM"))))
+    assert "法老 20集 0920 V01 7F_DX BUS.wav" in after, after
+    assert "法老 20集 0920 V01 7F_MX 2.wav" in after, after
+    # 撤销（倒序：先归位回原处，再改回原名）
     n = cr.undo_from_log(lp, dry_run=False)
     back = sorted(os.listdir(root))
-    assert "前夫 10集 0920 V01 7F_DX BUS.wav" in back, back
+    assert "法老20_DX BUS.wav" in back, back
+    assert "法老20_MX 2.wav" in back, back
     return "renamed=2 undone=%s files=%s" % (n, back)
 
 
-@case("ru.enabled_state 清单过滤（含 STEM 尾随 * 坑）")
+@case("ru.target_state 目标启停 / 限定集数（原命名清单能力）")
 def _():
-    et = cr.DEFAULT_ENABLED_TYPES
-    ok, _w = cr.enabled_state(et, "STEM-MX-2", "10")
-    assert ok, "STEM-MX-2 应被 STEM-MX-* 覆盖（尾随 * 规则）"
-    ok2, why2 = cr.enabled_state(et, "UNKNOWN-TYPE", "10")
-    assert not ok2 and why2, (ok2, why2)
-    ok3, _ = cr.enabled_state([], "任意", "1")
-    assert ok3, "空清单 = 全放行"
+    tg = _tg(**{"BUS": {"enabled": False}, "STEM": {"eps": "20"}})
+    ok, why = cr.target_state(tg, "BUS", "20")
+    assert not ok and "取消勾选" in why, (ok, why)
+    ok2, why2 = cr.target_state(tg, "STEM", "12")
+    assert not ok2 and "限定集数" in why2, (ok2, why2)
+    ok3, _ = cr.target_state(tg, "STEM", "20")
+    assert ok3, "20 集在限定范围内应放行"
     return "ok"
 
 
@@ -242,30 +321,61 @@ def _():
     return "ok"
 
 
-@case("ru.build_regroup_plan 按集归位规划")
+@case("ru.平铺分类目录自动重组为集目录（原 build_regroup_plan 已内联）")
 def _():
     root = fresh("ru_regroup")
     os.makedirs(os.path.join(root, "BUS"), exist_ok=True)
     os.makedirs(os.path.join(root, "10"), exist_ok=True)
-    open(os.path.join(root, "BUS", "前夫 10集 0920 V01 7F_BUS-DX.wav"), "wb").write(b"RIFF")
-    items, stats = cr.build_regroup_plan(root, cr.DEFAULT_RULES, cr.DEFAULT_FIELDS)
-    assert items, "应规划出至少 1 条归位项"
-    it = items[0]
-    # 归位目录 = 「集前缀」（如 前夫 10集 0920 V01 7F），其下再按 type 分 BUS/STEM
-    ep_dir = os.path.dirname(it.dst)
-    assert "10" in ep_dir and os.path.basename(ep_dir).upper() in ("BUS", "STEM"), it.dst
-    assert stats["move"] == 1, stats
-    return "dst=%s stats=%s" % (it.dst, stats)
+    open(os.path.join(root, "BUS", "前夫 10集 0920 V01 7F_DX BUS.wav"),
+         "wb").write(b"RIFF")
+    items, stats = cr.make_plan(cr.scan_dir(root), cr.DEFAULT_TEMPLATE,
+                                cr.DEFAULT_RULES, cr.DEFAULT_FIELDS, root=root)
+    assert stats["rename"] == 1, stats
+    d = items[0].dst
+    assert os.path.basename(os.path.dirname(d)) == "BUS", d
+    assert "10集" in os.path.basename(os.path.dirname(os.path.dirname(d))), d
+    return os.path.relpath(d, root)
 
 
-@case("ru.config 默认值/读写/清洗")
+@case("ru.manual_plan_item 人工分类走同一套落点/渲染")
+def _():
+    F = cr.DEFAULT_FIELDS
+    assert cr.guess_info_from_name("法老20_DX BUS.wav") == "DX BUS"
+    assert cr.guess_info_from_name("杂项.wav") == "杂项"
+    mi = cr.manual_plan_item(r"D:\x\20\乱七八糟.wav", "20", "BUS", "DX BUS",
+                             cr.DEFAULT_TEMPLATE, F, root=r"D:\x")
+    assert os.path.basename(mi.dst) == "前夫 20集 0920 V01 7F_DX BUS.wav", mi.dst
+    assert os.path.basename(os.path.dirname(mi.dst)) == "BUS", mi.dst
+    return os.path.relpath(mi.dst, r"D:\x")
+
+
+@case("ru.config 默认值/读写/清洗 + v1.2.0 新键与 {用户} 迁移")
 def _():
     sys.path.insert(0, os.path.join(SRC, "rename-unify", "code"))
     cfgmod = importlib.import_module("config")
     d = cfgmod.load_config()
     assert "last_root" in d and isinstance(d["fields"], dict)
+    assert "用户" in d["fields"] and "档位" not in d["fields"], d["fields"]
+    assert isinstance(d.get("targets"), list) and isinstance(d.get("templates"), list)
+    assert cfgmod.APP_VERSION >= "1.2.0", cfgmod.APP_VERSION
     cleaned = cfgmod._clean_enabled_types([{"type": "A"}, {"x": 1}, "bad", {"type": ""}])
     assert len(cleaned) == 1 and cleaned[0]["type"] == "A", cleaned
+    # 旧配置 {档位} → {用户}：读旧文件必须搬值，不能静默丢
+    import json as _json
+    import tempfile as _tf
+    fd, tmp = _tf.mkstemp(suffix=".json")
+    os.close(fd)
+    with open(tmp, "w", encoding="utf-8") as fh:
+        _json.dump({"fields": {"片名": "誓言", "档位": "5F"}}, fh, ensure_ascii=False)
+    old_path = cfgmod.CONFIG_PATH
+    cfgmod.CONFIG_PATH = tmp
+    try:
+        c2 = cfgmod.load_config()
+        assert c2["fields"].get("用户") == "5F", c2["fields"]
+        assert "档位" not in c2["fields"], c2["fields"]
+    finally:
+        cfgmod.CONFIG_PATH = old_path
+        os.remove(tmp)
     return "ok"
 
 
