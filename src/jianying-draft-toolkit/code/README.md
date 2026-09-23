@@ -103,17 +103,22 @@ python gui.py
 ## 打包为 exe
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging\build.ps1
+# 在仓库根执行（唯一入口）
+python tools\build.py jianying-draft-toolkit
 ```
 
-产物：`packaging/dist/导入工具/`（约 31.6 MB）
+产物：`D:\Ai-Files\Agent-Preset\exe\pt-audio-toolkit-v<版本>-<日期>\jianying-draft-toolkit\`（约 31 MB）
 
 ```
-导入工具/
-├── 导入工具.exe        ← 双击运行（GUI，三标签页）
-├── _internal/          ← PyInstaller 运行时
-└── tools/jy-draftc/    ← 解密器（.env 首次运行时自动写入）
+jianying-draft-toolkit/
+├── jianying-draft-toolkit.exe   ← 双击运行（GUI，三标签页）
+├── _internal/                   ← PyInstaller 运行时
+└── tools/jy-draftc/             ← 解密器（.env 首次运行时自动写入）
 ```
+
+> **2026-09-23 起口径**：`packaging\build.ps1` 仍是可用入口，但它只**转发**给 `tools\build.py`，
+> **不再产出 `packaging\dist\`** —— 那个目录已退役（入回收站）。日常启动请双击本目录下的 `启动.bat`，
+> 它会自动解析出口里最新的版本目录。
 
 要点：
 
