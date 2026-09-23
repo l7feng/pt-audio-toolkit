@@ -158,19 +158,25 @@ class PTSession:
         return box.get("name"), status
 
     def wait_for_session(self, expect, timeout=45.0, interval=0.5):
-        """轮询直到 session_name == expect。返回 (matched, last_name, status)。"""
+        """轮询直到 session_name == expect。返回 (matched, last_name, status)。
+
+        v1.2.0：expect 为空/None = 不核对名字，只要 session_name 可读出
+        非空值即算就位（GUI 批量场景无法预知工程名，open 成功即可）。
+        """
         deadline = time.time() + timeout
         last, last_status = None, "error"
         while time.time() < deadline:
             last, last_status = self.session_name()
-            if last_status == "ok" and last and last.strip() == expect.strip():
-                return True, last, last_status
+            if last_status == "ok" and last:
+                if not expect or last.strip() == str(expect).strip():
+                    return True, last, last_status
             time.sleep(interval)
         return False, last, last_status
 
     def open_session(self, path, expect, timeout=90.0, name_timeout=45.0):
         """open + 会话名核对。返回 (status, detail)。
         status: "ok" | "FAILED-MODAL" | "FAILED-NAME-MISMATCH" | "error"
+        expect 为空/None 时不核对名字（v1.2.0，GUI 批量场景）。
         注意：open 会隐式关闭当前已加载工程——若其有未保存更改，PT 可能弹
         「是否保存」框导致本调用超时（风险①同源，由守卫兜住）。"""
         status, err = timed_call(lambda: self.pt.open_session(path), timeout)
@@ -183,6 +189,8 @@ class PTSession:
         if last_status == "timeout":
             return "FAILED-MODAL", "open 后会话轮询超时（疑似弹窗阻塞）"
         if not matched:
+            if not expect:
+                return "ok", "已打开会话：%r（未提供期望名，跳过核对）" % last
             return "FAILED-NAME-MISMATCH", "会话名=%r 期望=%r" % (last, expect)
         return "ok", "会话名核对通过：%r" % last
 
@@ -222,9 +230,17 @@ def job_fps(job, profile, defaults):
 
 
 def export_range(job, profile, defaults):
-    """计算 start/end 时码。返回 (start_tc, end_tc, fps) 或 (None, err_str, None)。"""
+    """计算 start/end 时码。返回 (start_tc, end_tc, fps) 或 (None, err_str, None)。
+
+    v1.2.0：duration_sec 缺失且 job["skip_on_no_duration"]=true 时返回
+    (None, "SKIP-NO-DURATION", None)——调用方据此记 SKIPPED 而非 FAILED
+    （GUI「找不到视频 → 跳过记录」策略的落点；「兜底时长导出」则由
+    GUI 预先把兜底秒数填进 duration_sec，不经过本分支）。
+    """
     dur = job.get("duration_sec") or job.get("duration_tc")
     if not dur:
+        if job.get("skip_on_no_duration"):
+            return None, "SKIP-NO-DURATION", None
         return None, "job 缺 duration_sec/duration_tc", None
     fps = job_fps(job, profile, defaults)
     if not fps:
@@ -252,6 +268,10 @@ def build_export_cmd(job, export, paths, defaults, profile_path, out_dir,
             cmd += ["--skip-buses"]
         if export.get("exclude_empty"):
             cmd += ["--exclude-empty"]
+        # v1.2.0：名字级排除名单（精确 + 通配 * ?，pt_export --exclude-name）
+        for name in export.get("exclude_names", []) or []:
+            if name and str(name).strip():
+                cmd += ["--exclude-name", str(name).strip()]
         for t in export.get("track_types", []):
             cmd += ["--track-type", t]
     else:
@@ -305,6 +325,8 @@ def process_job(job, paths, defaults, args, ptsession, log_lines):
     """执行单个 job。返回结果 dict（含 status / artifacts / detail）。"""
     jid = job.get("id", "?")
     res = {"id": jid, "status": "OK", "steps": [], "artifacts": [], "seconds": 0}
+    # GUI 预检索的视频清单（元数据，供汇总报告展示，batch 不再检索）
+    res["videos"] = job.get("_videos") or []
     t0 = time.time()
 
     def step(msg):
@@ -312,16 +334,18 @@ def process_job(job, paths, defaults, args, ptsession, log_lines):
         print("  %s" % msg, flush=True)
         res["steps"].append(msg)
 
-    expect = job.get("session_name_expect") or ("誓言%s" % jid)
+    expect = job.get("session_name_expect") or ""
     ptx = job["ptx"]
     profile_path = os.path.join(paths["profile_dir"], "profile-%s.json" % jid)
-    out_dir = os.path.join(paths["out_root"], "誓言%s" % jid)
+    # v1.2.0：输出文件夹改用**真实工程名**（open+扫描后回填），不再写死
+    # 「誓言{id}」——工程名在扫描后才知道，此处先记占位，open 后重建。
+    out_dir = None
+    skip_flag = bool(job.get("skip_on_no_duration"))
 
     if not os.path.exists(ptx):
         res["status"] = "FAILED-PTX-MISSING"
         step("[fail] 工程不存在：%s" % ptx)
         return res
-    os.makedirs(out_dir, exist_ok=True)
 
     # ── 1) 会话就位：自动检测已打开 → 免 open ────────────────────────
     cur, cur_status = ptsession.session_name()
@@ -329,13 +353,13 @@ def process_job(job, paths, defaults, args, ptsession, log_lines):
         res["status"] = "FAILED-MODAL"
         step("[fail] 会话状态探测超时（疑似弹窗阻塞 PTSL）")
         return res
-    if cur and cur.strip() == expect.strip():
+    if expect and cur and cur.strip() == expect.strip():
         step("[info] 会话已是目标工程 %r，跳过 open（自动检测）" % cur)
     else:
         if cur:
-            step("[info] 当前会话=%r，open 切换 → %r" % (cur, expect))
+            step("[info] 当前会话=%r，open 切换 → %r" % (cur, os.path.basename(ptx)))
         status, detail = ptsession.open_session(
-            ptx, expect, timeout=args.open_timeout)
+            ptx, expect or None, timeout=args.open_timeout)
         step("[open] %s" % detail)
         if status != "ok":
             res["status"] = status
@@ -344,7 +368,8 @@ def process_job(job, paths, defaults, args, ptsession, log_lines):
     # ── 2) profile 就位（缺失自动扫）─────────────────────────────────
     need_profile = any(
         (e.get("kind") == "track-all" and e.get("exclude_empty"))
-        or e.get("kind") == "track" for e in job.get("exports", []))
+        or e.get("kind") == "track"
+        or e.get("exclude_names") for e in job.get("exports", []))
     if not args.no_scan and (need_profile or not os.path.exists(profile_path)):
         step("[scan] profile 缺失或需要 → pt_scan.py")
         scan_cmd = [paths["venv_python"], paths["scan_script"],
@@ -358,7 +383,7 @@ def process_job(job, paths, defaults, args, ptsession, log_lines):
             return res
         step("[ok] profile-{}.json 已生成/更新".format(jid))
 
-    # ── 3) 计算导出区间 ─────────────────────────────────────────────
+    # ── 2.5) 输出文件夹：按**真实工程名**建夹（v1.2.0）──────────────
     profile = {}
     if os.path.exists(profile_path):
         try:
@@ -366,8 +391,19 @@ def process_job(job, paths, defaults, args, ptsession, log_lines):
                 profile = json.load(f)
         except Exception:
             profile = {}
+    real_name = ((profile.get("session") or {}).get("name") or "").strip()
+    out_dir = os.path.join(paths["out_root"], real_name or ("誓言%s" % jid))
+    os.makedirs(out_dir, exist_ok=True)
+    step("[out] %s" % out_dir)
+
+    # ── 3) 计算导出区间 ─────────────────────────────────────────────
     start_tc, end_tc, fps = export_range(job, profile, defaults)
     if start_tc is None:
+        if end_tc == "SKIP-NO-DURATION":
+            # GUI「找不到视频 → 跳过记录」策略：记 SKIPPED 不算失败
+            res["status"] = "SKIPPED-NO-DURATION"
+            step("[skip] 无可用时长（未找到视频且未给兜底时长）→ 跳过该工程")
+            return res
         res["status"] = "FAILED-RANGE"
         step("[fail] %s" % end_tc)
         return res
@@ -536,25 +572,46 @@ def main():
 
     # ── 汇总 ────────────────────────────────────────────────────────
     print("\n════ 批量汇总 ════")
-    ok_n = 0
+    ok_n = skipped_n = 0
     for r in results:
-        mark = "✅" if r["status"] == "OK" else ("🟡" if r["status"] == "PARTIAL" else "❌")
+        st = r["status"]
+        if st == "OK":
+            mark = "✅"
+        elif st == "PARTIAL":
+            mark = "🟡"
+        elif st.startswith("SKIPPED"):
+            mark = "⏭ "
+        else:
+            mark = "❌"
         n_art = len(r.get("artifacts", []))
         print("  %s [%s] %-22s 产物 %d 个  close=%s" % (
-            mark, r["id"], r["status"], n_art,
+            mark, r["id"], st, n_art,
             (r.get("close") or {}).get("status", "-")))
-        ok_n += 1 if r["status"] == "OK" else 0
+        if st == "OK":
+            ok_n += 1
+        elif st.startswith("SKIPPED"):
+            skipped_n += 1
     part_n = sum(1 for r in results if r["status"] == "PARTIAL")
-    print("  共 %d 集：%d 成功 / %d 部分成功 / %d 失败 / 总用时 %.1fs" % (
-        len(results), ok_n, part_n, len(results) - ok_n - part_n,
+    print("  共 %d 集：%d 成功 / %d 部分成功 / %d 跳过 / %d 失败 / 总用时 %.1fs" % (
+        len(results), ok_n, part_n, skipped_n,
+        len(results) - ok_n - part_n - skipped_n,
         time.time() - t_all))
 
-    manual = [r for r in results if r["status"] != "OK"]
+    manual = [r for r in results
+              if not (r["status"] == "OK" or r["status"].startswith("SKIPPED"))]
     if manual:
         print("\n需人工处理：")
         for r in manual:
             print("  [%s] %s — %s" % (r["id"], r["status"],
                                       "; ".join(r["steps"][-2:])))
+    skipped_list = [r for r in results if r["status"].startswith("SKIPPED")]
+    if skipped_list:
+        print("\n已跳过（按 GUI 策略，含视频清单供后续分辨）：")
+        for r in skipped_list:
+            vids = r.get("videos") or []
+            vdesc = "、".join(v.get("name", "?") for v in vids[:5]) if vids \
+                else "（未检出视频）"
+            print("  [%s] %s — 检出视频：%s" % (r["id"], r["status"], vdesc))
 
     # ── 日志落盘 ────────────────────────────────────────────────────
     log_dir = args.log_dir or os.path.dirname(os.path.abspath(args.jobs))
@@ -567,7 +624,9 @@ def main():
                   f, ensure_ascii=False, indent=2)
     print("\n[log] %s" % log_path)
 
-    sys.exit(0 if ok_n == len(results) and results else 1)
+    # v1.2.0：SKIPPED 算正常完成（策略内行为），不触发失败退出码
+    finished = ok_n + skipped_n + part_n
+    sys.exit(0 if finished == len(results) and results else 1)
 
 
 if __name__ == "__main__":

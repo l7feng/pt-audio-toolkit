@@ -24,6 +24,7 @@ import queue
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -65,7 +66,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ⚠️ build_date() 在 pt-project-folder-builder / jianying-draft-toolkit /
 #    rename-unify 各有一份逐字相同的实现（各工具独立打包、无共享模块），
 #    改动时四处需同步。
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 
 def build_date():
@@ -181,6 +182,61 @@ TEXTS = {
         "e_video_ok": "[video] 已按视频填入时间范围：开始 00:00:00:00 → 结束 %s\n",
         "e_video_fail": "[video] 视频时长读取失败：%s\n"
                         "        支持 MP4/MOV 族（mvhd box）；也可手动填结束时间。\n",
+        "e_video_margin_note": "结束 = 视频时长 + 余量",
+
+        # —— v1.2.0 轨道选择 / 视频自动 / 批量 ——
+        "e_sel_col": "选",
+        "e_clips_col": "音频",
+        "e_clips_yes": "有",
+        "e_clips_no": "空",
+        "e_excluded_mark": "（排除）",
+        "e_select_all": "全选",
+        "e_deselect_all": "全不选",
+        "e_exclude": "排除名单:",
+        "e_exclude_tip": "逗号分隔，支持 * ? 通配（如 BG 1, DX BUS, Master）；命中的轨道默认不勾选",
+        "e_track_frame_v2": "轨道列表（勾选 = 导出；空轨与排除名单默认不勾）",
+        "e_video_auto": "自动检测视频",
+        "e_video_searching": "[video] 正在检索工程目录视频：%s\n",
+        "e_video_found1": "[video] 找到 1 条视频：%s\n",
+        "e_video_found_n": "[video] 找到 %d 条视频，请在弹窗中选择\n",
+        "e_video_none": "[video] 未在工程目录检索到视频（可手动「按视频填入…」，"
+                        "或按兜底时长导出）\n",
+        "e_video_pick_title": "检索到多条视频，请选择用于锁定时长的视频",
+        "e_video_applied": "[video] 已按「%s」填入：结束 %s（含余量 %ss）\n",
+        "e_margin": "视频余量(秒):",
+        "e_fallback": "兜底时长(秒):",
+        "e_by_session": "输出按工程名建夹",
+        "e_batch": "批量导出…",
+
+        # —— v1.2.0 批量导出对话框 ——
+        "b_title": "批量导出（多工程）",
+        "b_ptx_frame": "工程列表（.ptx）——加入后自动预检索视频",
+        "b_add": "添加工程…",
+        "b_remove": "移除选中",
+        "b_rescan": "重新检索",
+        "b_col_session": "工程",
+        "b_col_video": "选中视频",
+        "b_col_status": "状态",
+        "b_video_pick": "选择…",
+        "b_video_multi": "%d 条，待选择",
+        "b_video_none": "未检出（按下方策略处理）",
+        "b_video_ok": "%s（%.0fs）",
+        "b_policy_frame": "未检出视频时",
+        "b_policy_fallback": "按兜底时长导出",
+        "b_policy_skip": "跳过并记录",
+        "b_multi_frame": "检出多条视频时",
+        "b_multi_pick": "弹窗让我选",
+        "b_multi_skip": "跳过并记录（含视频命名清单）",
+        "b_rule_note": "批量沿用本页导出模式 / 格式 / 轨道规则；排除名单与空轨规则对每个工程生效；"
+                       "输出自动按各工程名建文件夹。",
+        "b_start": "开始批量导出",
+        "b_need_ptsl": "批量导出需要 Pro Tools 正在运行（PTSL 在线）。",
+        "b_need_ptx": "请先添加至少一个 .ptx 工程。",
+        "b_generating": "[batch] 已生成批量计划：%s\n",
+        "b_started": "[batch] 批量导出已启动（%d 个工程），请留意下方日志…\n",
+        "b_searching": "[batch] 检索 %s …\n",
+        "b_search_fail": "[batch] 检索失败：%s\n",
+        "b_pick_title": "「%s」检出 %d 条视频，选择用于锁定时长的一条",
 
         # —— 清理页 ——
         "c_warn": ("⚠ 需 Pro Tools 2025.10+（CId 146/147）。当前 PT 25.6.1 实测支持不了"
@@ -385,6 +441,63 @@ TEXTS = {
         "e_video_fail": "[video] Failed to read video duration: %s\n"
                         "        MP4/MOV family (mvhd box) is supported; "
                         "or type the end time manually.\n",
+        "e_video_margin_note": "end = video duration + margin",
+
+        # —— v1.2.0 track selection / video auto / batch ——
+        "e_sel_col": "Sel",
+        "e_clips_col": "Clips",
+        "e_clips_yes": "yes",
+        "e_clips_no": "empty",
+        "e_excluded_mark": " (excluded)",
+        "e_select_all": "Select all",
+        "e_deselect_all": "Deselect all",
+        "e_exclude": "Exclude list:",
+        "e_exclude_tip": "Comma-separated, * and ? wildcards supported "
+                         "(e.g. BG 1, DX BUS, Master); matched tracks unchecked by default",
+        "e_track_frame_v2": "Track list (checked = export; empty/excluded unchecked by default)",
+        "e_video_auto": "Auto-detect video",
+        "e_video_searching": "[video] Searching session tree for videos: %s\n",
+        "e_video_found1": "[video] Found 1 video: %s\n",
+        "e_video_found_n": "[video] Found %d videos, please pick one in the dialog\n",
+        "e_video_none": "[video] No video found in session tree (use \"Fill from video…\" "
+                        "manually, or export with the fallback duration)\n",
+        "e_video_pick_title": "Multiple videos found — pick one for the export duration",
+        "e_video_applied": "[video] Applied \"%s\": end %s (margin %ss)\n",
+        "e_margin": "Video margin (s):",
+        "e_fallback": "Fallback duration (s):",
+        "e_by_session": "Create output subfolder per session name",
+        "e_batch": "Batch export…",
+
+        # —— v1.2.0 batch dialog ——
+        "b_title": "Batch export (multiple sessions)",
+        "b_ptx_frame": "Sessions (.ptx) — videos are pre-scanned on add",
+        "b_add": "Add sessions…",
+        "b_remove": "Remove selected",
+        "b_rescan": "Re-scan videos",
+        "b_col_session": "Session",
+        "b_col_video": "Selected video",
+        "b_col_status": "Status",
+        "b_video_pick": "Pick…",
+        "b_video_multi": "%d found, pick one",
+        "b_video_none": "None (see policy below)",
+        "b_video_ok": "%s (%.0fs)",
+        "b_policy_frame": "When no video found",
+        "b_policy_fallback": "Export with fallback duration",
+        "b_policy_skip": "Skip and record",
+        "b_multi_frame": "When multiple videos found",
+        "b_multi_pick": "Let me pick",
+        "b_multi_skip": "Skip and record (with video name list)",
+        "b_rule_note": "Batch reuses this tab's modes / format / track rules; the exclude "
+                       "list and empty-track rule apply per session; outputs go into "
+                       "per-session subfolders.",
+        "b_start": "Start batch export",
+        "b_need_ptsl": "Batch export requires Pro Tools running (PTSL online).",
+        "b_need_ptx": "Add at least one .ptx session first.",
+        "b_generating": "[batch] Batch plan written: %s\n",
+        "b_started": "[batch] Batch export started (%d sessions), watch the log…\n",
+        "b_searching": "[batch] Scanning %s …\n",
+        "b_search_fail": "[batch] Scan failed: %s\n",
+        "b_pick_title": "\"%s\": %d videos found — pick one for the export duration",
 
         "c_warn": ("⚠ Requires Pro Tools 2025.10+ (CId 146/147). Tested on "
                    "PT 25.6.1 it raises ErrType 133 — disabled until you upgrade."),
@@ -708,6 +821,16 @@ def tc_to_frame(tc, fps):
     return ((h * 3600 + m * 60 + s) * fps) + f
 
 
+def frame_to_tc(frames, fps):
+    """帧号 → HH:MM:SS:FF（v1.2.0：视频时长 + 余量换算结束时间用）。"""
+    fps = max(int(round(fps)), 1)
+    f = int(round(frames)) % fps
+    total = int(round(frames)) // fps
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return "%02d:%02d:%02d:%02d" % (h, m, s, f)
+
+
 def fmt_tc_ok(tc):
     return bool(TC_RE.match(tc or ""))
 
@@ -744,13 +867,18 @@ def open_in_explorer(path):
 def build_export_cmds(venv_python, script_path, profile_path, profile, *,
                       modes, stem_aux=False, tracks=(), session=None,
                       out="", start="", end="", sample_rate="48000",
-                      bit_depth="24", fmt="mono", dry_run=False):
+                      bit_depth="24", fmt="mono", dry_run=False,
+                      stem_tracks=(), exclude_names=()):
     """按勾选的导出模式构造 CLI 命令列表（顺序 MIX → BUS → STEM → TRACK）。
 
     壳不动芯：每条命令独立调一次 pt_export.py（各自连接 PTSL，顺序执行，
     该链路已在批量编排中实测连续连接/导出可行）。校验失败抛 ValueError
     （消息已本地化，GUI 直接弹框、测试直接断言）。
     ⚠️ --profile 是全局参数，必须位于子命令之前（§8.3 老坑，勿挪）。
+
+    v1.2.0：`stem_tracks` 非空时 STEM 改为**只导勾选轨**（--source 列表，
+    名字级精确导出）；为空时保持 --all-tracks 全轨模式。
+    `exclude_names` 透传 --exclude-name（精确 + * ? 通配）。
     """
     if not profile:
         raise ValueError(T("msg_no_profile"))
@@ -802,15 +930,30 @@ def build_export_cmds(venv_python, script_path, profile_path, profile, *,
                 cmd += ["--source", name]
             cmd += ["--source-type", "bus"] + common
         elif m == "stem":
+            picked_stem = [t for t in (stem_tracks or ()) if t]
             cmd = [venv_python, script_path, "--profile", profile_path,
-                   "stems", "--source-type", "track", "--all-tracks"]
-            if stem_aux:
-                # 含效果辅助轨：白名单模式（aux 进来，master/vca/folder 仍排除）
-                for t in ("audio", "aux", "instrument", "midi"):
-                    cmd += ["--track-type", t]
+                   "stems", "--source-type", "track"]
+            if picked_stem:
+                # 勾选式 STEM：只导勾选轨（按档案顺序，名字必须存在于档案）
+                known = {t.get("name", "") for t in profile.get("tracks", [])}
+                for name in picked_stem:
+                    if name not in known:
+                        raise ValueError(T("msg_src_unknown") % (name, "tracks"))
+                    cmd += ["--source", name]
             else:
-                cmd += ["--skip-buses"]
-            cmd += ["--exclude-empty"] + common
+                # 未勾选任何轨 → 全轨模式（--all-tracks），沿用旧语义
+                cmd += ["--all-tracks"]
+                if stem_aux:
+                    # 含效果辅助轨：白名单模式（aux 进来，master/vca/folder 仍排除）
+                    for t in ("audio", "aux", "instrument", "midi"):
+                        cmd += ["--track-type", t]
+                else:
+                    cmd += ["--skip-buses"]
+                cmd += ["--exclude-empty"]
+            for name in (exclude_names or ()):
+                if name and str(name).strip():
+                    cmd += ["--exclude-name", str(name).strip()]
+            cmd += common
         elif m == "track":
             names = [t for t in (tracks or []) if t]
             if not names:
@@ -1401,9 +1544,27 @@ class ExportTab(ttk.Frame):
         ttk.Button(row2b, text=T("e_browse"),
                    command=self._browse_session).pack(side="left")
 
-        # -- 轨道列表（「按轨道名称」模式的选轨来源，来自档案，杜绝猜名）
-        src = ttk.LabelFrame(self, text="  " + T("e_track_frame") + "  ", padding=6)
+        # -- 轨道列表（v1.2.0 勾选式选轨：STEM /「按轨道名称」共用；
+        #    空轨与排除名单默认不勾，全选/全不选一键切换）
+        src = ttk.LabelFrame(self, text="  " + T("e_track_frame_v2") + "  ", padding=6)
         src.pack(fill="both", expand=True, pady=(8, 0))
+
+        # 排除名单行（config 记忆：track_exclude）
+        xrow = ttk.Frame(src)
+        xrow.pack(fill="x")
+        ttk.Label(xrow, text=T("e_exclude"),
+                  foreground="#555").pack(side="left")
+        self.exclude_var = app.v("track_exclude",
+                                 app.cfg.get("track_exclude", ""))
+        ttk.Entry(xrow, textvariable=self.exclude_var).pack(
+            side="left", fill="x", expand=True, padx=6)
+        self.exclude_var.trace_add("write", self._on_exclude_changed)
+        ttk.Button(xrow, text=T("e_select_all"), width=9,
+                   command=lambda: self._set_all_tracks(True)).pack(side="left", padx=2)
+        ttk.Button(xrow, text=T("e_deselect_all"), width=9,
+                   command=lambda: self._set_all_tracks(False)).pack(side="left", padx=2)
+
+        # 搜索行
         srow = ttk.Frame(src)
         srow.pack(fill="x")
         ttk.Label(srow, text=T("e_search") + " ",
@@ -1415,17 +1576,27 @@ class ExportTab(ttk.Frame):
         ttk.Label(srow, textvariable=self.src_count_var,
                   foreground="#555").pack(side="right")
 
-        self.src_tree = ttk.Treeview(src, columns=("name", "type"), show="headings",
-                                     selectmode="extended", height=6)
+        # 列：选(☑/☐) / 名称 / 类型 / 音频块
+        self.src_tree = ttk.Treeview(
+            src, columns=("sel", "name", "type", "clips"),
+            show="headings", selectmode="none", height=6)
+        self.src_tree.heading("sel", text=T("e_sel_col"))
         self.src_tree.heading("name", text=T("e_name_col"))
         self.src_tree.heading("type", text=T("e_type_col"))
-        self.src_tree.column("name", width=360)
-        self.src_tree.column("type", width=90, anchor="center")
+        self.src_tree.heading("clips", text=T("e_clips_col"))
+        self.src_tree.column("sel", width=44, anchor="center", stretch=False)
+        self.src_tree.column("name", width=320)
+        self.src_tree.column("type", width=80, anchor="center", stretch=False)
+        self.src_tree.column("clips", width=60, anchor="center", stretch=False)
         sb = ttk.Scrollbar(src, command=self.src_tree.yview)
         self.src_tree.configure(yscrollcommand=sb.set)
         self.src_tree.pack(side="left", fill="both", expand=True, pady=(4, 0))
         sb.pack(side="left", fill="y", pady=(4, 0))
-        self.src_tree.bind("<<TreeviewSelect>>", self._on_src_select)
+        self.src_tree.bind("<Button-1>", self._on_track_click)
+        # 勾选集合（轨道名）与排除名单解析缓存
+        self.track_checked = set()
+        self._exclude_pats = []
+        self._reparse_exclude()
 
         # -- 时间 / 格式 / 输出
         opt = ttk.LabelFrame(self, text="  " + T("e_params") + "  ", padding=6)
@@ -1438,27 +1609,48 @@ class ExportTab(ttk.Frame):
         ttk.Label(opt, text=T("e_end")).grid(row=0, column=2, sticky="w")
         self.end_var = app.v("end", "")
         ttk.Entry(opt, textvariable=self.end_var, width=14).grid(row=0, column=3, sticky="w", padx=4)
+        ttk.Button(opt, text=T("e_video_auto"), width=12,
+                   command=self._autodetect_video).grid(row=0, column=4, sticky="w", padx=(4, 0))
         ttk.Button(opt, text=T("e_fill_video"), width=12,
-                   command=self._fill_from_video).grid(row=0, column=4, sticky="w", padx=(4, 0))
-        ttk.Label(opt, text=T("e_tc_hint"), foreground="#888").grid(row=0, column=5, sticky="w")
+                   command=self._fill_from_video).grid(row=0, column=5, sticky="w", padx=(4, 0))
+        ttk.Label(opt, text=T("e_tc_hint"), foreground="#888").grid(row=0, column=6, sticky="w")
 
-        ttk.Label(opt, text=T("e_sr")).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        # v1.2.0：视频余量 / 兜底时长（config 记忆，批量对话框沿用）
+        mrow = ttk.Frame(opt)
+        mrow.grid(row=1, column=0, columnspan=7, sticky="w", pady=(4, 0))
+        ttk.Label(mrow, text=T("e_margin")).pack(side="left")
+        self.margin_var = app.v("video_margin", str(app.cfg.get("video_margin", 240)))
+        ttk.Spinbox(mrow, from_=0, to=3600, increment=10, width=7,
+                    textvariable=self.margin_var).pack(side="left", padx=(2, 12))
+        ttk.Label(mrow, text=T("e_fallback")).pack(side="left")
+        self.fallback_var = app.v("fallback_duration", str(app.cfg.get("fallback_duration", 240)))
+        ttk.Spinbox(mrow, from_=1, to=3600, increment=10, width=7,
+                    textvariable=self.fallback_var).pack(side="left", padx=(2, 12))
+        ttk.Label(mrow, text=T("e_video_margin_note"),
+                  foreground="#888").pack(side="left", padx=(0, 16))
+        self.by_session_var = app.v("out_by_session",
+                                    "1" if app.cfg.get("out_by_session", True) else "0")
+        ttk.Checkbutton(mrow, text=T("e_by_session"),
+                        variable=self.by_session_var,
+                        onvalue="1", offvalue="0").pack(side="left")
+
+        ttk.Label(opt, text=T("e_sr")).grid(row=2, column=0, sticky="w", pady=(4, 0))
         self.sr_var = app.v("sample_rate", str(SAMPLE_RATES[0]))
         ttk.Combobox(opt, textvariable=self.sr_var, values=[str(x) for x in SAMPLE_RATES],
-                     state="readonly", width=10).grid(row=1, column=1, sticky="w", padx=4, pady=(4, 0))
-        ttk.Label(opt, text=T("e_bd")).grid(row=1, column=2, sticky="w", pady=(4, 0))
+                     state="readonly", width=10).grid(row=2, column=1, sticky="w", padx=4, pady=(4, 0))
+        ttk.Label(opt, text=T("e_bd")).grid(row=2, column=2, sticky="w")
         self.bd_var = app.v("bit_depth", "24")
         ttk.Combobox(opt, textvariable=self.bd_var, values=[str(x) for x in BIT_DEPTHS],
-                     state="readonly", width=8).grid(row=1, column=3, sticky="w", padx=4, pady=(4, 0))
-        ttk.Label(opt, text=T("e_fmt")).grid(row=1, column=4, sticky="w", pady=(4, 0))
+                     state="readonly", width=8).grid(row=2, column=3, sticky="w", padx=4, pady=(4, 0))
+        ttk.Label(opt, text=T("e_fmt")).grid(row=2, column=4, sticky="w")
         self.fmt_var = app.v("format", "mono")
         ttk.Combobox(opt, textvariable=self.fmt_var, values=EXPORT_FORMATS,
-                     state="readonly", width=12).grid(row=1, column=5, sticky="w", padx=4, pady=(4, 0))
+                     state="readonly", width=12).grid(row=2, column=5, sticky="w", padx=4, pady=(4, 0))
 
-        ttk.Label(opt, text=T("e_out")).grid(row=2, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(opt, text=T("e_out")).grid(row=3, column=0, sticky="w", pady=(4, 0))
         self.out_var = app.v("export_out", app.cfg.get("last_out_dir", ""))
-        ttk.Entry(opt, textvariable=self.out_var).grid(row=2, column=1, columnspan=4, sticky="we", padx=4, pady=(4, 0))
-        ttk.Button(opt, text=T("e_browse"), command=self._browse_out).grid(row=2, column=5, sticky="w", padx=4)
+        ttk.Entry(opt, textvariable=self.out_var).grid(row=3, column=1, columnspan=4, sticky="we", padx=4, pady=(4, 0))
+        ttk.Button(opt, text=T("e_browse"), command=self._browse_out).grid(row=3, column=5, sticky="w", padx=4)
 
         # -- 参数变化联动：勾选联动 + 预览失效闸门（v1.1.0 补实装）
         #    此前 UI 文案承诺「参数一变执行按钮熄灭」但从未比对签名——现绑定 trace 补齐
@@ -1466,7 +1658,8 @@ class ExportTab(ttk.Frame):
                      self.mode_bus_var, self.mode_track_var,
                      self.start_var, self.end_var, self.sr_var, self.bd_var,
                      self.fmt_var, self.out_var, self.session_var,
-                     self.sess_mode_var, self.profile_var):
+                     self.sess_mode_var, self.profile_var,
+                     self.margin_var, self.fallback_var, self.by_session_var):
             _var.trace_add("write", lambda *a: self._on_param_changed())
         self._sync_mode_gating()
 
@@ -1479,6 +1672,9 @@ class ExportTab(ttk.Frame):
         self.export_btn = ttk.Button(btnrow, text=T("e_export"),
                                      command=self.do_export)
         self.export_btn.pack(side="left", padx=8)
+        self.batch_btn = ttk.Button(btnrow, text=T("e_batch"),
+                                    command=self.open_batch_dialog)
+        self.batch_btn.pack(side="left", padx=8)
         ttk.Label(btnrow, text=T("e_verify"),
                   foreground="#888").pack(side="right")
 
@@ -1514,8 +1710,43 @@ class ExportTab(ttk.Frame):
         self._reload_sources()
         self.refresh_buttons()
 
+    def _reparse_exclude(self):
+        """排除名单 → pattern 列表（逗号分隔；含 * ? 按通配，否则精确）。"""
+        import fnmatch
+        raw = (self.exclude_var.get() or "").strip()
+        self._exclude_pats = [x.strip() for x in raw.split(",") if x.strip()]
+        self._exclude_fn = fnmatch.fnmatchcase
+
+    def _on_exclude_changed(self, *_a):
+        """排除名单变化：重解析 + 重渲染列表 + 存配置。"""
+        self._reparse_exclude()
+        self.app.cfg["track_exclude"] = self.exclude_var.get().strip()
+        save_config(self.app.cfg)
+        self._reload_sources()
+        self._invalidate_preview()
+
+    def _track_excluded(self, name):
+        return any(self._exclude_fn(name, p) for p in self._exclude_pats)
+
+    def _track_default_checked(self, t, name):
+        """默认勾选规则：有音频块 且 不在排除名单（用户手动勾选不受影响）。"""
+        clips = (t.get("attributes") or {}).get("contains_clips")
+        if clips is None:
+            clips = t.get("contains_clips")
+        if clips is False:
+            return False
+        return not self._track_excluded(name)
+
     def _reload_sources(self):
-        """档案轨道 → 列表（名称 + 类型）。v1.1.0 起列表只服务「按轨道名称」。"""
+        """档案轨道 → 勾选式列表（选/名称/类型/音频块）。
+
+        v1.2.0：默认勾选 = 有音频块 且 不在排除名单；空轨与排除轨灰显标注。
+        用户此前手动勾过的轨道保持原状（switch 到别的档案时重置）。
+        """
+        new_profile = self._profile_path != getattr(self, "_loaded_for", None)
+        if new_profile:
+            self.track_checked = set()
+            self._loaded_for = self._profile_path
         self.src_tree.delete(*self.src_tree.get_children())
         if not self._profile:
             self._update_src_count()
@@ -1525,17 +1756,70 @@ class ExportTab(ttk.Frame):
             name = t.get("name", "")
             if q and q not in name.lower():
                 continue
-            self.src_tree.insert("", "end", iid=name,
-                                 values=(name, t.get("type", "")))
+            clips = (t.get("attributes") or {}).get("contains_clips")
+            excluded = self._track_excluded(name)
+            if excluded:
+                self.track_checked.discard(name)
+            elif self._track_default_checked(t, name) and new_profile:
+                self.track_checked.add(name)
+            checked = name in self.track_checked
+            sel_txt = "☑" if checked else "☐"
+            clip_txt = (T("e_clips_yes") if clips is not False
+                        else T("e_clips_no"))
+            if excluded:
+                self.src_tree.insert("", "end", iid=name, tags=("excluded",),
+                                     values=(sel_txt,
+                                             name + T("e_excluded_mark"),
+                                             t.get("type", ""), clip_txt))
+            elif clips is False:
+                self.src_tree.insert("", "end", iid=name, tags=("empty",),
+                                     values=(sel_txt, name,
+                                             t.get("type", ""), clip_txt))
+            else:
+                self.src_tree.insert("", "end", iid=name,
+                                     values=(sel_txt, name,
+                                             t.get("type", ""), clip_txt))
+        try:
+            self.src_tree.tag_configure("excluded", foreground="#999")
+            self.src_tree.tag_configure("empty", foreground="#777")
+        except tk.TclError:
+            pass
         self._update_src_count()
 
-    def _on_src_select(self, _evt=None):
+    def _on_track_click(self, event):
+        """点击行切换勾选（点在「选」列或行任意处均可；滚动条除外）。"""
+        region = self.src_tree.identify("region", event.x, event.y)
+        if region not in ("cell", "tree"):
+            return
+        iid = self.src_tree.identify_row(event.y)
+        if not iid:
+            return
+        if iid in self.track_checked:
+            self.track_checked.discard(iid)
+        else:
+            self.track_checked.add(iid)
+        vals = list(self.src_tree.item(iid)["values"])
+        vals[0] = "☑" if iid in self.track_checked else "☐"
+        self.src_tree.item(iid, values=vals)
+        self._update_src_count()
+        self._invalidate_preview()
+
+    def _set_all_tracks(self, checked: bool):
+        """全选 / 全不选（作用于当前列表所有行，含空轨与排除轨——
+        全选是显式意图，覆盖默认规则）。"""
+        for iid in self.src_tree.get_children():
+            vals = list(self.src_tree.item(iid)["values"])
+            vals[0] = "☑" if checked else "☐"
+            self.src_tree.item(iid, values=vals)
+        if checked:
+            self.track_checked = set(self.src_tree.get_children())
+        else:
+            self.track_checked = set()
         self._update_src_count()
         self._invalidate_preview()
 
     def _update_src_count(self):
-        n = len(self.src_tree.selection())
-        self.src_count_var.set(T("e_selected") % n)
+        self.src_count_var.set(T("e_selected") % len(self.track_checked))
 
     # ---------------- 模式联动与预览闸门 ----------------
 
@@ -1545,11 +1829,14 @@ class ExportTab(ttk.Frame):
                 "track": self.mode_track_var}[m].get() == "1"
 
     def _sync_mode_gating(self):
-        """勾选联动：未勾「按轨道名称」时轨道列表禁选；未勾 STEM 时 aux 子项禁用。"""
+        """勾选联动（v1.2.0）：STEM 或「按轨道名称」任一勾选时轨道列表可交互
+        （STEM 勾选轨 = 只导勾选的；全不勾 = 全轨模式）；
+        未勾 STEM 时 aux 子项禁用。"""
         track_on = self.mode_track_var.get() == "1"
         stem_on = self.mode_stem_var.get() == "1"
         try:
-            self.src_tree.state(["!disabled"] if track_on else ["disabled"])
+            self.src_tree.state(["!disabled"] if (track_on or stem_on)
+                                else ["disabled"])
             self.cb_stem_aux.state(["!disabled"] if stem_on else ["disabled"])
         except tk.TclError:
             pass
@@ -1568,8 +1855,9 @@ class ExportTab(ttk.Frame):
     # ---------------- 参数收集与校验 ----------------
 
     def _selected_sources(self):
-        return [self.src_tree.item(i)["values"][0]
-                for i in self.src_tree.selection()]
+        """勾选的轨道名（按档案顺序，不在列表中的勾选如跨档案残留则忽略）。"""
+        known = set(self.src_tree.get_children())
+        return [n for n in self.track_checked if n in known]
 
     def _param_signature(self):
         return json.dumps({
@@ -1587,6 +1875,15 @@ class ExportTab(ttk.Frame):
                        if self.sess_mode_var.get() == "file" else "",
         }, ensure_ascii=False)
 
+    def _resolve_out_dir(self):
+        """输出目录（v1.2.0）：勾「输出按工程名建夹」时拼 <输出根>/<工程名>。"""
+        base = self.out_var.get().strip()
+        if self.by_session_var.get() == "1" and self._profile:
+            name = ((self._profile.get("session") or {}).get("name") or "").strip()
+            if name:
+                base = os.path.join(base, name)
+        return base
+
     def _build_cmds(self, dry_run):
         """构造 CLI 命令列表（--profile 必须在子命令前）。失败抛 ValueError。"""
         if not self._profile:
@@ -1596,6 +1893,9 @@ class ExportTab(ttk.Frame):
             sess = self.session_var.get().strip()
             if not sess:
                 raise ValueError(T("msg_sess_missing"))
+        stem_on = self.mode_stem_var.get() == "1"
+        track_on = self.mode_track_var.get() == "1"
+        picked = self._selected_sources()
         return build_export_cmds(
             self.app.resolver.venv_python,
             self.app.resolver.script("pt-exporter"),
@@ -1603,10 +1903,12 @@ class ExportTab(ttk.Frame):
             self._profile,
             modes=[m for m in EXPORT_MODES if self._mode_on(m)],
             stem_aux=self.stem_aux_var.get() == "1",
-            tracks=self._selected_sources()
-                    if self.mode_track_var.get() == "1" else [],
+            tracks=picked if track_on else [],
+            # STEM 勾选式：列表里有勾选 → 只导勾选轨；全不勾 → 全轨模式
+            stem_tracks=picked if (stem_on and picked) else [],
+            exclude_names=self._exclude_pats,
             session=sess,
-            out=self.out_var.get().strip(),
+            out=self._resolve_out_dir(),
             start=self.start_var.get().strip(),
             end=self.end_var.get().strip(),
             sample_rate=self.sr_var.get(),
@@ -1615,10 +1917,134 @@ class ExportTab(ttk.Frame):
             dry_run=dry_run,
         )
 
-    # ---------------- 按视频填入时间范围 ----------------
+    # ---------------- 视频锁定时长（v1.2.0：自动检索 + 手动选择）----------------
+
+    def _export_scripts_dir(self):
+        return os.path.dirname(self.app.resolver.script("pt-exporter"))
+
+    def _session_video_root(self):
+        """视频检索根：指定文件模式用 .ptx 所在目录；否则档案工程的目录。"""
+        p = ""
+        if self.sess_mode_var.get() == "file" and self.session_var.get().strip():
+            p = self.session_var.get().strip()
+        elif self._profile:
+            p = (self._profile.get("session") or {}).get("path") or ""
+        return os.path.dirname(os.path.abspath(p)) if p else ""
+
+    def _session_fps(self):
+        try:
+            return float(str(self._profile["session"].get("timecode_rate")
+                             or "25").split()[0])
+        except (KeyError, TypeError, ValueError, AttributeError):
+            return 25.0
+
+    def _apply_video_duration(self, dur_sec, video_name):
+        """end = 视频时长 + 余量（帧域换算），开始固定 00:00:00:00。"""
+        fps = self._session_fps()
+        try:
+            margin = max(float(self.margin_var.get() or 0), 0)
+        except ValueError:
+            margin = 0
+        tc = frame_to_tc(round((float(dur_sec) + margin) * fps), fps)
+        self.start_var.set("00:00:00:00")
+        self.end_var.set(tc)
+        self.app.log(T("e_video_applied") % (video_name, tc, margin))
+
+    def _autodetect_video(self):
+        """工程目录树自动检索视频 → 1 条直接应用；多条弹窗选择；0 条提示。"""
+        if not self._profile:
+            messagebox.showerror(T("msg_missing"), T("msg_no_profile"))
+            return
+        root = self._session_video_root()
+        if not root or not os.path.isdir(root):
+            self.app.log(T("e_video_none"))
+            return
+        script = os.path.join(self._export_scripts_dir(),
+                              "find_session_videos.py")
+        if not os.path.isfile(script):
+            self.app.log(T("e_video_fail") % ("script missing: %s" % script))
+            return
+        self.app.log(T("e_video_searching") % root)
+        threading.Thread(target=self._video_detect_worker, daemon=True,
+                         args=(script, root)).start()
+
+    def _video_detect_worker(self, script, root):
+        try:
+            p = subprocess.run(
+                [self.app.resolver.venv_python, script,
+                 "--dir", root, "--profile", self._profile_path],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=120,
+                creationflags=CREATE_NO_WINDOW)
+            text = p.stdout or ""
+        except Exception as exc:
+            self.app.after(0, lambda: self.app.log(
+                T("b_search_fail") % str(exc)))
+            return
+        data = None
+        try:
+            start = text.index("{")
+            data = json.loads(text[start:text.rindex("}") + 1])
+        except (ValueError, json.JSONDecodeError):
+            data = None
+        self.app.after(0, lambda: self._video_detect_done(data))
+
+    def _video_detect_done(self, data):
+        videos = (data or {}).get("videos") or []
+        if not videos:
+            self.app.log(T("e_video_none"))
+            return
+        if len(videos) == 1:
+            v = videos[0]
+            self.app.log(T("e_video_found1") % v.get("name", ""))
+            self._apply_video_duration(v["duration_sec"], v.get("name", ""))
+            return
+        self.app.log(T("e_video_found_n") % len(videos))
+        picked = self._video_choose_dialog(videos)
+        if picked:
+            self._apply_video_duration(picked["duration_sec"],
+                                       picked.get("name", ""))
+
+    def _video_choose_dialog(self, videos):
+        """模态视频选择窗：清单（名称/时长/路径）→ 返回选中 dict 或 None。"""
+        dlg = tk.Toplevel(self)
+        dlg.title(T("e_video_pick_title"))
+        dlg.transient(self.winfo_toplevel())
+        dlg.grab_set()
+        dlg.resizable(True, True)
+        tree = ttk.Treeview(dlg, columns=("name", "dur", "path"),
+                            show="headings", height=8)
+        tree.heading("name", text=T("e_name_col"))
+        tree.heading("dur", text=T("e_clips_col"))
+        tree.heading("path", text="Path")
+        tree.column("name", width=220)
+        tree.column("dur", width=70, anchor="center", stretch=False)
+        tree.column("path", width=380)
+        tree.pack(fill="both", expand=True, padx=10, pady=10)
+        for i, v in enumerate(videos):
+            tree.insert("", "end", iid=str(i), values=(
+                v.get("name", ""), "%.1fs" % v.get("duration_sec", 0),
+                v.get("path", "")))
+        tree.selection_set("0")
+        result = {"picked": None}
+
+        def confirm(_e=None):
+            sel = tree.selection()
+            if sel:
+                result["picked"] = videos[int(sel[0])]
+            dlg.destroy()
+
+        btns = ttk.Frame(dlg)
+        btns.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(btns, text="OK", command=confirm).pack(side="right")
+        ttk.Button(btns, text="Cancel",
+                   command=dlg.destroy).pack(side="right", padx=6)
+        tree.bind("<Double-1>", confirm)
+        dlg.wait_window()
+        return result["picked"]
 
     def _fill_from_video(self):
-        """选视频文件 → video_duration.py 读时长 → 自动填 开始/结束。"""
+        """手动选视频文件 → video_duration.py 读时长 → 应用（含余量）。"""
         if not self._profile:
             messagebox.showerror(T("msg_missing"), T("msg_no_profile"))
             return
@@ -1627,9 +2053,8 @@ class ExportTab(ttk.Frame):
             filetypes=[("Video", "*.mp4 *.mov *.m4v *.webm"), ("All", "*.*")])
         if not path:
             return
-        script = os.path.join(
-            os.path.dirname(self.app.resolver.script("pt-exporter")),
-            "video_duration.py")
+        script = os.path.join(self._export_scripts_dir(),
+                              "video_duration.py")
         if not os.path.isfile(script):
             self.app.log(T("e_video_fail") % ("script missing: %s" % script))
             return
@@ -1650,13 +2075,20 @@ class ExportTab(ttk.Frame):
         except Exception as exc:
             text = str(exc)
         tc = parse_video_duration_output(text)
-        self.app.after(0, lambda: self._video_apply(tc, text))
+        self.app.after(0, lambda: self._video_apply(tc, text, video))
 
-    def _video_apply(self, tc, raw):
+    def _video_apply(self, tc, raw, video=""):
         if not tc:
             lines = [x for x in (raw or "").strip().splitlines() if x.strip()]
             self.app.log(T("e_video_fail") % (lines[-1] if lines else "?"))
             return
+        # 人工模式同样叠加余量：tc → 帧 → +margin → 回时码
+        try:
+            margin = max(float(self.margin_var.get() or 0), 0)
+        except ValueError:
+            margin = 0
+        fps = self._session_fps()
+        tc = frame_to_tc(tc_to_frame(tc, fps) + int(round(margin * fps)), fps)
         self.start_var.set("00:00:00:00")
         self.end_var.set(tc)
         self.app.log(T("e_video_ok") % tc)
@@ -1734,6 +2166,304 @@ class ExportTab(ttk.Frame):
             filetypes=[("Pro Tools Session", "*.ptx"), ("All", "*.*")])
         if chosen:
             self.session_var.set(chosen)
+
+    # ---------------- 批量导出（v1.2.0）----------------
+
+    def open_batch_dialog(self):
+        if not self.app.ptsl_on:
+            messagebox.showerror(T("msg_invalid"), T("b_need_ptsl"))
+            return
+        if not self._profile:
+            messagebox.showerror(T("msg_missing"), T("msg_no_profile"))
+            return
+        BatchExportDialog(self)
+
+
+class BatchExportDialog(tk.Toplevel):
+    """多工程批量导出：前置检索视频（开 PT 前就选定），生成 jobs.json 交给
+    pt_batch_export.py 编排执行（open/close 守卫、逐工程扫描、产物核对都
+    在脚本侧，壳不动芯）。轨道规则沿用导出页当前设置。"""
+
+    def __init__(self, tab: "ExportTab"):
+        super().__init__(tab)
+        self.tab = tab
+        self.title(T("b_title"))
+        self.transient(tab.winfo_toplevel())
+        self.geometry("860x560")
+        self.rows: dict = {}          # ptx -> {"videos": [...], "picked": None}
+
+        # -- 工程列表
+        box = ttk.LabelFrame(self, text="  " + T("b_ptx_frame") + "  ", padding=6)
+        box.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+        btns = ttk.Frame(box)
+        btns.pack(fill="x")
+        ttk.Button(btns, text=T("b_add"), command=self._add_sessions).pack(side="left")
+        ttk.Button(btns, text=T("b_remove"), command=self._remove_selected).pack(
+            side="left", padx=6)
+        ttk.Button(btns, text=T("b_rescan"), command=self._rescan_all).pack(side="left")
+        self.tree = ttk.Treeview(box, columns=("session", "video", "status"),
+                                 show="headings", height=10)
+        self.tree.heading("session", text=T("b_col_session"))
+        self.tree.heading("video", text=T("b_col_video"))
+        self.tree.heading("status", text=T("b_col_status"))
+        self.tree.column("session", width=330)
+        self.tree.column("video", width=260)
+        self.tree.column("status", width=160, anchor="center")
+        self.tree.pack(fill="both", expand=True, pady=(4, 0))
+        self.tree.bind("<Double-1>", self._on_double)
+
+        # -- 策略
+        pol = ttk.LabelFrame(self, text="  " + T("b_policy_frame") + " / "
+                             + T("b_multi_frame") + "  ", padding=6)
+        pol.pack(fill="x", padx=10, pady=4)
+        ttk.Label(pol, text=T("b_policy_frame") + ":").pack(side="left")
+        self.no_video_var = tk.StringVar(value="fallback")
+        ttk.Radiobutton(pol, text=T("b_policy_fallback"), value="fallback",
+                        variable=self.no_video_var).pack(side="left", padx=(4, 14))
+        ttk.Radiobutton(pol, text=T("b_policy_skip"), value="skip",
+                        variable=self.no_video_var).pack(side="left")
+        ttk.Label(pol, text="    |    " + T("b_multi_frame") + ":").pack(side="left")
+        self.multi_var = tk.StringVar(value="skip")
+        ttk.Radiobutton(pol, text=T("b_multi_pick"), value="pick",
+                        variable=self.multi_var).pack(side="left", padx=(4, 14))
+        ttk.Radiobutton(pol, text=T("b_multi_skip"), value="skip",
+                        variable=self.multi_var).pack(side="left")
+
+        ttk.Label(self, text=T("b_rule_note"), foreground="#888",
+                  wraplength=820, justify="left").pack(
+            fill="x", padx=12, pady=(2, 0))
+
+        # -- 开始
+        start_row = ttk.Frame(self)
+        start_row.pack(fill="x", padx=10, pady=(4, 10))
+        ttk.Button(start_row, text=T("b_start"), command=self._start).pack(side="right")
+
+    # ---- 行管理 ----
+
+    def _add_sessions(self):
+        files = filedialog.askopenfilenames(
+            title=T("choose_ptx_title"),
+            filetypes=[("Pro Tools Session", "*.ptx"), ("All", "*.*")])
+        for f in files:
+            if f in self.rows:
+                continue
+            self.rows[f] = {"videos": [], "picked": None}
+            self.tree.insert("", "end", iid=f, values=(
+                os.path.basename(f), T("b_video_none"), "…"))
+            self._search_one(f)
+        if files:
+            self.tree.selection_set(files[0])
+
+    def _remove_selected(self):
+        for iid in self.tree.selection():
+            self.rows.pop(iid, None)
+            self.tree.delete(iid)
+
+    def _rescan_all(self):
+        for f in list(self.rows):
+            self._search_one(f)
+
+    def _on_double(self, _e):
+        iid = self.tree.identify_row(_e.y)
+        if iid and (self.rows.get(iid, {}).get("videos")):
+            self._pick_video(iid)
+
+    def _search_one(self, ptx):
+        """后台检索一个工程的视频（不开 PT，纯文件系统）。"""
+        root = os.path.dirname(os.path.abspath(ptx))
+        script = os.path.join(self.tab._export_scripts_dir(),
+                              "find_session_videos.py")
+        if not os.path.isfile(script):
+            self._set_row(ptx, video=T("b_video_none"), status=T("b_search_fail") % "script missing")
+            return
+        self.tab.app.log(T("b_searching") % os.path.basename(ptx))
+        threading.Thread(target=self._search_worker, daemon=True,
+                         args=(ptx, script, root)).start()
+
+    def _search_worker(self, ptx, script, root):
+        try:
+            p = subprocess.run(
+                [self.tab.app.resolver.venv_python, script,
+                 "--session", ptx, "--profile", self.tab._profile_path],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=120,
+                creationflags=CREATE_NO_WINDOW)
+            text = p.stdout or ""
+        except Exception as exc:
+            self.after(0, lambda: self._search_done(ptx, None, str(exc)))
+            return
+        data = None
+        try:
+            start = text.index("{")
+            data = json.loads(text[start:text.rindex("}") + 1])
+        except (ValueError, json.JSONDecodeError):
+            data = None
+        self.after(0, lambda: self._search_done(ptx, data, text[-200:]))
+
+    def _search_done(self, ptx, data, raw):
+        row = self.rows.get(ptx)
+        if row is None:
+            return  # 行已被移除
+        videos = (data or {}).get("videos") or []
+        row["videos"] = videos
+        row["picked"] = None
+        if not videos:
+            self._set_row(ptx, video=T("b_video_none"),
+                          status=(T("b_policy_fallback")
+                                  if self.no_video_var.get() == "fallback"
+                                  else T("b_policy_skip")))
+        elif len(videos) == 1:
+            row["picked"] = videos[0]
+            self._set_row(ptx, video=T("b_video_ok") % (
+                videos[0].get("name", ""), videos[0].get("duration_sec", 0)),
+                status="OK")
+        else:
+            n = len(videos)
+            self._set_row(ptx, video=T("b_video_multi") % n,
+                          status=(T("b_multi_pick") + " / " + T("b_video_pick")
+                                  if self.multi_var.get() == "pick"
+                                  else T("b_multi_skip")))
+        self._invalidate_parent_preview()
+
+    def _set_row(self, ptx, video=None, status=None):
+        if not self.tree.exists(ptx):
+            return
+        vals = list(self.tree.item(ptx)["values"])
+        if video is not None:
+            vals[1] = video
+        if status is not None:
+            vals[2] = status
+        self.tree.item(ptx, values=vals)
+
+    def _pick_video(self, ptx):
+        videos = self.rows.get(ptx, {}).get("videos") or []
+        picked = self.tab._video_choose_dialog(videos)
+        if not picked:
+            return
+        self.rows[ptx]["picked"] = picked
+        self._set_row(ptx, video=T("b_video_ok") % (
+            picked.get("name", ""), picked.get("duration_sec", 0)), status="OK")
+
+    def _invalidate_parent_preview(self):
+        try:
+            self.tab._invalidate_preview()
+        except Exception:
+            pass
+
+    # ---- 生成 jobs 并启动 ----
+
+    def _start(self):
+        if not self.rows:
+            messagebox.showwarning(T("msg_invalid"), T("b_need_ptx"))
+            return
+        tab = self.tab
+        try:
+            margin = max(float(tab.margin_var.get() or 0), 0)
+        except ValueError:
+            margin = 0
+        fallback = 240
+        try:
+            fallback = max(float(tab.fallback_var.get() or 240), 1)
+        except ValueError:
+            pass
+        exclude = list(tab._exclude_pats)
+        stem_on = tab.mode_stem_var.get() == "1"
+        track_on = tab.mode_track_var.get() == "1"
+        picked_tracks = tab._selected_sources()
+        stem_aux = tab.stem_aux_var.get() == "1"
+
+        exports = []
+        modes = [m for m in EXPORT_MODES if tab._mode_on(m)]
+        if not modes:
+            messagebox.showwarning(T("msg_invalid"), T("msg_no_mode"))
+            return
+        srcs = (tab._profile or {}).get("sources", {})
+        for m in modes:
+            if m == "mix":
+                exports.append({"kind": "output",
+                                "sources": srcs.get("output") or []})
+            elif m == "bus":
+                exports.append({"kind": "bus",
+                                "sources": srcs.get("bus") or []})
+            elif m == "stem":
+                if picked_tracks:
+                    exports.append({"kind": "track", "sources": picked_tracks})
+                else:
+                    exp = {"kind": "track-all", "exclude_empty": True,
+                           "exclude_names": exclude}
+                    if stem_aux:
+                        exp["track_types"] = ["audio", "aux", "instrument", "midi"]
+                    else:
+                        exp["skip_buses"] = True
+                    exports.append(exp)
+            elif m == "track":
+                if not picked_tracks:
+                    messagebox.showwarning(T("msg_invalid"), T("msg_no_track_sel"))
+                    return
+                exports.append({"kind": "track", "sources": picked_tracks})
+        if any((e.get("kind") in ("output", "bus")) and not e.get("sources")
+               for e in exports):
+            messagebox.showwarning(T("msg_invalid"),
+                                   T("msg_no_output_src") if "output" in
+                                   [e.get("kind") for e in exports if not e.get("sources")]
+                                   else T("msg_no_bus_src"))
+            return
+
+        jobs = []
+        for i, (ptx, info) in enumerate(self.rows.items(), 1):
+            job = {"id": str(i), "ptx": ptx, "session_name_expect": "",
+                   "exports": exports}
+            picked = info.get("picked")
+            videos = info.get("videos") or []
+            if picked:
+                job["duration_sec"] = round(
+                    float(picked.get("duration_sec", 0)) + margin, 3)
+            elif videos:
+                # 多视频且未选 → 用户策略：跳过记录（清单进汇总）
+                job["_videos"] = videos
+                job["skip_on_no_duration"] = True
+            else:
+                if self.no_video_var.get() == "fallback":
+                    job["duration_sec"] = fallback
+                else:
+                    job["_videos"] = []
+                    job["skip_on_no_duration"] = True
+            jobs.append(job)
+
+        out_root = tab.out_var.get().strip()
+        if not out_root:
+            messagebox.showwarning(T("msg_invalid"), T("msg_out_missing"))
+            return
+        spec = {
+            "defaults": {
+                "sample_rate": tab.sr_var.get(),
+                "bit_depth": tab.bd_var.get(),
+                "format": tab.fmt_var.get(),
+                "fps": tab._session_fps(),
+                "save_on_close": True,
+            },
+            "paths": {
+                "venv_python": tab.app.resolver.venv_python,
+                "scan_script": tab.app.resolver.script("pt-scanner"),
+                "export_script": tab.app.resolver.script("pt-exporter"),
+                "profile_dir": os.path.join(tempfile.gettempdir(),
+                                            "pt_tools_batch_profiles"),
+                "out_root": out_root,
+            },
+            "jobs": jobs,
+        }
+        os.makedirs(spec["paths"]["profile_dir"], exist_ok=True)
+        tmp = tempfile.mkdtemp(prefix="pt_batch_jobs_")
+        jobs_path = os.path.join(tmp, "jobs.json")
+        with open(jobs_path, "w", encoding="utf-8") as f:
+            json.dump(spec, f, ensure_ascii=False, indent=2)
+        batch_script = os.path.join(tab._export_scripts_dir(),
+                                    "pt_batch_export.py")
+        cmd = [tab.app.resolver.venv_python, batch_script, "--jobs", jobs_path]
+        tab.app.log(T("b_generating") % jobs_path)
+        tab.app.log(T("b_started") % len(jobs))
+        tab.app.start_worker([cmd])
+        self.destroy()
 
 
 # ---------------------------------------------------------------------------

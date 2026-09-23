@@ -499,6 +499,20 @@ def _run_track_mode(args, profile, pt):
             for t in suspect[:20]:
                 print(f"         - {t.name}")
 
+    # --exclude-name（v1.2.0）：名字级排除名单。含 * ? 时按通配符匹配，
+    # 否则精确匹配（fnmatch 对无通配 pattern 等价精确，一套逻辑两用）。
+    if getattr(args, "exclude_name", None):
+        import fnmatch
+        pats = [x.strip() for x in args.exclude_name if x and x.strip()]
+        def _is_excluded(name):
+            return any(fnmatch.fnmatchcase(name, p) for p in pats)
+        dropped = [t for t in picked if _is_excluded(t.name)]
+        if dropped:
+            picked = [t for t in picked if not _is_excluded(t.name)]
+            print(f"[info] --exclude-name 按名单排除 {len(dropped)} 根轨：")
+            for t in dropped[:20]:
+                print(f"         - {t.name}")
+
     if not picked:
         print("[error] 没有可导出的轨道。请检查 --source 名，或改用 "
               "--all-tracks。", file=sys.stderr)
@@ -677,6 +691,10 @@ def main():
                        metavar="TYPE",
                        help="[track] 只要这些类型（audio/aux/master/vca/"
                             "routing-folder/instrument/midi），可重复")
+        sp.add_argument("--exclude-name", action="append", default=[],
+                       metavar="NAME",
+                       help="[track] 按名字排除轨道，可重复；含 * ? 时按"
+                            "通配符匹配，否则精确匹配（v1.2.0）")
         sp.add_argument("--bounce-timeout", type=float, default=600.0,
                        help="单次导出超时秒数（默认 600）。实时导出长素材时"
                             "应 ≥ 素材时长 + 余量；超时即 fail-fast，"
