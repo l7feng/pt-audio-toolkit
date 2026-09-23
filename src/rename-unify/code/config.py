@@ -9,7 +9,8 @@ import os
 import sys
 
 APP_NAME = "rename-unify"
-APP_VERSION = "v1.1.0"
+# 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），显示时补 v（见 title()）。
+APP_VERSION = "1.1.0"
 
 
 def app_dir():
@@ -112,4 +113,4 @@ def build_date():
 
 
 def title():
-    return "统一命名工具 %s (%s)" % (APP_VERSION, build_date())
+    return "统一命名工具 v%s (%s)" % (APP_VERSION, build_date())

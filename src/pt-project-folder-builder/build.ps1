@@ -1,30 +1,32 @@
+# pt-project-folder-builder build entry (thin wrapper around tools/build.py).
+#
+# Real build logic: <repo>\tools\build.py
+# Why not run PyInstaller directly from PowerShell: it writes progress to STDERR,
+# and with $ErrorActionPreference="Stop" Windows PowerShell turns native stderr
+# into NativeCommandError, aborting the build right after the first "INFO:" line.
+# See tools/build.py for details.
+#
+# NOTE: keep this file PURE ASCII. PowerShell 5.1 reads .ps1 as ANSI/GBK and
+# non-ASCII bytes can corrupt parsing.
+#
+# Behavior note (2026-09-23): output now goes to the unified exe root
+# (<out-root>\pt-audio-toolkit-v<version>-<date>\pt-project-folder-builder\)
+# instead of a local dist\. Pass --out-root to override.
 $ErrorActionPreference = "Stop"
 
-$AppName   = "PT工程文件夹生成器"
-$Script    = "folder_builder_gui.py"
-$DistName  = "pt-project-folder-builder"
-$ToolDir   = $PSScriptRoot
-$PySys     = "C:\Users\$env:USERNAME\AppData\Local\Programs\Python\Python312\python.exe"
-if (Test-Path -LiteralPath $PySys) { $Py = $PySys } else { $Py = (Get-Command python).Source }
-$ScriptAbs = Join-Path $ToolDir $Script
-
-Write-Host "Building $AppName (PyInstaller windowed onedir) ..."
-
-& $Py -m PyInstaller --noconfirm --windowed --onedir `
-    --name $DistName `
-    --distpath (Join-Path $ToolDir "dist") `
-    --workpath (Join-Path $ToolDir "build") `
-    $ScriptAbs 2>&1 | Tee-Object -FilePath (Join-Path $ToolDir "build.log")
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "PyInstaller failed (exit $LASTEXITCODE). See build.log"
+$dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repo = $dir
+while ($repo -and -not (Test-Path (Join-Path $repo "tools\build.py"))) {
+    $parent = Split-Path -Parent $repo
+    if (-not $parent -or $parent -eq $repo) { break }
+    $repo = $parent
+}
+$builder = Join-Path $repo "tools\build.py"
+if (-not (Test-Path -LiteralPath $builder)) {
+    Write-Host "[error] tools\build.py not found (searched upward from $dir)" -ForegroundColor Red
     exit 1
 }
 
-$Exe = Join-Path $ToolDir "dist\$DistName\$DistName.exe"
-if (Test-Path $Exe) {
-    Write-Host "Done -> $Exe"
-} else {
-    Write-Error "EXE not found after build: $Exe"
-    exit 1
-}
+Write-Host "[info] delegating to $builder"
+python $builder pt-project-folder-builder @args
+exit $LASTEXITCODE

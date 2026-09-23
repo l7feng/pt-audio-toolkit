@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pt-tools-gui —— Pro Tools 自动化技能族·人类直用通道（v2，2026-09-21）
+pt-tools-gui —— Pro Tools 自动化技能族·人类直用通道（UI v2）
 
 v2 变更：
   - 单语 UI（中文 / English）：菜单栏 设置 > 语言 切换，写入 config.json
@@ -56,6 +56,31 @@ EXPORT_FORMATS = ["mono", "interleaved"]
 TC_RE = re.compile(r"^\d{2}:\d{2}:\d{2}:\d{2}$")
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
+# ---------------------------------------------------------------------------
+# 版本与构建日期
+# ---------------------------------------------------------------------------
+# 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），标题/关于里写 vX.Y.Z (YYYY-MM-DD)。
+# ⚠️ build_date() 在 pt-project-folder-builder / jianying-draft-toolkit /
+#    rename-unify 各有一份逐字相同的实现（各工具独立打包、无共享模块），
+#    改动时四处需同步。
+APP_VERSION = "1.0.0"
+
+
+def build_date():
+    """构建日期：frozen 取 exe 文件时间（打包时刻），源码模式取本文件时间。
+
+    目标：标题栏一眼识别新旧 —— 拿错旧版 exe 时日期明显比固定资产旧。
+    ⚠️ sys.executable 是 str，必须先 Path() 包一层再 .stat()（曾写成 src.stat()
+       直接调用 → AttributeError 被 except 吞掉 → 标题恒显示「未知」）。
+    """
+    try:
+        import datetime as _dt
+        from pathlib import Path
+        src = Path(sys.executable) if getattr(sys, "frozen", False) else Path(__file__)
+        return _dt.datetime.fromtimestamp(src.stat().st_mtime).strftime("%Y-%m-%d")
+    except Exception:
+        return "未知"
+
 LANG_ZH = "zh"
 LANG_EN = "en"
 
@@ -65,7 +90,7 @@ LANG_EN = "en"
 
 TEXTS = {
     LANG_ZH: {
-        "app_title": "pt-tools — Pro Tools 自动化工具",
+        "app_title": "pt-tools v%s (%s) — Pro Tools 自动化工具" % (APP_VERSION, build_date()),
 
         "menu_file": "文件",
         "menu_settings": "设置",
@@ -176,6 +201,9 @@ TEXTS = {
         "skills_ok": "技能目录 OK：%s",
         "err_root_missing": "技能目录不存在：%s",
         "err_venv_missing": "未找到 venv 解释器：%s\n（在 pt-exporter/env 下重建 venv 并 pip install py-ptsl）",
+        "err_venv_missing_builtin": "技能脚本已内置，仅缺运行解释器的 venv：%s\n"
+                                    "（venv 含 py-ptsl、体积大，不随 exe 打包；"
+                                    "请在 设置 > 技能目录 指向含 venv 的技能目录，如 %s）",
         "err_scripts_missing": "缺少脚本：%s",
         "skills_broken_title": "技能目录不可用",
         "skills_broken_hint": "请通过 设置 > 技能目录 选择 protools-skills 文件夹（需含 venv 与三个技能脚本）。",
@@ -238,7 +266,7 @@ TEXTS = {
             "  （内含三个技能 + pt-exporter\\env\\venv）。\n"),
         "about_text": (
             "pt-tools — Pro Tools 自动化桌面工具\n"
-            "版本：v2（2026-09-21）\n"
+            "版本：v%s（%s）\n" % (APP_VERSION, build_date()) +
             "定位：Pro Tools 自动化技能族的人类直用通道\n\n"
             "技术：tkinter GUI → 调用技能脚本 → PTSL（gRPC 127.0.0.1:31416）\n"
             "依赖：protools-skills 技能目录（内置 py-ptsl venv）\n"
@@ -246,7 +274,7 @@ TEXTS = {
     },
 
     LANG_EN: {
-        "app_title": "pt-tools — Pro Tools Automation",
+        "app_title": "pt-tools v%s (%s) — Pro Tools Automation" % (APP_VERSION, build_date()),
 
         "menu_file": "File",
         "menu_settings": "Settings",
@@ -353,6 +381,9 @@ TEXTS = {
         "skills_ok": "Skills root OK: %s",
         "err_root_missing": "Skills root does not exist: %s",
         "err_venv_missing": "venv interpreter not found: %s\n(recreate venv under pt-exporter/env and pip install py-ptsl)",
+        "err_venv_missing_builtin": "Scripts are bundled; only the runtime venv is missing: %s\n"
+                                    "(the venv carries py-ptsl and is too large to bundle; "
+                                    "point Settings > Skills Root at a skills folder that has one, e.g. %s)",
         "err_scripts_missing": "Missing script(s): %s",
         "skills_broken_title": "Skills root unavailable",
         "skills_broken_hint": "Use Settings > Skills Root to select the protools-skills folder (needs venv + three skills).",
@@ -412,7 +443,7 @@ TEXTS = {
             "  (three skills + pt-exporter\\env\\venv).\n"),
         "about_text": (
             "pt-tools — Pro Tools Automation desktop tool\n"
-            "Version: v2 (2026-09-21)\n"
+            "Version: v%s (%s)\n" % (APP_VERSION, build_date()) +
             "Role: human-facing channel for the Pro Tools automation skill family\n\n"
             "Tech: tkinter GUI → skill scripts → PTSL (gRPC 127.0.0.1:31416)\n"
             "Depends on: protools-skills folder (bundles py-ptsl venv)\n"
@@ -508,16 +539,23 @@ class PathResolver:
                             SCRIPTS[skill_name])
 
     def status(self):
-        """返回 (ok, msg)：技能目录可用性"""
-        root_ok = os.path.isdir(self.skills_root)
-        venv_ok = os.path.isfile(self.venv_python)
+        """返回 (ok, msg)：技能目录可用性。
+
+        判定顺序按「到底缺哪一环」排，而不是按目录是否存在 —— 打包后脚本已内置到
+        `<exe目录>/_internal/skills/`，此时技能目录不存在并不等于脚本缺失。
+        venv 因体积不随 exe 打包，是唯一**必须外置**的依赖，缺它时应给出可操作指引。
+        """
+        builtin = self._builtin_scripts_root()
         missing = [s for s in SCRIPTS if not os.path.isfile(self.script(s))]
-        if not root_ok:
-            return False, T("err_root_missing") % self.skills_root
-        if not venv_ok:
-            return False, T("err_venv_missing") % self.venv_python
         if missing:
+            if not os.path.isdir(self.skills_root) and not builtin:
+                return False, T("err_root_missing") % self.skills_root
             return False, T("err_scripts_missing") % ", ".join(missing)
+        if not os.path.isfile(self.venv_python):
+            if builtin:
+                return False, T("err_venv_missing_builtin") % (self.venv_python,
+                                                               DEFAULT_SKILLS_ROOT)
+            return False, T("err_venv_missing") % self.venv_python
         return True, T("skills_ok") % self.skills_root
 
     @classmethod

@@ -32,6 +32,30 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox
 
 
 # ---------------------------------------------------------------------------
+# 版本与构建日期
+# ---------------------------------------------------------------------------
+# 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），标题写 vX.Y.Z (YYYY-MM-DD)。
+# ⚠️ build_date() 在 pt-tools / jianying-draft-toolkit / rename-unify 各有一份
+#    逐字相同的实现（各工具独立打包、无共享模块），改动时四处需同步。
+APP_VERSION = "1.0.0"
+
+
+def build_date():
+    """构建日期：frozen 取 exe 文件时间（打包时刻），源码模式取本文件时间。
+
+    目标：标题栏一眼识别新旧。
+    ⚠️ sys.executable 是 str，必须先 Path() 包一层再 .stat()（曾写成 src.stat()
+       直接调用 → AttributeError 被 except 吞掉 → 标题恒显示「未知」）。
+    """
+    try:
+        import datetime as _dt
+        from pathlib import Path
+        src = Path(sys.executable) if getattr(sys, "frozen", False) else Path(__file__)
+        return _dt.datetime.fromtimestamp(src.stat().st_mtime).strftime("%Y-%m-%d")
+    except Exception:
+        return "未知"
+
+# ---------------------------------------------------------------------------
 # 命名：规则与信息（与 GUI 解耦，便于无界面测试）
 # ---------------------------------------------------------------------------
 
@@ -211,7 +235,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.withdraw()  # 避免 exe 启动时的空白 tk 残窗
-        self.title("PT 工程文件夹生成器")
+        self.title("PT 工程文件夹生成器 v%s (%s)" % (APP_VERSION, build_date()))
         self._center_on_screen(760, 720)
         self.configure(padx=12, pady=12)
 

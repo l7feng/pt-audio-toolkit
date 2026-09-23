@@ -21,8 +21,11 @@
 
 ### 方式一：直接下载 exe（推荐给非开发用户）
 
-到 [**Releases**](../../releases) 下载 `pt-audio-toolkit-v1.0.0.zip`，解压后每个工具一个文件夹，
-双击对应的 `.exe` 即可运行，**无需安装 Python**。
+到 [**Releases**](../../releases) 下载对应版本的四个工具包
+（`pt-audio-toolkit-v<版本>-<工具名>.zip`，一工具一包），解压后双击 `.exe` 即可运行，
+**无需安装 Python**。
+
+> ⚠️ 每个工具要**整个文件夹一起用**（`_internal\` 必须与 exe 同级），不要只拷 exe。
 
 ### 方式二：从源码运行
 
@@ -46,14 +49,23 @@ python src/rename-unify/code/main.py
 
 ### 方式三：自行打包 exe
 
-每个工具目录下都有 `build.ps1`（或 `packaging/build.ps1`），直接运行：
+统一入口（推荐）：
 
-```powershell
-cd src/pt-tools
-.\build.ps1
+```bash
+python tools/build.py                   # 构建全部四个工具
+python tools/build.py pt-tools          # 只构建指定工具
+python tools/build.py --version 1.1.0 --date 20260923 --out-root D:\somewhere\exe
 ```
 
-产物在各自 `dist\` 下，结构为 `exe` + `_internal\`。
+产物默认落在 `D:\Ai-Files\Agent-Preset\exe\pt-audio-toolkit-v<版本>-<日期>\<工具名>\`，
+结构为 `exe` + `_internal\`，**整个文件夹一起分发**。
+
+构建解释器需带 **tkinter**（官方 Windows 安装版自带）与 **PyInstaller**；剪映工具另需
+`tkinterdnd2`。`tools/build.py` 会在构建前自检并给出明确报错。
+
+各工具目录下的 `build.ps1` 仍然可用，但已降级为**转发薄壳** ——
+原因见 `tools/build.py` 顶部注释：PowerShell 会把 PyInstaller 的 stderr 当作错误流，
+配合 `$ErrorActionPreference="Stop"` 会在第一行 `INFO:` 就**静默中断**构建。
 
 ---
 
@@ -73,27 +85,43 @@ cd src/pt-tools
 ```
 pt-audio-toolkit/
 ├── README.md                 本文件
+├── CHANGELOG.md              版本与变更
+├── VERSION                   仓库级版本（tools/build.py 用它命名出口目录）
 ├── LICENSE                   MIT
 ├── .gitignore
+├── tools/                    构建与核验
+│   ├── build.py              统一打包入口（四工具，一条命令）
+│   └── verify_exe.py         exe 产物核验（清单 + 真启动 + 窗口枚举，查 tk 残留空窗）
+├── tests/                    回归测试（跑法见 tests/README.md）
+│   ├── _common.py            跨机路径解析 + PASS/SKIP/FAIL/ERROR 分级
+│   ├── run_import_tests.py   15 模块导入自检
+│   ├── test_core_logic.py    24 项核心逻辑
+│   ├── test_wiring.py        5 项 GUI↔核心接线
+│   ├── run_gui_smoke.py      4 个 GUI 建窗即销毁
+│   └── test_jy_multitpl.py   剪映片段 + 多模板端到端
 └── src/
     ├── pt-tools/                 Pro Tools 工具箱 GUI
     │   ├── pt_tools_gui.py
-    │   ├── build.ps1
-    │   └── skills/               ← 三个内置技能（打包时进 _internal\skills\）
+    │   ├── build.ps1             → 转发 tools/build.py
+    │   ├── README.md
+    │   └── skills/               三个技能脚本（打包时进 _internal\skills\）
     │       ├── pt-cleaner/
     │       ├── pt-exporter/      （scripts/ 为正式脚本，env/ 为调试探针）
     │       └── pt-scanner/
     ├── pt-project-folder-builder/
     │   ├── folder_builder_gui.py
-    │   └── build.ps1
+    │   ├── build.ps1             → 转发 tools/build.py
+    │   └── README.md
     ├── jianying-draft-toolkit/
     │   ├── code/                 主程序 + core/ + tabs/
     │   ├── config.json
-    │   ├── packaging/build.ps1
+    │   ├── packaging/build.ps1   → 转发 tools/build.py
+    │   ├── README.md
     │   └── tools/                第三方依赖 jy-draftc
     └── rename-unify/
         ├── code/
-        └── packaging/build.ps1
+        ├── README.md
+        └── packaging/build.ps1   → 转发 tools/build.py
 ```
 
 ---
@@ -110,10 +138,16 @@ GUI 外壳只负责收集用户参数，然后拼成命令行参数，用 `subpr
 
 ## 已知事项
 
-- `src/pt-project-folder-builder/build.ps1` 与 `src/jianying-draft-toolkit/code/main.py` 中存在
-  **开发机硬编码路径**（`C:\Users\Administrator\...`），自行构建或运行前请按本机环境调整。
-- 各工具的 Python 虚拟环境（`env\` / `venv\`）与构建产物（`build\` / `dist\` / `__pycache__\`）
+- **构建解释器**：GUI 打包需要**带 tkinter 的 Python**（官方 Windows 安装版自带）与 `PyInstaller`；
+  剪映工具另需 `tkinterdnd2`。`tools/build.py` 会自检并给出明确报错。
+- **pt-tools 的运行依赖**：打包后 exe **自带技能脚本**，但**不带 venv（py-ptsl）** ——
+  首次执行 PT 任务前，需在「设置 > 技能目录」指向一个含 venv 的技能目录
+  （默认 `D:\Ai-Files\Agent-Preset\Skills\protools-skills`）。详见 `src/pt-tools/README.md`。
+- 各工具的 Python 虚拟环境（`env\` / `venv\`）与构建产物（`build\` / `dist\` / `__pycache__\` / `*.spec`）
   均不进仓库，克隆后按需自建。
+- 历史提示「`build.ps1` 与 `code/main.py` 存在硬编码 `C:\Users\Administrator\...`，运行前需手工调整」
+  **已失效**：`build.ps1` 系列已改为跨机自适应并转发 `tools/build.py`；
+  `code/main.py` 里那一处只是 `os.environ.get("LOCALAPPDATA", <兜底>)` 的兜底值，不影响运行。
 
 ---
 
