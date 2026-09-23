@@ -11,7 +11,7 @@
 
 | 项 | 要求 |
 |---|---|
-| 解释器 | **带 tkinter 的 Python**（GUI 用例必需）。托管版 Python 通常没有 tkinter |
+| 解释器 | 机器上需装有**带 tkinter 的 Python**（GUI 用例必需；托管版通常没有）。入口用哪个 python 起无所谓，脚本会自行切换 |
 | Pro Tools | `pt-scan` / `pt-export` / `pt-clean` 的端到端需要 PT 在线（PTSL `127.0.0.1:31416`）；未开则相关项记 **SKIP**，不算失败 |
 | 剪映 | `test_jy_multitpl.py` 需要本机装有剪映、且有草稿（默认读「前夫」，**只读**，产物落临时区） |
 | 磁盘 | 测试产物落在 `D:\My-Temporary\pt-toolkit-test\`（可用 `PT_TEST_TMP` 改） |
@@ -27,6 +27,12 @@ python tests/test_wiring.py          # 5 项 GUI↔核心接线 + CmdWorker
 python tests/run_gui_smoke.py        # 4 个界面建窗即销毁
 python tests/test_jy_multitpl.py     # 剪映片段模式 + 多命名模板端到端（真实草稿）
 ```
+
+**用哪个 python 起都可以。** `test_core_logic.py` / `test_wiring.py` 会在**本进程内**
+import 工具 GUI 模块（需要 tkinter）；入口解释器若没有 tkinter，它们会先经
+`_common.ensure_tk()` 用探测到的解释器**原样重启自己**，再继续跑。所以拿托管版
+Python 直接起也不会崩 —— 历史上这会以 `ModuleNotFoundError: tkinter` 报错，
+极易被误判成产品缺陷。
 
 **解释器解析顺序**：`PT_TEST_PY` 环境变量 → 当前解释器 → `%LOCALAPPDATA%\Programs\Python\*` → PATH 上的 `python`。
 候选会逐个探活 `import tkinter`；**全都不可用时明确报错**（不静默回落到无 tkinter 的解释器 —— 否则失败现象会变成莫名其妙的 ImportError）。
@@ -72,7 +78,7 @@ python tests/test_jy_multitpl.py     # 剪映片段模式 + 多命名模板端�
 
 | 文件 | 作用 |
 |---|---|
-| `_common.py` | 公共模块：跨机路径解析 + `PASS/SKIP/FAIL/ERROR` 分级与汇总 |
+| `_common.py` | 公共模块：跨机路径解析 + `PASS/SKIP/FAIL/ERROR` 分级与汇总 + `ensure_tk()` 无 tkinter 时自愈重启 |
 | `run_import_tests.py` | 15 个模块逐个 import（缺可选依赖记 SKIP） |
 | `test_core_logic.py` | 24 项与 GUI 解耦的纯函数逻辑 |
 | `test_wiring.py` | GUI↔核心接线 + `CmdWorker` 真跑 subprocess（历史 bug 高发区） |

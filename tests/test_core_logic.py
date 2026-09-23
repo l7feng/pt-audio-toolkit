@@ -15,6 +15,11 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common as C                                    # noqa: E402
 
+# 本脚本会在本进程内 import 工具的 GUI 模块（它们 import tkinter）。
+# 入口解释器若没有 tkinter（如托管版），先自愈重启 —— 否则会以
+# ModuleNotFoundError 崩掉，看着像产品缺陷。
+C.ensure_tk()
+
 SRC = str(C.SRC)
 SANDBOX = str(C.SANDBOX)
 

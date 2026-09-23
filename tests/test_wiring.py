@@ -4,11 +4,15 @@ import os
 import shutil
 import sys
 import time
-import tkinter as tk
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common as C                                    # noqa: E402
+
+# tkinter 必须在本脚本任何 import 之前就绪：入口解释器没有它时先自愈重启。
+# （注意顺序 —— 原版把 `import tkinter` 放在 _common 之前，换解释器即崩）
+C.ensure_tk()
+import tkinter as tk                                   # noqa: E402
 
 SRC = str(C.SRC)
 SB = str(C.SANDBOX)

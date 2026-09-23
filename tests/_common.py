@@ -109,6 +109,33 @@ PY = _resolve_py()
 """带 tkinter 的解释器绝对路径。"""
 
 
+def ensure_tk():
+    """确保**当前进程**能 import tkinter —— 不能就用 PY 重启自身。
+
+    为什么需要：`PY` 只约束子进程用哪个解释器，管不到本进程。而
+    `test_core_logic.py` / `test_wiring.py` 会在本进程内 import 工具的
+    GUI 模块（它们自己 `import tkinter`）。若用托管版 Python（无 tkinter）
+    直接 `python tests/test_core_logic.py`，会以
+    `ModuleNotFoundError: No module named 'tkinter'` 崩掉 —— 看着像产品
+    缺陷，实际只是入口解释器选错了。
+
+    这两个脚本在 import 任何被测模块**之前**调用本函数即可自愈：
+    无 tkinter 时用 `PY` 原样重启自己（参数透传，环境变量打标防死循环）。
+    """
+    try:
+        import tkinter  # noqa: F401
+        return
+    except ImportError:
+        pass
+    if os.environ.get("_PT_TK_REEXEC") == "1":
+        raise RuntimeError(
+            "重启解释器后仍无 tkinter：%s\n"
+            "  处置：安装带 tkinter 的 Python，或用 PT_TEST_PY 指向它。" % PY)
+    os.environ["_PT_TK_REEXEC"] = "1"
+    print("[_common] 当前解释器无 tkinter，改用 %s 重启本脚本" % PY)
+    os.execv(PY, [PY, os.path.abspath(sys.argv[0])] + sys.argv[1:])
+
+
 # ── 路径：测试临时区（沙箱）──────────────────────────────────
 def _resolve_tmp():
     env = os.environ.get("PT_TEST_TMP")
