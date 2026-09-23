@@ -205,7 +205,8 @@ def _():
 def _():
     r = cr.build_item(r"D:\x\法老20_DX BUS.wav", cr.DEFAULT_TEMPLATE,
                       cr.DEFAULT_RULES, cr.DEFAULT_FIELDS)
-    assert r and r[0].endswith("7F_DX BUS.wav"), r
+    # v1.3.0：BUS 出厂默认挂「短格式」（不再是全局全格式回落）
+    assert r and r[0].endswith("20_DX BUS.wav"), r
     assert not r[0].endswith(".wav.wav"), r
     return r[0]
 
@@ -245,11 +246,16 @@ def _():
     for f in ("法老 12集 0922 V01 7F_Master.wav", "法老12_DX BUS.wav"):
         open(os.path.join(root, f), "wb").write(b"RIFF")
     items, _st = cr.make_plan(cr.scan_dir(root), cr.DEFAULT_TEMPLATE,
-                              cr.DEFAULT_RULES, cr.DEFAULT_FIELDS, root=root)
-    dsts = [os.path.basename(i.dst) for i in items if i.status == ""]
+                              cr.DEFAULT_RULES, cr.DEFAULT_FIELDS, root=root,
+                              date_from_mtime=False)
+    dsts = [i.dst for i in items if i.status == ""]
     assert dsts, "应至少规划出 1 条改名"
-    assert all("0922" in d for d in dsts), dsts          # 不许混进全局 0920
-    return str(dsts)
+    # Master（全格式）名里必须继承 0922，不许混进全局 0920；
+    # BUS（v1.3.0 短格式）名里没有日期段 → 改断言「落点仍在 0922 集目录下」
+    by_bus = [d for d in dsts if "BUS" in d]
+    assert any(os.path.basename(d) == "法老 12集 0922 V01 7F_Master.wav" for d in dsts), dsts
+    assert all("法老 12集 0922 V01 7F" in d for d in by_bus), dsts
+    return str([os.path.basename(d) for d in dsts])
 
 
 @case("ru.make_plan 冲突/跳过/错误三类状态")
@@ -263,11 +269,13 @@ def _():
         open(p, "wb").write(b"RIFF")
         paths.append(p)
     # 让 FX 的目标名已被占用 → conflict（平铺布局下目标会新建集目录）
+    # v1.3.0：BUS 出厂默认短格式 → 占用名要按短格式写
     conf_dir = os.path.join(root, "法老 20集 0920 V01 7F", "BUS")
     os.makedirs(conf_dir, exist_ok=True)
-    open(os.path.join(conf_dir, "法老 20集 0920 V01 7F_FX BUS.wav"), "wb").write(b"RIFF")
+    open(os.path.join(conf_dir, "法老 20_FX BUS.wav"), "wb").write(b"RIFF")
     items, stats = cr.make_plan(paths, cr.DEFAULT_TEMPLATE, cr.DEFAULT_RULES,
-                                cr.DEFAULT_FIELDS, root=root)
+                                cr.DEFAULT_FIELDS, root=root,
+                                date_from_mtime=False)
     assert stats["total"] == 4, stats
     assert stats["error"] == 1, stats
     assert stats["conflict"] == 1, stats
@@ -282,7 +290,8 @@ def _():
         open(os.path.join(root, f), "wb").write(b"RIFF")
     paths = cr.scan_dir(root)
     items, stats = cr.make_plan(paths, cr.DEFAULT_TEMPLATE, cr.DEFAULT_RULES,
-                                cr.DEFAULT_FIELDS, root=root)
+                                cr.DEFAULT_FIELDS, root=root,
+                                date_from_mtime=False)
     assert stats["rename"] == 2, stats
     log = os.path.join(root, "log.csv")
     done, failed, lp = cr.apply_plan(items, write_log=True, log_path=log)
@@ -290,8 +299,9 @@ def _():
     ep_dir = os.path.join(root, "法老 20集 0920 V01 7F")
     after = (sorted(os.listdir(os.path.join(ep_dir, "BUS"))) +
              sorted(os.listdir(os.path.join(ep_dir, "STEM"))))
-    assert "法老 20集 0920 V01 7F_DX BUS.wav" in after, after
-    assert "法老 20集 0920 V01 7F_MX 2.wav" in after, after
+    # v1.3.0：BUS/STEM 出厂默认短格式
+    assert "法老 20_DX BUS.wav" in after, after
+    assert "法老 20_MX 2.wav" in after, after
     # 撤销（倒序：先归位回原处，再改回原名）
     n = cr.undo_from_log(lp, dry_run=False)
     back = sorted(os.listdir(root))
@@ -337,6 +347,42 @@ def _():
     return os.path.relpath(d, root)
 
 
+@case("ru.v1.3.0 mtime 日期兜底 + 集目录改名 + 空目录清点")
+def _():
+    import datetime
+    root = fresh("ru_v13")
+    os.makedirs(os.path.join(root, "13"), exist_ok=True)
+    open(os.path.join(root, "13", "法老13_Master BUS.wav"), "wb").write(b"RIFF")
+    items, stats = cr.make_plan(cr.scan_dir(root), cr.DEFAULT_TEMPLATE,
+                                cr.DEFAULT_RULES, cr.DEFAULT_FIELDS, root=root,
+                                date_from_mtime=True, rename_ep_dirs=True)
+    assert stats["rename"] == 1, stats
+    it = items[0]
+    # 沙箱文件是刚建的 → mtime = 今天；目录与文件名都按今天日期渲染
+    today = datetime.datetime.now().strftime("%m%d")
+    ep_name = os.path.basename(os.path.dirname(it.dst))
+    assert ep_name == "法老 13集 %s V01 7F" % today, ep_name
+    assert os.path.basename(it.dst) == "法老 13集 %s V01 7F_Master.wav" % today, it.dst
+    # 关掉 mtime → 回落全局字段 0920
+    items2, _ = cr.make_plan(cr.scan_dir(root), cr.DEFAULT_TEMPLATE,
+                             cr.DEFAULT_RULES, cr.DEFAULT_FIELDS, root=root,
+                             date_from_mtime=False, rename_ep_dirs=True)
+    ep_name2 = os.path.basename(os.path.dirname(items2[0].dst))
+    assert ep_name2 == "法老 13集 0920 V01 7F", ep_name2
+    # 关掉集目录改名 → 就地沿用 13/
+    items3, _ = cr.make_plan(cr.scan_dir(root), cr.DEFAULT_TEMPLATE,
+                             cr.DEFAULT_RULES, cr.DEFAULT_FIELDS, root=root,
+                             date_from_mtime=False, rename_ep_dirs=False)
+    assert os.path.basename(os.path.dirname(items3[0].dst)) == "13", items3[0].dst
+    # 执行「改名模式」的 items2 → 文件搬进新名集目录，旧目录 13/ 空壳
+    # list_emptied_dirs 只报告、不代删
+    done, failed, _lp = cr.apply_plan(items2, write_log=False)
+    assert len(done) == 1 and not failed, (done, failed)
+    emptied = cr.list_emptied_dirs(items2)
+    assert any(os.path.basename(d) == "13" for d in emptied), emptied
+    return "mtime=%s / 改名=%s / 空壳=%d" % (today, ep_name, len(emptied))
+
+
 @case("ru.manual_plan_item 人工分类走同一套落点/渲染")
 def _():
     F = cr.DEFAULT_FIELDS
@@ -344,9 +390,43 @@ def _():
     assert cr.guess_info_from_name("杂项.wav") == "杂项"
     mi = cr.manual_plan_item(r"D:\x\20\乱七八糟.wav", "20", "BUS", "DX BUS",
                              cr.DEFAULT_TEMPLATE, F, root=r"D:\x")
-    assert os.path.basename(mi.dst) == "前夫 20集 0920 V01 7F_DX BUS.wav", mi.dst
+    # v1.3.0：BUS 出厂默认短格式；人工分类与自动识别同一套落点
+    assert os.path.basename(mi.dst) == "前夫 20_DX BUS.wav", mi.dst
     assert os.path.basename(os.path.dirname(mi.dst)) == "BUS", mi.dst
     return os.path.relpath(mi.dst, r"D:\x")
+
+
+@case("ru.v1.3.1 Demo 无集数工程（识别/日期归一/折叠渲染/目录改名）")
+def _():
+    # 识别：全格式（PT 导出原态）与短格式（已归位态）都要认
+    h = cr.identify("出轨Demo 20260923 V02 7F_Master", cr.DEFAULT_RULES)
+    assert h and h.target == "MIX" and h.ep == "" and h.info == "Master", h
+    # 日期归一化：8 位 → 4 位（用户手工标准答案 `出轨Demo 0923 V02 7F`）
+    assert h.captured["日期"] == "0923" and h.captured["片名"] == "出轨Demo", h.captured
+    h2 = cr.identify("出轨Demo DX BUS", cr.DEFAULT_RULES)
+    assert h2 and h2.target == "BUS" and h2.info == "DX BUS", h2
+    h3 = cr.identify("出轨Demo Ai FX 1", cr.DEFAULT_RULES)
+    assert h3 and h3.target == "AIFX", h3
+    h4 = cr.identify("出轨Demo MX Verb ST", cr.DEFAULT_RULES)
+    assert h4 and h4.target == "STEM", h4
+    # 渲染折叠：全格式去集数段、短格式连下划线一起折叠（空格分隔、无下划线）
+    F = {"片名": "出轨", "日期": "0923", "版本": "V01", "用户": "7F"}
+    assert cr.render(cr.DEFAULT_TEMPLATE, "", "Master", h.captured) == \
+        "出轨Demo 0923 V02 7F_Master", \
+        cr.render(cr.DEFAULT_TEMPLATE, "", "Master", h.captured)
+    assert cr.render("{片名} {集数}_{轨道信息}", "", "DX BUS", h2.captured) == \
+        "出轨Demo DX BUS", \
+        cr.render("{片名} {集数}_{轨道信息}", "", "DX BUS", h2.captured)
+    # 沙箱端到端：平铺旧名 → 目录改名 + Master 改名（8 位日期归一 4 位）
+    root = fresh("ru_demo")
+    open(os.path.join(root, "出轨Demo 20260923 V02 7F_Master.wav"), "wb").write(b"RIFF")
+    items, stats = cr.make_plan(cr.scan_dir(root), cr.DEFAULT_TEMPLATE,
+                                cr.DEFAULT_RULES, F, root=root,
+                                date_from_mtime=True, rename_ep_dirs=True)
+    assert stats["rename"] == 1 and stats["error"] == 0, stats
+    rel = os.path.relpath(items[0].dst, root)
+    assert rel == os.path.join("出轨Demo 0923 V02 7F", "出轨Demo 0923 V02 7F_Master.wav"), rel
+    return rel
 
 
 @case("ru.config 默认值/读写/清洗 + v1.2.0 新键与 {用户} 迁移")

@@ -10,7 +10,7 @@ import sys
 
 APP_NAME = "rename-unify"
 # 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），显示时补 v（见 title()）。
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 
 def app_dir():
@@ -42,6 +42,13 @@ DEFAULTS = {
     # 目标表（页2「目标与归位」）：空 = 用 core_rules.DEFAULT_TARGETS
     # 每项 = {name, dir, enabled, eps, note, templates[], tpl_name}
     "targets": [],
+    # v1.3.0 开关：
+    # date_from_mtime —— 源名/集目录都没有日期时，用文件修改时间(MMDD)兜底
+    #   （导出时刻，与手工标注 100% 吻合；优先级：源名 > 多数票 > mtime > 全局）
+    "date_from_mtime": True,
+    # rename_ep_dirs —— 集目录名统一按「片名 N集 日期 版本 用户」渲染改名
+    #   （13/ → 法老 13集 0922 V01 7F/）；关掉 = 沿用旧「就地不改名」行为
+    "rename_ep_dirs": True,
     # ⚠️ 仅作 v1.1.0 → v1.2.0 的迁移源：旧「命名清单」会被折成目标表
     #    （core.migrate_enabled_types），新配置不再写这个键。
     "enabled_types": [],

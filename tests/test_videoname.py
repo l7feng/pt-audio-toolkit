@@ -145,6 +145,20 @@ if M is not None:
         return "%s → %s" % ([c.material_name for c in chs],
                             [c.duration_s for c in chs])
 
+    @case("video.chunk_index_for_tl 片段模式窗归属（v2.5.1）")
+    def _():
+        mk = lambda name, s, dur: M.VideoChunk(
+            material_name=name, source_path="x", tl_start_us=s, tl_dur_us=dur)
+        chs = [mk("法老2.mp4", 0, 5_000_000), mk("法老3.mp4", 5_000_000, 3_000_000)]
+        f = M.chunk_index_for_tl
+        assert f(chs, 0) == 0                    # 法老2 窗起点
+        assert f(chs, 4_999_999) == 0            # 窗内
+        assert f(chs, 5_000_000) == 1            # 正好跨到下一窗
+        assert f(chs, 7_999_999) == 1
+        assert f(chs, 8_000_000) is None         # 窗外（结尾之后）
+        assert f([], 0) is None                  # 无视频轨 → 不归属
+        return "窗内命中 2 / 边界 2 / 窗外与空表不归属"
+
     @case("video.window 裁剪：片段跨窗口边界只保留重叠部分")
     def _():
         from dataclasses import replace

@@ -657,10 +657,25 @@ class App(tk.Tk):
         self.var_exts = tk.StringVar(value=self.cfg["exts"])
         ttk.Entry(opt, textvariable=self.var_exts, width=30).pack(side="left", padx=6)
 
+        # v1.3.0 开关（2026-09-23 用户新增能力，默认全开）
+        opt2 = ttk.Frame(top)
+        opt2.grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
+        self.var_mtime_date = tk.BooleanVar(value=bool(self.cfg.get("date_from_mtime", True)))
+        ttk.Checkbutton(
+            opt2, text="日期用文件修改时间兜底（源名/目录都没有日期时）",
+            variable=self.var_mtime_date,
+            command=self._refresh_preview).pack(side="left", padx=(0, 12))
+        self.var_rename_dirs = tk.BooleanVar(value=bool(self.cfg.get("rename_ep_dirs", True)))
+        ttk.Checkbutton(
+            opt2, text="集目录按「片名 N集 日期 版本 用户」改名",
+            variable=self.var_rename_dirs,
+            command=self._refresh_preview).pack(side="left")
+
         ttk.Label(top, foreground="#666", justify="left",
                   text=("落点由页2 的「目标表」决定：MIX → 集根；BUS → 集目录\\BUS；"
-                        "STEM/AIFX → 集目录\\STEM。平铺的分类目录会被自动重组为集目录。")
-                  ).grid(row=2, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
+                        "STEM/AIFX → 集目录\\STEM。集目录名与 Master 文件名同构；"
+                        "改名后旧目录空壳只提醒、不自动删。")
+                  ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
 
         act = ttk.Frame(f)
         act.pack(fill="x", padx=10, pady=(0, 6))
@@ -813,7 +828,9 @@ class App(tk.Tk):
                                   exts=self._exts())
             items, stats = CORE.make_plan(paths, self._global_template(),
                                           self.rules, self._fields(),
-                                          targets=self.targets, root=root)
+                                          targets=self.targets, root=root,
+                                          date_from_mtime=self.var_mtime_date.get(),
+                                          rename_ep_dirs=self.var_rename_dirs.get())
             items, stats = self._apply_manual(items)
         except Exception as e:
             self.items, self.stats = [], {}
@@ -837,7 +854,8 @@ class App(tk.Tk):
             items[idx] = CORE.manual_plan_item(
                 i.src, ov.get("ep", ""), ov.get("target", ""), ov.get("info", ""),
                 self._global_template(), self._fields(),
-                root=(self.var_root.get() or "").strip(), targets=self.targets)
+                root=(self.var_root.get() or "").strip(), targets=self.targets,
+                rename_ep_dirs=self.var_rename_dirs.get())
             touched = True
         if not touched:
             return items, CORE.count_stats(items)
@@ -973,7 +991,8 @@ class App(tk.Tk):
                 tmp = CORE.manual_plan_item(
                     item.src, var_ep.get().strip(), var_tgt.get().strip(),
                     var_info.get().strip(), self._global_template(), self._fields(),
-                    root=(self.var_root.get() or "").strip(), targets=self.targets)
+                    root=(self.var_root.get() or "").strip(), targets=self.targets,
+                    rename_ep_dirs=self.var_rename_dirs.get())
                 var_prev.set("→ %s\\%s" % (os.path.basename(os.path.dirname(tmp.dst)),
                                            os.path.basename(tmp.dst)))
             except Exception as e:
@@ -1041,6 +1060,15 @@ class App(tk.Tk):
                     self.last_log = logp
                     self._log("回溯日志: %s（%d 条）" % (logp, len(done)))
                     self.after(0, lambda: self.var_logfile.set(logp))
+                # v1.3.0：集目录改名后旧目录可能空了 —— 只提醒，不自动删
+                try:
+                    emptied = CORE.list_emptied_dirs(self.items)
+                except Exception:
+                    emptied = []
+                if emptied:
+                    self._log("⚠ 以下原集目录已空，可自行回收（工具不代删）：")
+                    for d in emptied:
+                        self._log("  空目录: %s" % d)
             except Exception:
                 self._log(traceback.format_exc())
             finally:

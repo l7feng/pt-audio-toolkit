@@ -51,12 +51,16 @@ DEFAULT_TEMPLATE = "{片名} {集数}集 {日期} {版本} {用户}_{轨道信�
 # 「保持原名」：只归类、不改名（配合归位使用）
 KEEP_NAME = "保持原名"
 
+# 内置模板（模板库出厂两件套；目标表的出厂分派也引用这里，单一来源）
+_TPL_FULL = DEFAULT_TEMPLATE
+_TPL_SHORT = "{片名} {集数}_{轨道信息}"
+
 # 内置模板库（GUI 页1 可增删改；页2 每个目标从这里**选一套**）
 # B 语义（2026-09-23 用户定案）：每类目标各用各自模板，**不产生多份副本**。
 # （A 语义「勾多套＝各生成一份」已否决，理由是重命名场景下音频体积会翻倍。）
 DEFAULT_TEMPLATES = [
-    {"name": "全格式", "tpl": DEFAULT_TEMPLATE},
-    {"name": "短格式", "tpl": "{片名} {集数}_{轨道信息}"},
+    {"name": "全格式", "tpl": _TPL_FULL},
+    {"name": "短格式", "tpl": _TPL_SHORT},
 ]
 
 
@@ -65,15 +69,22 @@ DEFAULT_TEMPLATES = [
 # ---------------------------------------------------------------------------
 # templates 存**模板内容**（不是名字），core 直接拿去渲染；
 # tpl_name 只用于 GUI 回显「这个目标选的是库里哪一套」。
+#
+# 出厂分派（2026-09-23 用户定案）：**MIX 全格式，其余短格式** ——
+# 与用户 FinalMix 手工成品（02/03/04/18/19/20 集）的形态完全同构：
+#   集根  法老 02集 0923 V01 7F_Master.wav   ← MIX 全格式
+#   BUS/  法老 02_DX BUS.wav                 ← 短格式
+# 注意：17 集（更早交付的全格式 BUS/STEM）在此默认下会被改名，属预期行为
+# （用户 2026-09-23 明确拍板「17 集也统一成新风格」）。
 DEFAULT_TARGETS = [
     {"name": "MIX", "dir": "", "enabled": True, "eps": "",
-     "note": "混音成品/终稿 → 集根目录", "templates": [], "tpl_name": ""},
+     "note": "混音成品/终稿 → 集根目录", "templates": [_TPL_FULL], "tpl_name": "全格式"},
     {"name": "BUS", "dir": "BUS", "enabled": True, "eps": "",
-     "note": "总线分轨 → <集目录>/BUS", "templates": [], "tpl_name": ""},
+     "note": "总线分轨 → <集目录>/BUS", "templates": [_TPL_SHORT], "tpl_name": "短格式"},
     {"name": "STEM", "dir": "STEM", "enabled": True, "eps": "",
-     "note": "分段素材 → <集目录>/STEM", "templates": [], "tpl_name": ""},
+     "note": "分段素材 → <集目录>/STEM", "templates": [_TPL_SHORT], "tpl_name": "短格式"},
     {"name": "AIFX", "dir": "STEM", "enabled": True, "eps": "",
-     "note": "AI 音效（与 STEM 同目录）", "templates": [], "tpl_name": ""},
+     "note": "AI 音效（与 STEM 同目录）", "templates": [_TPL_SHORT], "tpl_name": "短格式"},
 ]
 
 # 归位目录名（识别「集目录」时要向上剥掉的层）
@@ -90,7 +101,37 @@ CATEGORY_DIR_NAMES = ("MIX", "MIX-MASTER", "BUS", "STEM", "Stem", "AIFX")
 #
 # ⚠️ 顺序即优先级（自上而下**首个命中生效**）：越具体的越靠前，
 #    「裸集数 + 自由轨道信息」这条兜底规则必须放最后。
-DEFAULT_RULES = [
+
+# ---- Demo / 无集数形态（v1.3.1 新增，2026-09-23 用户报障）----
+# 真实样本（D:\DAW-Project\0-Demo\FinalMix\）：**Demo 工程 = 不分集**，
+# 「Demo」占着集数位但不是数字（旧规则 {集数}/{裸集数} 只认纯数字 → 12/12 全失败）。
+# 用户手工标准答案（ground truth，2026-09-23）：
+#     出轨Demo 0923 V02 7F\                                  ← 目录：无集数段、日期 4 位
+#         出轨Demo 0923 V02 7F_Master.wav                    ← MIX：目录同名 + _Master
+#         BUS\出轨Demo DX BUS.wav                            ← 短格式：**空格分隔、无下划线**
+#         STEM\出轨Demo Ai FX 1.wav
+# 由此定案三件事：
+#   ① Demo 并入片名捕获（show=`出轨Demo`），ep 置空 → render() 折叠集数段；
+#   ② **日期归一化**：源名 8 位 `20260923` → 渲染 4 位 `0923`（见 normalize_date）；
+#   ③ 短格式（已归位态）没有日期可锚，靠「片名含 Demo」识别 → 否则二次扫描全 error。
+_DEMO_CORE = r"(?P<show>.+?Demo)\s+(?P<date>\d{4,8})\s+(?P<ver>V\d+)\s+(?P<user>[A-Za-z0-9]{1,8})"
+_DEMO_SHORT = r"(?P<show>.+?Demo)"
+_DEFAULT_RULES_DEMO = [
+    # 全格式（PT 导出原态）：出轨Demo 20260923 V02 7F_Ai FX 1
+    ["AIFX", _DEMO_CORE + r"_(?P<info>Ai\s*FX(?:\s+\d+)?)$", "\\g<info>"],
+    ["BUS", _DEMO_CORE + r"_(?P<info>(?:DX|FX|MX)\s+BUS)$", "\\g<info>"],
+    ["MIX", _DEMO_CORE + r"_Master(?:\s+BUS)?$", "Master"],
+    ["MIX", _DEMO_CORE + r"_(?P<info>MIX|MIX-MASTER)$", "\\g<info>"],
+    ["STEM", _DEMO_CORE + r"_(?P<info>.+)$", "\\g<info>"],
+    # 短格式（已归位态）：出轨Demo DX BUS / 出轨Demo Ai FX 1 —— 必须放 STEM
+    # 短版兜底之前；MIX 短版兜住 `出轨Demo_Master` 这类极简名
+    ["AIFX", _DEMO_SHORT + r"\s+(?P<info>Ai\s*FX(?:\s+\d+)?)$", "\\g<info>"],
+    ["BUS", _DEMO_SHORT + r"\s+(?P<info>(?:DX|FX|MX)\s+BUS)$", "\\g<info>"],
+    ["MIX", _DEMO_SHORT + r"_Master(?:\s+BUS)?$", "Master"],
+    ["STEM", _DEMO_SHORT + r"\s+(?P<info>.+)$", "\\g<info>"],
+]
+
+DEFAULT_RULES = _DEFAULT_RULES_DEMO + [
     # ==================== AIFX：AI 音效 ====================
     ["AIFX", r"^{片名}\s+{集数}\s+{日期}\s+{版本}\s+{用户}_(?P<info>Ai\s*FX(?:\s+\d+)?)$", "\\g<info>"],
     ["AIFX", r"^{片名}\s*{裸集数}_(?P<info>Ai\s*FX(?:\s+\d+)?)$", "\\g<info>"],
@@ -309,6 +350,21 @@ class RuleError(Exception):
     pass
 
 
+def normalize_date(raw):
+    """日期归一化（v1.3.1）：8 位 YYYYMMDD → 4 位 MMDD（20260923 → 0923）。
+
+    为什么：法老D 交付与 Demo 工程（用户 2026-09-23 手工标准答案
+    `出轨Demo 0923 V02 7F`）的日期段都是 **4 位**，而 PT 导出源名可能带
+    8 位日期 —— 原样回填会让「源名 20260923」渲染进 4 位体系，出现
+    「同一目录 20260923 与 0923 并存」。其余长度（5/6/7 位）非标准形态，
+    原样保留不猜。
+    """
+    s = str(raw or "").strip()
+    if len(s) == 8 and s.isdigit():
+        return s[4:]
+    return s
+
+
 def identify(filename, rules, targets=None):
     """识别一个文件名（不含扩展名）。识别不了返回 None。
 
@@ -350,7 +406,8 @@ def identify(filename, rules, targets=None):
                          ("show", "片名")):
             v = gd.get(src)
             if v:
-                captured[dst] = v.strip()
+                v = v.strip()
+                captured[dst] = normalize_date(v) if dst == "日期" else v
         return Hit(tgt, ep, info, captured, idx)
     return None
 
@@ -378,6 +435,16 @@ def render(template, ep_raw, info, fields, captured=None):
         if v:
             vals[k] = str(v)          # 源名已带的字段优先
     vals["集数"] = normalize_ep(ep_raw)
+    if not vals["集数"]:
+        # 无集数工程（Demo 等，v1.3.1）：模板里的集数段整段折叠——
+        #   `{片名} {集数}集 {日期} …` → `{片名} {日期} …`（全格式）
+        #   `{片名} {集数}_{轨道信息}` → `{片名} {轨道信息}`（短格式，
+        #     连下划线一起折叠 —— 用户手工标准答案是空格分隔、无下划线：
+        #     `出轨Demo DX BUS`，不是 `出轨Demo_DX BUS`）
+        tpl = re.sub(r"\s*\{集数\}_", " ", tpl)
+        tpl = re.sub(r"\s*\{集数\}\s*集\s*", " ", tpl)
+        tpl = re.sub(r"\s*\{集数\}", "", tpl)
+        tpl = re.sub(r"\s{2,}", " ", tpl).strip()
     vals["轨道信息"] = normalize_info(info)
     vals["类型"] = vals["轨道信息"]   # 兼容旧模板里的 {类型}
     vals.setdefault("用户", "")
@@ -405,14 +472,15 @@ def normalize_info(info):
     return str(info or "").strip()
 
 
-def build_item(path, template, rules, fields, root=None, targets=None):
+def build_item(path, template, rules, fields, root=None, targets=None,
+               rename_ep_dirs=True, date_from_mtime=True):
     """对单个文件算出 (目标绝对路径, Hit, 是否需新建集目录)。识别不了返回 None。
 
     落点规则（root＝用户在「目标目录」里选的根）：
       * 先找到该文件的**集目录** —— 从父目录向上剥掉 BUS/STEM/MIX 这类分类目录名；
-      * 若剥完恰好等于 root 且 root 自身不像集目录 → 视为**平铺布局**，
-        在 root 下新建「<片名> <集数>集 <日期> <版本> <用户>」集目录；
-      * 否则**就地**（保留现成的集目录名，如 `13` / `20`）—— 这是法老D 的现状。
+      * root 之内：集目录名统一按「集前缀」模板渲染（法老 13/ → 法老 13集 0922 V01 7F/），
+        与 Master 文件名同构；rename_ep_dirs=False 时维持旧「就地沿用现名」行为；
+      * 平铺布局（文件直接堆在 root 且 root 不像集目录）→ 新建渲染名集目录。
     目标表里的 dir（BUS / STEM / 空）决定集目录下的哪一层。
     """
     targets = resolve_targets(targets)
@@ -422,7 +490,8 @@ def build_item(path, template, rules, fields, root=None, targets=None):
     if hit is None:
         return None
 
-    ep_dir, need_new_ep = _resolve_ep_dir(folder, root, hit, fields, targets)
+    ep_dir, need_new_ep = _resolve_ep_dir(folder, root, hit, fields, targets,
+                                          rename_ep_dirs=rename_ep_dirs)
     sub = ""
     t = target_map(targets).get(hit.target.upper())
     if t is not None:
@@ -464,23 +533,55 @@ def _is_category_dir(name):
     return any(n.casefold() == c.casefold() for c in CATEGORY_DIR_NAMES)
 
 
-def _resolve_ep_dir(folder, root, hit, fields, targets=None):
-    """返回 (集目录绝对路径, 是否需要新建该目录)。"""
+def _resolve_ep_dir(folder, root, hit, fields, targets=None, rename_ep_dirs=True):
+    """返回 (集目录绝对路径, 是否需要新建该目录)。
+
+    v1.3.0 起集目录名统一按「集前缀」模板渲染（2026-09-23 用户需求：
+    `FinalMix\\13\\` 这类旧目录也要变成 `法老 13集 0922 V01 7F`）：
+      * 渲染名 == 现名 → 就地（已合规，正是 02/03/04/17~20 集现状）；
+      * 渲染名 != 现名 且是 root 的**直接子目录** → 落到渲染名目录（改名语义）；
+        只限直接子目录 —— 更深层结构（FinalMix/old/13/）不动，保守优先；
+      * 平铺布局（文件直接堆在 root 且 root 不像集目录）→ 新建渲染名集目录。
+    rename_ep_dirs=False 时回落旧行为（平铺才建目录，其余就地）。
+    """
     d = os.path.abspath(folder)
     while _is_category_dir(os.path.basename(d)) and os.path.dirname(d) != d:
         d = os.path.dirname(d)
 
     root_abs = os.path.abspath(root) if root else None
-    if root_abs and os.path.normcase(d) == os.path.normcase(root_abs) \
-            and not _looks_like_ep_dir(os.path.basename(d)):
-        # 平铺布局：在 root 下新建以「集前缀」命名的集目录
+    if not root_abs:
+        return d, False
+    dn, rn = os.path.normcase(d), os.path.normcase(root_abs)
+    if not (dn == rn or dn.startswith(rn + os.sep)):
+        return d, False                      # 不在 root 之内 → 一律不动
+
+    cur_name = os.path.basename(d)
+    at_root = (dn == rn)
+    looks_ep = _looks_like_ep_dir(cur_name)
+
+    prefix = ""
+    if rename_ep_dirs or (at_root and not looks_ep):
+        # 集前缀 = 全格式模板去掉 _轨道信息 段 → 与 Master 文件名同构
         prefix_tpl = "{片名} {集数}集 {日期} {版本} {用户}"
         try:
             prefix = render(prefix_tpl, hit.ep, hit.info, fields, hit.captured)
         except RuleError:
             prefix = ""
+
+    if at_root and not looks_ep:
+        # 平铺布局：root 直接堆文件
         if prefix:
             return os.path.join(root_abs, prefix), True
+        return d, False
+
+    if rename_ep_dirs and prefix and prefix != cur_name \
+            and os.path.dirname(d) == root_abs:
+        # 集目录改名：13/ → 法老 13集 0922 V01 7F/
+        # v1.3.1 放宽：不再要求现名「像集目录」（纯数字/含集字）——
+        # 无集数工程的 `出轨/` 同样要归位到 `出轨Demo 20260923 V02 7F/`。
+        # 只限 root 的直接子目录，更深层结构（FinalMix/old/13/）不动，保守优先；
+        # 且只有识别成功文件的目录才可能被改到（识别失败不产生 dst）。
+        return os.path.join(root_abs, prefix), True
     return d, False
 
 
@@ -549,6 +650,27 @@ def ep_dir_of(path):
     while _is_category_dir(os.path.basename(d)) and os.path.dirname(d) != d:
         d = os.path.dirname(d)
     return d
+
+
+def collect_mtime_dates(paths):
+    """文件修改时间 → MMDD 日期候选。返回 {绝对路径: '0923'}。
+
+    为什么用 mtime：源文件名（`法老2_DX BUS`）和平铺目录里往往**没有任何日期**，
+    旧逻辑只能落到全局字段那**一个写死的值** —— 今天导 0923 的活、全局还停在
+    0922，就全批错日期（2026-09-23 用户实测踩中，也是「日期规则命中不对」的根因）。
+    而 PT/剪映导出的音频 mtime ＝ 导出时刻，与用户手工标注的日期 100% 吻合
+    （FinalMix 全量核验：12/13/17 集 mtime 9/22 → 0922；18~20/02~04 集 → 0923）。
+
+    优先级链：源名捕获 > 集目录多数票 > **文件 mtime** > 全局字段。
+    """
+    out = {}
+    for p in paths:
+        try:
+            out[os.path.abspath(p)] = datetime.datetime.fromtimestamp(
+                os.path.getmtime(p)).strftime("%m%d")
+        except (OSError, ValueError):
+            continue
+    return out
 
 
 def collect_dir_defaults(paths, rules):
@@ -631,7 +753,8 @@ def count_stats(items):
     return stats
 
 
-def make_plan(paths, global_template, rules, fields, targets=None, root=None):
+def make_plan(paths, global_template, rules, fields, targets=None, root=None,
+              date_from_mtime=True, rename_ep_dirs=True):
     """生成计划：返回 (items, stats)。
 
     安全闸：
@@ -640,16 +763,26 @@ def make_plan(paths, global_template, rules, fields, targets=None, root=None):
       - 目标名重复 → conflict
       - 目标名已被别的现存文件占用 → conflict
       - 新旧名完全相同 → skip
+
+    字段合成顺序（后者覆盖前者）：全局字段 ← 文件 mtime（仅日期，可关）
+    ← 集目录多数票；源名已捕获的字段在 render 里再覆盖一次（最高）。
     """
     targets = resolve_targets(targets)
     items = []
     dir_defaults = collect_dir_defaults(paths, rules)
+    mtime_dates = collect_mtime_dates(paths) if date_from_mtime else {}
     for p in paths:
         # 集目录级字段（源文件自身捕获的字段在 render 里再覆盖一次，优先级更高）
         eff_fields = dict(fields or {})
+        if date_from_mtime:
+            mt = mtime_dates.get(os.path.abspath(p))
+            if mt:
+                eff_fields["日期"] = mt     # 只兜底「日期」，其余字段不碰
         eff_fields.update(dir_defaults.get(ep_dir_of(p), {}))
         try:
-            r = build_item(p, global_template, rules, eff_fields, root=root, targets=targets)
+            r = build_item(p, global_template, rules, eff_fields, root=root,
+                           targets=targets, rename_ep_dirs=rename_ep_dirs,
+                           date_from_mtime=date_from_mtime)
         except RuleError as e:
             items.append(PlanItem(p, p, status="error", note=str(e)))
             continue
@@ -672,6 +805,31 @@ def make_plan(paths, global_template, rules, fields, targets=None, root=None):
     return items, count_stats(items)
 
 
+def list_emptied_dirs(items):
+    """执行（apply_plan）后调用：计划涉及的源集目录里已没有任何文件 → 可回收清单。
+
+    集目录改名（13/ → 法老 13集 …）后旧目录会空出来 —— **只报告、不自动删**
+    （红线：批量删除走回收站，且删目录必须人类确认）。目录树内只要还有一个
+    文件（含子目录里的）就不算空。
+    """
+    seen = []
+    for i in items:
+        if i.status != "":
+            continue
+        d = ep_dir_of(i.src)
+        if d not in seen:
+            seen.append(d)
+    out = []
+    for d in seen:
+        if not os.path.isdir(d):
+            continue
+        has_file = any(os.path.isfile(os.path.join(dp, fn))
+                       for dp, _dns, fns in os.walk(d) for fn in fns)
+        if not has_file:
+            out.append(d)
+    return sorted(out)
+
+
 # ---------------------------------------------------------------------------
 # 手动分类（识别失败的人工兜底，GUI 页3 用）
 # ---------------------------------------------------------------------------
@@ -688,7 +846,8 @@ def guess_info_from_name(filename):
     return stem.strip()
 
 
-def manual_plan_item(path, ep, target, info, template, fields, root=None, targets=None):
+def manual_plan_item(path, ep, target, info, template, fields, root=None,
+                     targets=None, rename_ep_dirs=True):
     """人工分类：对识别失败的文件指定「集数 + 目标 + 轨道信息」后重算落点。
 
     识别失败的项没有 Hit（正是因为识别不出来才需要人工），所以这里现造一个，
@@ -698,7 +857,8 @@ def manual_plan_item(path, ep, target, info, template, fields, root=None, target
     targets = resolve_targets(targets)
     hit = Hit(target, ep, info, {}, -1)
     folder = os.path.dirname(os.path.abspath(path))
-    ep_dir, need_new = _resolve_ep_dir(folder, root, hit, fields, targets)
+    ep_dir, need_new = _resolve_ep_dir(folder, root, hit, fields, targets,
+                                       rename_ep_dirs=rename_ep_dirs)
     t = target_map(targets).get(str(target or "").strip().upper())
     sub = str((t or {}).get("dir") or "").strip()
     dst_dir = os.path.join(ep_dir, sub) if sub else ep_dir

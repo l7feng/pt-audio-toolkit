@@ -35,7 +35,8 @@ from typing import List, Optional, Tuple
 #        → v2.3.0 菜单栏（文件/设置/工具/帮助）+ 默认路径设置对话框（09-21）
 #        → v2.4.0 导出模式多选 + 命名模板多选 + 整轨源文件相对路径解析修复（09-21）
 #        → v2.5.0 视频名提取字段（项目/集数/编号/AiFX）+ 按视频片段分包（09-23）
-APP_VERSION = "2.5.0"
+#        → v2.5.1 片段模式也按视频窗归类（music/法老6/…，时间线落点归属）（09-23）
+APP_VERSION = "2.5.1"
 
 
 def app_build_date() -> str:
@@ -406,6 +407,7 @@ class AudioSegment:
     end_us: int            # 结束时间（微秒）
     material_name: str     # 素材文件名
     material_id: str       # 素材 ID
+    tl_start_us: int = 0   # v2.5.1：时间线落点（target_timerange.start），用于按视频窗归属
 
     @property
     def duration_s(self) -> float:
@@ -443,6 +445,7 @@ def parse_draft_json(draft_dir: Path, json_path: Path, extract_video_tracks: boo
                 time_range = seg.get("source_timerange", seg.get("target_timerange", {}))
                 start = time_range.get("start", 0)
                 end = start + time_range.get("duration", 0)
+                tl_start = (seg.get("target_timerange") or {}).get("start", 0) or 0
                 segments.append(AudioSegment(
                     project=project_name,
                     track_type=mat.get("type", "audio"),
@@ -451,6 +454,7 @@ def parse_draft_json(draft_dir: Path, json_path: Path, extract_video_tracks: boo
                     end_us=end,
                     material_name=mat_name,
                     material_id=mat_id,
+                    tl_start_us=tl_start,
                 ))
 
         # 视频轨道：从视频中提取内嵌音轨（方案扩展场景）
@@ -468,6 +472,7 @@ def parse_draft_json(draft_dir: Path, json_path: Path, extract_video_tracks: boo
                 time_range = seg.get("source_timerange", seg.get("target_timerange", {}))
                 start = time_range.get("start", 0)
                 end = start + time_range.get("duration", 0)
+                tl_start = (seg.get("target_timerange") or {}).get("start", 0) or 0
                 segments.append(AudioSegment(
                     project=project_name,
                     track_type="video",  # 标记为视频内嵌音轨
@@ -476,6 +481,7 @@ def parse_draft_json(draft_dir: Path, json_path: Path, extract_video_tracks: boo
                     end_us=end,
                     material_name=mat_name,
                     material_id=mat_id,
+                    tl_start_us=tl_start,
                 ))
 
     # 音轨段优先于视频内嵌音轨（去重覆盖判定依赖注册顺序）
@@ -945,8 +951,13 @@ def sanitize_filename(name: str) -> str:
     return name
 
 
-def render_name(template: str, seg: AudioSegment, seq_index: int, remarks: str = "") -> str:
-    """按命名模板渲染目标文件名（不含扩展名）"""
+def render_name(template: str, seg: AudioSegment, seq_index: int, remarks: str = "",
+                extra: Optional[dict] = None) -> str:
+    """按命名模板渲染目标文件名（不含扩展名）
+
+    v2.5.1：`extra` 可注入所属视频片段解析出的字段（{视频项目}/{集数}/{编号}/
+    {AiFX}/{视频名}）—— 片段模式按视频窗归属时由调用方传入。
+    """
     import datetime
     fields = {
         "项目名": seg.project,
@@ -957,12 +968,28 @@ def render_name(template: str, seg: AudioSegment, seq_index: int, remarks: str =
         "时长": int(seg.duration_s),
         "备注": remarks,
     }
+    if extra:
+        fields.update({k: v for k, v in extra.items() if v})
     try:
         return sanitize_filename(template.format(**fields))
     except KeyError as e:
         key = e.args[0] if e.args else str(e)
         logging.warning(f"[namer] 模板含有未知字段 {{{key}}}，已忽略")
         return sanitize_filename(template.replace("{" + key + "}", ""))
+
+
+def chunk_index_for_tl(chunks: List[VideoChunk], tl_start_us: int) -> Optional[int]:
+    """时间线落点 → 所属视频片段的下标；不在任何窗内返回 None。
+
+    v2.5.1 片段模式按视频窗归属的判定核心：音频片段的 tl_start_us 落在
+    哪个 chunk 的 [tl_start_us, tl_end_us) 区间，就归到哪个「集」。
+    ⚠️ 返回**列表下标**（不是 chunk.index 字段）—— 调用方要用它去索引
+    chunk_video_infos() 返回的 infos 列表，两者必须同一套下标。
+    """
+    for i, c in enumerate(chunks):
+        if c.tl_start_us <= tl_start_us < c.tl_end_us:
+            return i
+    return None
 
 
 # ──────────────────── Archiver ────────────────────
@@ -1067,6 +1094,24 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
     multi = len(templates) > 1
     seen_per_tpl = [dict() for _ in templates]   # 每模板独立去重，保证各模板都出全
 
+    # ── v2.5.1 片段模式按视频窗归属：音频片段落到哪个视频片段的区间，
+    #    就归进那个「集」的子文件夹（music/法老6/…）。没有视频轨时维持平铺。
+    chunk_infos: Optional[Tuple[List[VideoChunk], List[VideoNameInfo]]] = None
+    if cfg.get("split_by_video"):
+        try:
+            chunks = parse_video_chunks(draft_dir, decrypted)
+        except Exception as e:
+            print(f"  [warn] 视频片段解析失败，片段维持平铺: {e}")
+            chunks = []
+        if chunks:
+            infos = chunk_video_infos(chunks, cfg.get("video_project_answers") or {})
+            chunk_infos = (chunks, infos)
+            missing = [c.material_name for c, inf in zip(chunks, infos) if inf.need_input]
+            if missing:
+                print(f"  ⚠ {len(missing)} 个视频缺项目信息（{('、'.join(missing[:3]))}"
+                      f"{'…' if len(missing) > 3 else ''}）→ 先用原名建文件夹")
+            print(f"  [info] 检测到 {len(chunks)} 个视频片段 → 片段按视频窗归类")
+
     for i, seg in enumerate(segments, 1):
         # 源文件存在性（按草稿根解析 + 树内按名查找，一次性，多模板复用）
         resolved = resolve_source_path(seg.source_path, draft_dir)
@@ -1087,12 +1132,28 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
                         stats["skipped"] += 1
                         continue
 
+                # v2.5.1 按视频窗归属：片段落在哪个视频片段区间 → 归进哪个「集」
+                # 子文件夹（music/法老6/…），并把视频字段注进命名模板。
+                chunk_dir = None
+                extra = None
+                if chunk_infos:
+                    ci = chunk_index_for_tl(chunk_infos[0], seg.tl_start_us)
+                    if ci is not None:
+                        vinfo = chunk_infos[1][ci]
+                        label = sanitize_filename(
+                            vinfo.label or chunk_infos[0][ci].material_name)
+                        if label:
+                            chunk_dir = label
+                        extra = vinfo.as_fields()
+
                 # 命名与归档
-                base_name = render_name(template, seg, i, remarks)
+                base_name = render_name(template, seg, i, remarks, extra=extra)
                 category = TYPE_CATEGORY.get(seg.track_type, "audio")
                 tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
                     else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
                 category_dir = tpl_root / category
+                if chunk_dir:
+                    category_dir = category_dir / chunk_dir
                 category_dir.mkdir(parents=True, exist_ok=True)
 
                 out_file = category_dir / f"{base_name}.{audio_format}"
