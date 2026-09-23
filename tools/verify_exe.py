@@ -36,7 +36,13 @@ CHECKS = [
      "pt-tools/_internal/skills/pt-cleaner/scripts/pt_clean.py"),
     ("jianying 解密器 jy-draftc.exe",
      "jianying-draft-toolkit/tools/jy-draftc/jy-draftc-amd64-windows/jy-draftc.exe"),
-    ("jianying 拖拽依赖 tkinterdnd2",
+]
+
+# 可选附属项：缺了不影响判定，只打 INFO。
+# tkinterdnd2 —— v2.6.2 起剪映工具包**取消了拖拽区**（改「输入源」选择框，
+# 见 Q10），该依赖已不再需要；保留检查只为观察是否仍被打包进去。
+OPTIONAL_CHECKS = [
+    ("jianying 拖拽依赖 tkinterdnd2（v2.6.2 起已不需要）",
      "jianying-draft-toolkit/_internal/tkinterdnd2"),
 ]
 
@@ -115,6 +121,10 @@ def main():
         ok = p.exists()
         ok_all = ok_all and ok
         print("[%s] %s" % ("OK" if ok else "MISS", label))
+
+    for label, rel in OPTIONAL_CHECKS:
+        p = out_root / rel
+        print("[%s] %s" % ("OK" if p.exists() else "INFO", label))
 
     if args.no_launch:
         print()

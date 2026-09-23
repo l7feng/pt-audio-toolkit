@@ -105,10 +105,12 @@ def main():
         print(json.dumps({"error": "需要 --session 或 --dir 之一"}, ensure_ascii=False))
         return 2
 
-    if args.session:
-        root = Path(args.session).resolve().parent
-    else:
+    # v1.3.0：显式 --dir 优先于 --session（调用方要做候选根逐级上溯，
+    # 若被 --session 抢回 .ptx 同级目录，父级候选就永远走不到）。
+    if args.dir:
         root = Path(args.dir).resolve()
+    else:
+        root = Path(args.session).resolve().parent
     if not root.is_dir():
         print(json.dumps({"error": f"目录不存在: {root}"}, ensure_ascii=False))
         return 2

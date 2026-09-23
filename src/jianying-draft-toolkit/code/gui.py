@@ -486,10 +486,14 @@ class JianYingToolkitApp:
         if not DND_AVAILABLE:
             return
         tab = self._tabs[0]
-        targets = [tab.drop_label]
-        entry = getattr(tab, "entry_input_dir", None)
-        if entry is not None:
-            targets.append(entry)
+        # v2.6.2（Q10）：拖拽区已取消。拖放目标改为**输入框本身** ——
+        # 「剪映草稿目录」和「输出目录」都可以直接把文件夹拖进来，
+        # 这正是用户原本想要的用法（拖到框里，而不是拖到一个大区域里）。
+        targets = []
+        for attr in ("entry_input_dir", "entry_output_dir"):
+            w = getattr(tab, attr, None)
+            if w is not None:
+                targets.append(w)
         for t in targets:
             try:
                 t.drop_target_register(DND_FILES)
@@ -500,24 +504,13 @@ class JianYingToolkitApp:
                 print(f"[dnd] 注册失败 {t}: {e}")
 
     def _on_drag_enter(self, event):
-        try:
-            self._tabs[0].drop_label.configure(bg="#3a5a3a", fg="#b5f5b5")
-        except Exception:
-            pass
+        # 拖拽区已移除，不再做高亮（保留钩子，避免 dnd 绑定报错）
         return event.action
 
     def _on_drag_leave(self, event):
-        try:
-            self._tabs[0].drop_label.configure(bg="#2b2b2b", fg="#9cdcfe")
-        except Exception:
-            pass
         return event.action
 
     def _on_drop(self, event):
-        try:
-            self._tabs[0].drop_label.configure(bg="#2b2b2b", fg="#9cdcfe")
-        except Exception:
-            pass
         paths = parse_drop_paths(getattr(event, "data", "") or "")
         if not paths:
             return

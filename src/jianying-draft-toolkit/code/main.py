@@ -41,7 +41,7 @@ from typing import List, Optional, Tuple
 #        → v2.6.1 文件夹结构反转（<草稿名|集名>/01-多条WAV/ 而非 01-多条WAV/<草稿名>/<集名>/）
 #          + 素材片段去掉 audio/music 子目录 + render_name KeyError 循环移除未知字段后重新 format
 #          + 浏览按钮选中的目录走递归草稿识别（与拖拽一致）（09-23）
-APP_VERSION = "2.6.1"
+APP_VERSION = "2.6.2"
 
 
 def app_build_date() -> str:
@@ -238,6 +238,26 @@ def _looks_like_uuid(name: str) -> bool:
     return bool(_UUID_RE.match(name))
 
 
+def _has_timeline_content(path: Path) -> bool:
+    """是否存在 `<草稿>/Timelines/*/draft_content.json`（剪映 6.x 的权威内容）。
+
+    v2.6.2（Q4 / Q10）：`is_draft_dir` 原先只认根目录三个 marker，而**本文件自己的**
+    `resolve_draft_content_file()` 白纸黑字写着权威内容在 `Timelines/<id>/` 下、
+    根目录那份只是会话快照甚至可能不存在 —— 于是"只有 Timelines 结构的草稿"会被
+    判成不是草稿。这是工具内部的逻辑自洽缺陷，补齐第二组 marker。
+    """
+    tl = path / "Timelines"
+    if not tl.is_dir():
+        return False
+    try:
+        for sub in tl.iterdir():
+            if sub.is_dir() and (sub / "draft_content.json").is_file():
+                return True
+    except OSError:
+        return False
+    return False
+
+
 def is_draft_dir(path: Path) -> bool:
     """目录是否为剪映草稿文件夹。
 
@@ -248,7 +268,9 @@ def is_draft_dir(path: Path) -> bool:
         return False
     if path.parent.name == "Timelines":          # 明确排除多时间线子目录
         return False
-    if not any((path / m).exists() for m in DRAFT_MARKERS):
+    # v2.6.2：根目录三 marker 命中，或存在 Timelines/<id>/draft_content.json，都算草稿
+    if not any((path / m).exists() for m in DRAFT_MARKERS) \
+            and not _has_timeline_content(path):
         return False
     if (path / "draft_meta_info.json").exists():
         return True

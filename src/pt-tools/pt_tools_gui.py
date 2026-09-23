@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
@@ -54,7 +55,27 @@ SOURCE_TYPES = ["bus", "output", "physicalout"]  # ExportMix 路径制三类（�
 EXPORT_MODES = ["mix", "bus", "stem", "track"]
 SAMPLE_RATES = [48000, 44100, 96000, 88200, 192000]
 BIT_DEPTHS = [16, 24, 32]
-EXPORT_FORMATS = ["mono", "interleaved"]
+# 导出格式（v1.3.0 语义澄清 + 默认不再丢声道）
+#
+# ⚠️ 认知陷阱：这三个值**不是"你要几个声道"**，而是 bounce 产物**怎么装进文件**：
+#     interleaved   该轨在 PT 里是立体声/5.1/7.1 → 原样保留，出一个文件
+#     multiple-mono 每声道一个独立文件（_L.wav / _R.wav …）
+#     mono          强制下混成单声道 —— **会丢声道**，故不再作为默认
+# 实际声道数由 PT 工程里该轨道/输出本身的宽度决定，本工具改不了也不该改，
+# 所以下拉里**不该**出现 5.1 / 7.1 这类"宽度"选项。
+# 旧默认 `mono` 会把立体声素材静默下混，属会污染产物的默认值（v1.3.0 修正）。
+EXPORT_FORMATS = ["interleaved", "multiple-mono", "mono"]
+FORMAT_LABEL_KEYS = {
+    "interleaved": "e_fmt_interleaved",
+    "multiple-mono": "e_fmt_multimono",
+    "mono": "e_fmt_mono",
+}
+DEFAULT_EXPORT_FORMAT = "interleaved"
+DEFAULT_VIDEO_MARGIN = 0        # 旧值 240：每条片子都被加 4 分钟尾巴
+DEFAULT_FALLBACK_DURATION = 60  # 旧值 240：没检出视频时假装片子 4 分钟
+# 每条轨道可单独覆盖全局格式；此值表示"跟随全局下拉"
+FORMAT_FOLLOW = ""
+TRACK_FMT_CYCLE = ["", "interleaved", "mono", "multiple-mono"]
 
 TC_RE = re.compile(r"^\d{2}:\d{2}:\d{2}:\d{2}$")
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -66,7 +87,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ⚠️ build_date() 在 pt-project-folder-builder / jianying-draft-toolkit /
 #    rename-unify 各有一份逐字相同的实现（各工具独立打包、无共享模块），
 #    改动时四处需同步。
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 
 def build_date():
@@ -192,6 +213,7 @@ TEXTS = {
         "e_excluded_mark": "（排除）",
         "e_select_all": "全选",
         "e_deselect_all": "全不选",
+        "msg_fmt_bad": "无法识别的导出格式：%s\n（请在下拉里重新选一项，工具不会擅自替你猜一个）",
         "e_exclude": "排除名单:",
         "e_exclude_tip": "逗号分隔，支持 * ? 通配（如 BG 1, DX BUS, Master）；命中的轨道默认不勾选",
         "e_track_frame_v2": "轨道列表（勾选 = 导出；空轨与排除名单默认不勾）",
@@ -268,6 +290,52 @@ TEXTS = {
         "cmd_done": "— 命令结束，退出码 %d —\n",
         "err_cmd_start": "[error] 无法启动命令：%s\n",
         "err_cmd_stop": "[error] 第 %d 条命令失败，剩余 %d 条已跳过。\n",
+
+        # —— v1.3.0 卡死专项（Q12）：中止 / 看门狗 / 关窗 ——
+        "log_abort": "■ 中止",
+        "abort_title": "中止当前任务",
+        "abort_confirm": "确定中止正在运行的命令吗？\n"
+                         "（已导出的文件会保留，未完成的部分不再生成；"
+                         "只会终止本工具启动的子进程，不会动 Pro Tools 本体）",
+        "log_aborting": "[abort] 已请求中止，正在终止子进程…\n",
+        "cmd_aborted": "— 命令已被中止 —\n",
+        "log_stalled": "[warn] 已 %d 秒没有任何输出，任务可能卡住（常见原因：Pro Tools 弹出了"
+                       "待确认对话框）。可点「中止」停止。\n",
+        "log_running": "运行中 %dm%02ds",
+        "log_no_output": "距上次输出 %ds",
+        "quit_title": "退出",
+        "quit_confirm": "有任务正在运行，确定退出吗？\n"
+                        "（会先终止本工具自己启动的子进程，不会影响 Pro Tools 本体）",
+
+        # —— v1.3.0 导出格式语义（Q5）——
+        "e_fmt_col": "声道",
+        "e_fmt_follow": "跟随全局",
+        "e_fmt_interleaved": "立体声/多声道（保留原宽度）",
+        "e_fmt_mono": "单声道（会下混）",
+        "e_fmt_multimono": "每声道独立文件",
+        "e_fmt_hint": "「声道」不是声道数，而是 bounce 产物的文件组织方式；"
+                      "实际宽度由 PT 工程里该轨/该输出的宽度决定。",
+
+        # —— v1.3.0 路径锁定 / 输出预览 / 剔除空轨（Q3 Q6 Q7）——
+        "e_lock": "🔒 锁定",
+        "e_locked": "🔓 已锁定",
+        "e_out_preview": "查看输出路径",
+        "e_out_preview_title": "本次导出的落盘预览（只读）",
+        "e_exclude_empty": "剔除空轨道（无音频块的轨不导出）",
+        "e_excluded_view": "查看被剔除的 %d 条 ▸",
+        "e_excluded_title": "被剔除的轨道 —— 可加回（撤回）",
+        "e_restore": "加回",
+        "e_close": "关闭",
+        "e_restored": "[track] 已加回「%s」（本次不再按空轨剔除）\n",
+        "e_out_preview_none": "  （当前勾选下没有任何产物 —— 检查导出模式与轨道勾选）",
+        "e_out_preview_total": "  共 %d 个文件",
+        "e_out_preview_dropped": "  另有 %d 条空轨被剔除（可在「查看被剔除」里加回）",
+        "e_video_root_note": "检索范围：.ptx 同级 → 其父目录",
+        "e_video_root_empty": "[video]   %s —— 没检索到，换下一个候选目录\n",
+        "e_video_root_hit": "[video] 命中检索根：%s\n",
+        "e_fallback_warn": "[warn] 未检出视频，已按兜底时长 %ss 导出 —— "
+                           "这是**猜**的：工程若长于它会截断、短于它会多出静音尾巴。"
+                           "建议补上视频或手工填结束时间。\n",
 
         # —— 设置/技能目录 ——
         "skills_ok": "技能目录 OK：%s",
@@ -444,6 +512,7 @@ TEXTS = {
         "e_video_margin_note": "end = video duration + margin",
 
         # —— v1.2.0 track selection / video auto / batch ——
+        "msg_fmt_bad": "Unrecognised export format: %s\n(pick one from the dropdown — the tool will not silently guess)",
         "e_sel_col": "Sel",
         "e_clips_col": "Clips",
         "e_clips_yes": "yes",
@@ -527,6 +596,53 @@ TEXTS = {
         "cmd_done": "— Command finished, exit code %d —\n",
         "err_cmd_start": "[error] Cannot start command: %s\n",
         "err_cmd_stop": "[error] Command %d failed — remaining %d skipped.\n",
+
+        # v1.3.0 freeze fix (Q12): abort / watchdog / close
+        "log_abort": "■ Abort",
+        "abort_title": "Abort current task",
+        "abort_confirm": "Abort the running command?\n"
+                         "(Files already exported are kept; the rest will not be produced. "
+                         "Only child processes started by this tool are killed — Pro Tools is untouched.)",
+        "log_aborting": "[abort] Abort requested — terminating child process…\n",
+        "cmd_aborted": "— Command aborted —\n",
+        "log_stalled": "[warn] No output for %d s — the task may be stuck (Pro Tools is often "
+                       "waiting on a dialog). Use Abort to stop it.\n",
+        "log_running": "Running %dm%02ds",
+        "log_no_output": "no output for %ds",
+        "quit_title": "Quit",
+        "quit_confirm": "A task is running. Quit anyway?\n"
+                        "(Child processes started by this tool are terminated; Pro Tools is not affected.)",
+
+        # v1.3.0 export format semantics (Q5)
+        "e_fmt_col": "Channels",
+        "e_fmt_follow": "Follow global",
+        "e_fmt_interleaved": "Interleaved (keep width)",
+        "e_fmt_mono": "Mono (downmix)",
+        "e_fmt_multimono": "One file per channel",
+        "e_fmt_hint": "This is not a channel count but how the bounce is laid out into files; "
+                      "the real width comes from the track/output in the Pro Tools session.",
+
+        # v1.3.0 path lock / output preview / drop empty tracks (Q3 Q6 Q7)
+        "e_lock": "🔒 Lock",
+        "e_locked": "🔓 Locked",
+        "e_out_preview": "Preview output paths",
+        "e_out_preview_title": "Where files will land (read-only)",
+        "e_exclude_empty": "Drop empty tracks (no clips = not exported)",
+        "e_excluded_view": "Show %d dropped ▸",
+        "e_excluded_title": "Dropped tracks — restore",
+        "e_restore": "Restore",
+        "e_close": "Close",
+        "e_restored": "[track] Restored \"%s\" (no longer dropped as empty)\n",
+        "e_out_preview_none": "  (nothing will be produced — check modes and track selection)",
+        "e_out_preview_total": "  %d file(s) in total",
+        "e_out_preview_dropped": "  %d empty track(s) dropped (restore them via \"Show dropped\")",
+        "e_video_root_note": "Search scope: .ptx folder → its parent",
+        "e_video_root_empty": "[video]   %s — nothing found, trying next candidate\n",
+        "e_video_root_hit": "[video] Hit search root: %s\n",
+        "e_fallback_warn": "[warn] No video found — exporting with the fallback duration "
+                           "of %s s. This is a GUESS: a longer session gets truncated, "
+                           "a shorter one gets a silent tail. Add the video or set the "
+                           "end time manually.\n",
 
         "skills_ok": "Skills root OK: %s",
         "err_root_missing": "Skills root does not exist: %s",
@@ -650,7 +766,37 @@ def load_config():
     cfg.setdefault("last_profile", "")
     cfg.setdefault("last_out_dir", "")
     cfg.setdefault("lang", detect_system_lang())
+    _migrate_cfg(cfg)
     return cfg
+
+
+def _migrate_cfg(cfg):
+    """配置迁移（只补缺省 / 升级已知坏值，绝不擦掉用户已存的其它键）。
+
+    v1.3.0（cfg_version 1 → 2）三处默认值修正，都是"旧默认会把活悄悄做错"：
+      ① format：旧默认 `mono` 会把立体声**下混**，用户完全不知情 → interleaved
+      ② video_margin：旧默认 240s，每条片子都被加 4 分钟尾巴 → 0
+      ③ fallback_duration：旧默认 240s，没检出视频时**假装片子 4 分钟**
+        （6 分钟的片会被悄悄截断）→ 60
+    用户若手工改过这些值（不等于旧默认值），一律保留，不覆盖。
+    """
+    ver = int(cfg.get("cfg_version") or 0)
+    if ver >= 2:
+        return
+    if cfg.get("format") in (None, "", "mono"):
+        cfg["format"] = DEFAULT_EXPORT_FORMAT
+    if _as_int(cfg.get("video_margin")) in (None, 240):
+        cfg["video_margin"] = DEFAULT_VIDEO_MARGIN
+    if _as_int(cfg.get("fallback_duration")) in (None, 240):
+        cfg["fallback_duration"] = DEFAULT_FALLBACK_DURATION
+    cfg["cfg_version"] = 2
+
+
+def _as_int(v):
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def save_config(cfg):
@@ -755,6 +901,34 @@ def ptsl_online():
         s.close()
 
 
+def kill_process_tree(proc):
+    """终止子进程整棵树：Windows 走 taskkill /T /F，其他平台退回 kill()。
+
+    ⚠️ 红线：只对**本工具自己 spawn 出来的 venv python 子树**调用，
+       绝不碰 ProTools.exe —— 传错 pid 会连带杀掉用户的工程。
+    """
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)],
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,
+                           creationflags=CREATE_NO_WINDOW, timeout=20)
+        else:
+            import signal
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except Exception:
+                proc.kill()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # 后台命令执行（subprocess -> 队列 -> 主线程刷新 UI）
 # ---------------------------------------------------------------------------
@@ -765,7 +939,19 @@ class CmdWorker(threading.Thread):
     v1.1.0：接受单条命令或命令列表（多导出模式一次勾选 → 多条命令顺序跑）。
     每条之间发 ("step", i/n) 供日志分节；结束发 ("done", 汇总退出码)
     ——任一条非零即停并以其退出码收场。
+
+    v1.3.0 卡死专项（Q12）：
+      * stdout 读取改由**独立 reader 线程**喂队列，主线程只 poll() 轮询。
+        旧写法 `for line in self.proc.stdout` 在子进程不关 pipe 时永不返回，
+        而 `cancelled` 标志全仓无人置 True —— 于是"活着但不出活"时 UI 完全
+        无法感知、也无法打断，表现为 exe 假死。
+      * `cancel()` 真正可用：terminate → 等 1.5s → kill_process_tree()。
+      * 无输出看门狗：`NO_OUTPUT_TIMEOUT` 秒内 stdout 一行都没有 →
+        发 ("stall", 秒数) 让 UI 红字告警（不自动杀，交给人判断）。
+      * 每次收到输出发 ("tick",) 供 UI 刷新"已运行 / 距上次输出"计时。
     """
+
+    NO_OUTPUT_TIMEOUT = 300   # 秒：无任何 stdout 输出即告警
 
     def __init__(self, cmds, out_queue):
         super().__init__(daemon=True)
@@ -775,6 +961,80 @@ class CmdWorker(threading.Thread):
         self.out_queue = out_queue
         self.proc = None
         self.cancelled = False
+        self._reader = None
+        self._last_out = time.time()
+        self.started_at = time.time()
+
+    # ---------------- 取消（UI「中止」按钮 / 关窗口时调用）----------------
+
+    def cancel(self):
+        """请求中止：置标志 → terminate → 1.5s 内未退则杀进程树。"""
+        self.cancelled = True
+        proc = self.proc
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=1.5)
+            return
+        except Exception:
+            pass
+        kill_process_tree(proc)
+
+    # ---------------- 内部 ----------------
+
+    def _pump(self):
+        """reader 线程体：stdout 逐行进队列；pipe 关闭即自然退出。"""
+        try:
+            for line in self.proc.stdout:
+                self._last_out = time.time()
+                self.out_queue.put(("line", line))
+                self.out_queue.put(("tick", None))
+        except (ValueError, OSError):
+            pass
+
+    def _run_one(self, cmd):
+        """跑一条命令，返回退出码；-1 表示被中止/卡死。"""
+        try:
+            self.proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        except Exception as exc:  # 找不到 python 等
+            self.out_queue.put(("line", T("err_cmd_start") % exc))
+            return 1
+        self._last_out = time.time()
+        self._reader = threading.Thread(target=self._pump, daemon=True)
+        self._reader.start()
+        stalled = False
+        while True:
+            if self.cancelled:
+                break
+            if self.proc.poll() is not None:
+                break
+            if time.time() - self._last_out > self.NO_OUTPUT_TIMEOUT:
+                stalled = True
+                break
+            time.sleep(0.2)
+        if stalled:
+            self.out_queue.put(("stall", int(time.time() - self._last_out)))
+            self.cancel()
+            self._reader.join(timeout=3)
+            return -1
+        if self.cancelled:
+            self._reader.join(timeout=3)
+            return -1
+        self.proc.wait()
+        self._reader.join(timeout=5)
+        return self.proc.returncode
 
     def run(self):
         total = len(self.cmds)
@@ -785,25 +1045,11 @@ class CmdWorker(threading.Thread):
             if total > 1:
                 self.out_queue.put(("line",
                                     "\n──── [%d/%d] ────\n" % (i + 1, total)))
-            try:
-                self.proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    encoding="utf-8",
-                    errors="replace",
-                    bufsize=1,
-                    creationflags=CREATE_NO_WINDOW,
-                )
-            except Exception as exc:  # 找不到 python 等
-                self.out_queue.put(("line", T("err_cmd_start") % exc))
-                rc = 1
+            rc = self._run_one(cmd)
+            if self.cancelled:
+                rc = -1
                 break
-            for line in self.proc.stdout:
-                self.out_queue.put(("line", line))
-            self.proc.wait()
-            if self.proc.returncode != 0:
-                rc = self.proc.returncode
+            if rc != 0:
                 if i < total - 1:
                     self.out_queue.put((
                         "line",
@@ -835,6 +1081,43 @@ def fmt_tc_ok(tc):
     return bool(TC_RE.match(tc or ""))
 
 
+# ---------------------------------------------------------------------------
+# 导出格式：内部 key ⇄ 本地化显示名（v1.3.0）
+# ---------------------------------------------------------------------------
+
+def fmt_label(key):
+    """内部 key → 显示名。未知 key 原样返回（便于排查，不静默吞掉）。"""
+    lk = FORMAT_LABEL_KEYS.get(key)
+    return T(lk) if lk else key
+
+
+def fmt_choices():
+    """下拉选项（显示名列表，顺序 = EXPORT_FORMATS）。"""
+    return [fmt_label(k) for k in EXPORT_FORMATS]
+
+
+def fmt_key_of(value):
+    """显示名 / 内部 key → 内部 key。
+
+    识别不了返回 **None** —— 调用方必须显式报错。
+    ⚠️ 这里绝不静默回落到默认值：v2.6.1 剪映侧 `_read_spec` 就是"取首 token
+    当 key、查不到就回落默认且不报错"，用户以为选了 A 实际导出的是 B。
+    """
+    v = (value or "").strip()
+    if v in FORMAT_LABEL_KEYS:
+        return v
+    for k, lk in FORMAT_LABEL_KEYS.items():
+        if v == T(lk):
+            return k
+    return None
+
+
+def fmt_display_of(value):
+    """把可能是内部 key 的旧配置值，规整成显示名（启动时回填 UI 用）。"""
+    k = fmt_key_of(value)
+    return fmt_label(k) if k else fmt_label(DEFAULT_EXPORT_FORMAT)
+
+
 def load_profile(path):
     """读取并校验 pt-profile.json，失败抛 ValueError"""
     if not path or not os.path.isfile(path):
@@ -864,11 +1147,27 @@ def open_in_explorer(path):
 #   STEM : BounceTrack 全部轨道（--all-tracks），默认排除总线类轨 + 空轨；
 #          stem_aux=True 时改白名单（audio/aux/instrument/midi），含效果辅助轨
 #   TRACK: BounceTrack 指定轨道名（用户从档案轨道列表挑选）
+def _group_by_format(names, default_fmt, track_formats):
+    """把轨道按「有效导出格式」分组 → [(fmt, [轨道名…]), …]
+
+    v1.3.0（Q5）：声道/格式应在**每条轨道**上选，而不是一个下拉控制整个列表。
+    每条轨道可覆盖全局，未覆盖的沿用全局。`--format` 是**命令级**参数，
+    所以同格式的轨并成一条命令，不同格式各跑一条。
+    """
+    buckets = {}
+    for n in names:
+        f = (track_formats or {}).get(n) or default_fmt
+        f = fmt_key_of(f) or default_fmt
+        buckets.setdefault(f, []).append(n)
+    return [(f, buckets[f]) for f in EXPORT_FORMATS if f in buckets]
+
+
 def build_export_cmds(venv_python, script_path, profile_path, profile, *,
                       modes, stem_aux=False, tracks=(), session=None,
                       out="", start="", end="", sample_rate="48000",
-                      bit_depth="24", fmt="mono", dry_run=False,
-                      stem_tracks=(), exclude_names=()):
+                      bit_depth="24", fmt=DEFAULT_EXPORT_FORMAT, dry_run=False,
+                      stem_tracks=(), exclude_names=(), track_formats=None,
+                      exclude_empty=True):
     """按勾选的导出模式构造 CLI 命令列表（顺序 MIX → BUS → STEM → TRACK）。
 
     壳不动芯：每条命令独立调一次 pt_export.py（各自连接 PTSL，顺序执行，
@@ -879,6 +1178,10 @@ def build_export_cmds(venv_python, script_path, profile_path, profile, *,
     v1.2.0：`stem_tracks` 非空时 STEM 改为**只导勾选轨**（--source 列表，
     名字级精确导出）；为空时保持 --all-tracks 全轨模式。
     `exclude_names` 透传 --exclude-name（精确 + * ? 通配）。
+
+    v1.3.0：`fmt` 默认改 `interleaved`（旧默认 `mono` 会静默下混立体声）；
+    识别不了的格式**显式报错**而不是回落默认。`track_formats` 支持每条轨道
+    单独指定格式（{"轨名": "mono"}），相同格式并成一条命令。
     """
     if not profile:
         raise ValueError(T("msg_no_profile"))
@@ -902,13 +1205,22 @@ def build_export_cmds(venv_python, script_path, profile_path, profile, *,
     except (TypeError, ValueError):
         raise ValueError(T("msg_sr_bad"))
 
-    common = ["--out", out, "--start", start, "--end", end,
-              "--sample-rate", str(sample_rate), "--bit-depth", str(bit_depth),
-              "--format", fmt]
+    # v1.3.0：格式值必须可识别，识别不了直接报错（绝不静默回落）
+    _fmt = fmt_key_of(fmt)
+    if _fmt is None:
+        raise ValueError(T("msg_fmt_bad") % fmt)
+
+    base = ["--out", out, "--start", start, "--end", end,
+            "--sample-rate", str(sample_rate), "--bit-depth", str(bit_depth)]
     if session:
-        common += ["--session", session]
+        base += ["--session", session]
     if dry_run:
-        common += ["--dry-run"]
+        base += ["--dry-run"]
+
+    def common_with(f):
+        return base + ["--format", f]
+
+    common = common_with(_fmt)
 
     srcs = profile.get("sources", {})
     cmds = []
@@ -920,7 +1232,7 @@ def build_export_cmds(venv_python, script_path, profile_path, profile, *,
             cmd = [venv_python, script_path, "--profile", profile_path, "mix"]
             for name in outs:
                 cmd += ["--source", name]
-            cmd += ["--source-type", "output"] + common
+            cmds.append(cmd + ["--source-type", "output"] + common)
         elif m == "bus":
             buses = srcs.get("bus") or []
             if not buses:
@@ -928,32 +1240,41 @@ def build_export_cmds(venv_python, script_path, profile_path, profile, *,
             cmd = [venv_python, script_path, "--profile", profile_path, "mix"]
             for name in buses:
                 cmd += ["--source", name]
-            cmd += ["--source-type", "bus"] + common
+            cmds.append(cmd + ["--source-type", "bus"] + common)
         elif m == "stem":
             picked_stem = [t for t in (stem_tracks or ()) if t]
-            cmd = [venv_python, script_path, "--profile", profile_path,
-                   "stems", "--source-type", "track"]
             if picked_stem:
-                # 勾选式 STEM：只导勾选轨（按档案顺序，名字必须存在于档案）
+                # 勾选式 STEM：只导勾选轨（按档案顺序，名字必须存在于档案）。
+                # v1.3.0：按每条轨道的格式分组，不同格式各出一条命令。
                 known = {t.get("name", "") for t in profile.get("tracks", [])}
                 for name in picked_stem:
                     if name not in known:
                         raise ValueError(T("msg_src_unknown") % (name, "tracks"))
-                    cmd += ["--source", name]
+                excl = [str(x).strip() for x in (exclude_names or ()) if str(x).strip()]
+                for f, names in _group_by_format(picked_stem, _fmt, track_formats):
+                    cmd = [venv_python, script_path, "--profile", profile_path,
+                           "stems", "--source-type", "track"]
+                    for name in names:
+                        cmd += ["--source", name]
+                    for name in excl:
+                        cmd += ["--exclude-name", name]
+                    cmds.append(cmd + common_with(f))
             else:
                 # 未勾选任何轨 → 全轨模式（--all-tracks），沿用旧语义
-                cmd += ["--all-tracks"]
+                cmd = [venv_python, script_path, "--profile", profile_path,
+                       "stems", "--source-type", "track", "--all-tracks"]
                 if stem_aux:
                     # 含效果辅助轨：白名单模式（aux 进来，master/vca/folder 仍排除）
                     for t in ("audio", "aux", "instrument", "midi"):
                         cmd += ["--track-type", t]
                 else:
                     cmd += ["--skip-buses"]
-                cmd += ["--exclude-empty"]
-            for name in (exclude_names or ()):
-                if name and str(name).strip():
-                    cmd += ["--exclude-name", str(name).strip()]
-            cmd += common
+                if exclude_empty:
+                    cmd += ["--exclude-empty"]
+                for name in (exclude_names or ()):
+                    if name and str(name).strip():
+                        cmd += ["--exclude-name", str(name).strip()]
+                cmds.append(cmd + common)
         elif m == "track":
             names = [t for t in (tracks or []) if t]
             if not names:
@@ -962,14 +1283,14 @@ def build_export_cmds(venv_python, script_path, profile_path, profile, *,
             for name in names:
                 if name not in known:
                     raise ValueError(T("msg_src_unknown") % (name, "tracks"))
-            cmd = [venv_python, script_path, "--profile", profile_path,
-                   "stems", "--source-type", "track"]
-            for name in names:
-                cmd += ["--source", name]
-            cmd += common
+            for f, group in _group_by_format(names, _fmt, track_formats):
+                cmd = [venv_python, script_path, "--profile", profile_path,
+                       "stems", "--source-type", "track"]
+                for name in group:
+                    cmd += ["--source", name]
+                cmds.append(cmd + common_with(f))
         else:  # pragma: no cover — EXPORT_MODES 已约束
             raise ValueError("unknown mode: %s" % m)
-        cmds.append(cmd)
     return cmds
 
 
@@ -1016,10 +1337,16 @@ class App(tk.Tk):
 
         self.out_queue = queue.Queue()
         self.workers = []
+        self.active_worker = None      # v1.3.0：当前在跑的 worker（中止按钮用）
         self._vars = {}
 
         self._build_ui()
         self._restore_profile_to_tabs()
+
+        # v1.3.0：点 X 一定关得掉。
+        # 旧行为的根因之二：App 从未注册 WM_DELETE_WINDOW，destroy 之后主线程试图
+        # 退出却被 subprocess 的 atexit 钩子挂住（它在等仍存活的子进程）。
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.after(100, self._poll_queue)
         self.after(1000, self._poll_ptsl)
@@ -1205,6 +1532,14 @@ class App(tk.Tk):
         btn_row.pack(fill="x", padx=8)
         ttk.Button(btn_row, text=T("log_clear"), command=self._clear_log,
                    width=16).pack(side="left")
+        # v1.3.0 卡死专项：中止按钮 + 运行时长 / 无输出看门狗读数
+        self.abort_btn = ttk.Button(btn_row, text=T("log_abort"),
+                                    command=self._abort_worker, width=12,
+                                    state="disabled")
+        self.abort_btn.pack(side="left", padx=(8, 0))
+        self.run_time_var = tk.StringVar(value="")
+        ttk.Label(btn_row, textvariable=self.run_time_var,
+                  foreground="#c00").pack(side="left", padx=(8, 0))
         ttk.Label(btn_row, text=T("log_hint"),
                   foreground="#888").pack(side="right")
 
@@ -1223,11 +1558,23 @@ class App(tk.Tk):
         ttk.Label(bar, textvariable=self.status_skills_var,
                   foreground="#888").pack(side="right")
 
+    # 日志滚动上限：批量几十集时 Text 行数是主线程卡顿的隐形来源
+    LOG_MAX_LINES = 5000
+
     def log(self, text):
         if not getattr(self, "log_text", None):
             return
         self.log_text.insert("end", text)
         self.log_text.see("end")
+        self._trim_log()
+
+    def _trim_log(self):
+        try:
+            n = int(self.log_text.index("end-1c").split(".")[0])
+            if n > self.LOG_MAX_LINES:
+                self.log_text.delete("1.0", "%d.0" % (n - self.LOG_MAX_LINES + 1))
+        except Exception:
+            pass
 
     def _clear_log(self):
         if getattr(self, "log_text", None):
@@ -1239,17 +1586,52 @@ class App(tk.Tk):
                 kind, payload = self.out_queue.get_nowait()
                 if kind == "line":
                     self.log(payload if payload.endswith("\n") else payload + "\n")
+                elif kind == "tick":
+                    pass          # 心跳：worker 内部已更新 _last_out
+                elif kind == "stall":
+                    self.log(T("log_stalled") % payload)
                 elif kind == "done":
                     self._on_worker_done(payload)
         except queue.Empty:
             pass
+        self._update_run_clock()
         self.after(100, self._poll_queue)
 
+    def _update_run_clock(self):
+        """运行时长 + 距上次输出秒数（无输出 ≥30s 才显示，避免刷屏）。"""
+        w = self.active_worker
+        if w is None or not w.is_alive():
+            if self.run_time_var.get():
+                self.run_time_var.set("")
+            return
+        el = int(time.time() - w.started_at)
+        txt = T("log_running") % (el // 60, el % 60)
+        gap = int(time.time() - w._last_out)
+        if gap >= 30:
+            txt += " · " + (T("log_no_output") % gap)
+        self.run_time_var.set(txt)
+
+    def _abort_worker(self):
+        """「■ 中止」按钮 —— 真正能停（旧版 cancelled 标志全仓无人置 True）。"""
+        w = self.active_worker
+        if w is None:
+            return
+        if not messagebox.askyesno(T("abort_title"), T("abort_confirm")):
+            return
+        self.log(T("log_aborting"))
+        w.cancel()
+
     def _on_worker_done(self, returncode):
+        self.active_worker = None
+        if getattr(self, "abort_btn", None):
+            self.abort_btn.configure(state="disabled")
         self.scan_tab.on_worker_done(returncode)
         self.export_tab.on_worker_done(returncode)
         self._refresh_gating()
-        self.log(T("cmd_done") % returncode)
+        if returncode == -1:
+            self.log(T("cmd_aborted"))
+        else:
+            self.log(T("cmd_done") % returncode)
 
     def start_worker(self, cmds):
         """启动后台命令队列。cmds 可为单条命令（list[str]）或命令列表。"""
@@ -1257,10 +1639,40 @@ class App(tk.Tk):
             cmds = [cmds]
         for cmd in cmds:
             self.log("> %s\n" % " ".join('"%s"' % c if " " in c else c for c in cmd))
+        self.workers = [x for x in self.workers if x.is_alive()]   # 只留活着的
         w = CmdWorker(cmds, self.out_queue)
         self.workers.append(w)
+        self.active_worker = w
+        if getattr(self, "abort_btn", None):
+            self.abort_btn.configure(state="normal")
         w.start()
         return w
+
+    def _on_close(self):
+        """点 X 一定关得掉（Q12）。
+
+        旧行为：destroy 之后主线程试图退出，却被 subprocess 的 atexit 钩子挂住
+        —— 它在等仍存活的子进程 —— 于是表现为"点关闭没反应，只能从任务管理器杀"。
+        现在：有活任务先问一句，确认后终止本工具自己 spawn 的子进程树，再退出。
+        ⚠️ 只杀 self.workers 里的子进程，绝不碰 ProTools.exe。
+        """
+        running = [w for w in self.workers if w.is_alive()]
+        if running:
+            if not messagebox.askyesno(T("quit_title"), T("quit_confirm")):
+                return
+            for w in running:
+                try:
+                    w.cancel()
+                except Exception:
+                    pass
+            for w in running:
+                w.join(timeout=3)
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        # os._exit 跳过 atexit 的 subprocess 等待，保证进程一定退出
+        os._exit(0)
 
     # ---------------- 状态 ----------------
 
@@ -1576,27 +1988,38 @@ class ExportTab(ttk.Frame):
         ttk.Label(srow, textvariable=self.src_count_var,
                   foreground="#555").pack(side="right")
 
-        # 列：选(☑/☐) / 名称 / 类型 / 音频块
+        # 列：选(☑/☐) / 名称 / 类型 / 音频块 / 声道（v1.3.0 每条轨道可单独指定）
         self.src_tree = ttk.Treeview(
-            src, columns=("sel", "name", "type", "clips"),
+            src, columns=("sel", "name", "type", "clips", "fmt"),
             show="headings", selectmode="none", height=6)
         self.src_tree.heading("sel", text=T("e_sel_col"))
         self.src_tree.heading("name", text=T("e_name_col"))
         self.src_tree.heading("type", text=T("e_type_col"))
         self.src_tree.heading("clips", text=T("e_clips_col"))
+        self.src_tree.heading("fmt", text=T("e_fmt_col"))
         self.src_tree.column("sel", width=44, anchor="center", stretch=False)
-        self.src_tree.column("name", width=320)
-        self.src_tree.column("type", width=80, anchor="center", stretch=False)
-        self.src_tree.column("clips", width=60, anchor="center", stretch=False)
-        sb = ttk.Scrollbar(src, command=self.src_tree.yview)
+        self.src_tree.column("name", width=250)
+        self.src_tree.column("type", width=70, anchor="center", stretch=False)
+        self.src_tree.column("clips", width=50, anchor="center", stretch=False)
+        self.src_tree.column("fmt", width=150, anchor="center", stretch=False)
+        tree_wrap = ttk.Frame(src)
+        tree_wrap.pack(fill="both", expand=True, pady=(4, 0))
+        sb = ttk.Scrollbar(tree_wrap, command=self.src_tree.yview)
         self.src_tree.configure(yscrollcommand=sb.set)
-        self.src_tree.pack(side="left", fill="both", expand=True, pady=(4, 0))
-        sb.pack(side="left", fill="y", pady=(4, 0))
+        self.src_tree.pack(in_=tree_wrap, side="left", fill="both", expand=True)
+        sb.pack(in_=tree_wrap, side="left", fill="y")
         self.src_tree.bind("<Button-1>", self._on_track_click)
         # 勾选集合（轨道名）与排除名单解析缓存
         self.track_checked = set()
         self._exclude_pats = []
+        # v1.3.0：每条轨道的格式覆盖（轨名 -> 内部 key；空串/缺失 = 跟随全局）
+        self.track_fmt = {}
+        # v1.3.0：被剔除的空轨里，用户显式「加回（撤回）」的那些 —— 不再被剔除
+        self.track_restored = set()
         self._reparse_exclude()
+
+        ttk.Label(src, text=T("e_fmt_hint"), foreground="#888",
+                  wraplength=720, justify="left").pack(fill="x", pady=(2, 0))
 
         # -- 时间 / 格式 / 输出
         opt = ttk.LabelFrame(self, text="  " + T("e_params") + "  ", padding=6)
@@ -1619,11 +2042,16 @@ class ExportTab(ttk.Frame):
         mrow = ttk.Frame(opt)
         mrow.grid(row=1, column=0, columnspan=7, sticky="w", pady=(4, 0))
         ttk.Label(mrow, text=T("e_margin")).pack(side="left")
-        self.margin_var = app.v("video_margin", str(app.cfg.get("video_margin", 240)))
+        # v1.3.0：默认 0（旧默认 240 = 每条片子都被加 4 分钟尾巴）
+        self.margin_var = app.v("video_margin",
+                                str(app.cfg.get("video_margin", DEFAULT_VIDEO_MARGIN)))
         ttk.Spinbox(mrow, from_=0, to=3600, increment=10, width=7,
                     textvariable=self.margin_var).pack(side="left", padx=(2, 12))
         ttk.Label(mrow, text=T("e_fallback")).pack(side="left")
-        self.fallback_var = app.v("fallback_duration", str(app.cfg.get("fallback_duration", 240)))
+        # v1.3.0：默认 60（旧默认 240 = 没检出视频时假装片子 4 分钟，会截断长片）
+        self.fallback_var = app.v("fallback_duration",
+                                  str(app.cfg.get("fallback_duration",
+                                                  DEFAULT_FALLBACK_DURATION)))
         ttk.Spinbox(mrow, from_=1, to=3600, increment=10, width=7,
                     textvariable=self.fallback_var).pack(side="left", padx=(2, 12))
         ttk.Label(mrow, text=T("e_video_margin_note"),
@@ -1643,14 +2071,36 @@ class ExportTab(ttk.Frame):
         ttk.Combobox(opt, textvariable=self.bd_var, values=[str(x) for x in BIT_DEPTHS],
                      state="readonly", width=8).grid(row=2, column=3, sticky="w", padx=4, pady=(4, 0))
         ttk.Label(opt, text=T("e_fmt")).grid(row=2, column=4, sticky="w")
-        self.fmt_var = app.v("format", "mono")
-        ttk.Combobox(opt, textvariable=self.fmt_var, values=EXPORT_FORMATS,
-                     state="readonly", width=12).grid(row=2, column=5, sticky="w", padx=4, pady=(4, 0))
+        # v1.3.0：默认 interleaved（旧默认 mono 会把立体声静默下混）+ 中文显示名
+        self.fmt_var = app.v("format", fmt_display_of(app.cfg.get("format")))
+        ttk.Combobox(opt, textvariable=self.fmt_var, values=fmt_choices(),
+                     state="readonly", width=26).grid(row=2, column=5, sticky="w", padx=4, pady=(4, 0))
+
+        # v1.3.0：剔除空轨道（Q7）—— 空轨默认不导，且可查看/撤回
+        erow = ttk.Frame(opt)
+        erow.grid(row=4, column=0, columnspan=7, sticky="w", pady=(4, 0))
+        self.exclude_empty_var = app.v("exclude_empty",
+                                       "1" if app.cfg.get("exclude_empty", True) else "0")
+        ttk.Checkbutton(erow, text=T("e_exclude_empty"),
+                        variable=self.exclude_empty_var, onvalue="1", offvalue="0",
+                        command=self._on_param_changed).pack(side="left")
+        self.excluded_btn = ttk.Button(erow, text=T("e_excluded_view") % 0,
+                                       command=self._show_excluded, state="disabled")
+        self.excluded_btn.pack(side="left", padx=(12, 0))
 
         ttk.Label(opt, text=T("e_out")).grid(row=3, column=0, sticky="w", pady=(4, 0))
         self.out_var = app.v("export_out", app.cfg.get("last_out_dir", ""))
-        ttk.Entry(opt, textvariable=self.out_var).grid(row=3, column=1, columnspan=4, sticky="we", padx=4, pady=(4, 0))
-        ttk.Button(opt, text=T("e_browse"), command=self._browse_out).grid(row=3, column=5, sticky="w", padx=4)
+        self.out_entry = ttk.Entry(opt, textvariable=self.out_var)
+        self.out_entry.grid(row=3, column=1, columnspan=4, sticky="we", padx=4, pady=(4, 0))
+        self.out_browse_btn = ttk.Button(opt, text=T("e_browse"), command=self._browse_out)
+        self.out_browse_btn.grid(row=3, column=5, sticky="w", padx=4)
+        # v1.3.0：输出目录锁定（Q3）+ 落盘预览（Q6）
+        self.out_locked = False
+        self.out_lock_btn = ttk.Button(opt, text=T("e_lock"), width=8,
+                                       command=self._toggle_out_lock)
+        self.out_lock_btn.grid(row=3, column=6, sticky="w", padx=(4, 0))
+        ttk.Button(opt, text=T("e_out_preview"), width=14,
+                   command=self._preview_out_paths).grid(row=3, column=7, sticky="w", padx=(4, 0))
 
         # -- 参数变化联动：勾选联动 + 预览失效闸门（v1.1.0 补实装）
         #    此前 UI 文案承诺「参数一变执行按钮熄灭」但从未比对签名——现绑定 trace 补齐
@@ -1659,7 +2109,8 @@ class ExportTab(ttk.Frame):
                      self.start_var, self.end_var, self.sr_var, self.bd_var,
                      self.fmt_var, self.out_var, self.session_var,
                      self.sess_mode_var, self.profile_var,
-                     self.margin_var, self.fallback_var, self.by_session_var):
+                     self.margin_var, self.fallback_var, self.by_session_var,
+                     self.exclude_empty_var):
             _var.trace_add("write", lambda *a: self._on_param_changed())
         self._sync_mode_gating()
 
@@ -1766,33 +2217,134 @@ class ExportTab(ttk.Frame):
             sel_txt = "☑" if checked else "☐"
             clip_txt = (T("e_clips_yes") if clips is not False
                         else T("e_clips_no"))
+            fmt_txt = self._fmt_cell_text(name)
             if excluded:
                 self.src_tree.insert("", "end", iid=name, tags=("excluded",),
                                      values=(sel_txt,
                                              name + T("e_excluded_mark"),
-                                             t.get("type", ""), clip_txt))
+                                             t.get("type", ""), clip_txt,
+                                             fmt_txt))
             elif clips is False:
                 self.src_tree.insert("", "end", iid=name, tags=("empty",),
                                      values=(sel_txt, name,
-                                             t.get("type", ""), clip_txt))
+                                             t.get("type", ""), clip_txt,
+                                             fmt_txt))
             else:
                 self.src_tree.insert("", "end", iid=name,
                                      values=(sel_txt, name,
-                                             t.get("type", ""), clip_txt))
+                                             t.get("type", ""), clip_txt,
+                                             fmt_txt))
         try:
             self.src_tree.tag_configure("excluded", foreground="#999")
             self.src_tree.tag_configure("empty", foreground="#777")
         except tk.TclError:
             pass
         self._update_src_count()
+        self._update_excluded_btn()
+
+    # ---------------- 单轨声道 / 剔除空轨（v1.3.0 · Q5 Q7）----------------
+
+    def _fmt_cell_text(self, name):
+        """轨道列表「声道」列的显示文本（未单独指定 = 跟随全局）。"""
+        v = self.track_fmt.get(name)
+        return fmt_label(v) if v else T("e_fmt_follow")
+
+    def _cycle_track_fmt(self, iid):
+        """点击「声道」列 → 在 跟随全局 / 立体声 / 单声道 / 每声道独立 间循环。"""
+        cur = self.track_fmt.get(iid, FORMAT_FOLLOW)
+        try:
+            nxt = TRACK_FMT_CYCLE[(TRACK_FMT_CYCLE.index(cur) + 1) % len(TRACK_FMT_CYCLE)]
+        except ValueError:
+            nxt = FORMAT_FOLLOW
+        if nxt == FORMAT_FOLLOW:
+            self.track_fmt.pop(iid, None)
+        else:
+            self.track_fmt[iid] = nxt
+        vals = list(self.src_tree.item(iid)["values"])
+        if len(vals) < 5:
+            vals += [""] * (5 - len(vals))
+        vals[4] = self._fmt_cell_text(iid)
+        self.src_tree.item(iid, values=vals)
+        self._invalidate_preview()
+
+    def _empty_track_names(self):
+        """档案里无音频块的轨道名（剔除空轨的候选名单）。"""
+        if not self._profile:
+            return []
+        out = []
+        for t in self._profile.get("tracks", []):
+            clips = (t.get("attributes") or {}).get("contains_clips")
+            if clips is None:
+                clips = t.get("contains_clips")
+            if clips is False:
+                out.append(t.get("name", ""))
+        return [x for x in out if x]
+
+    def _dropped_names(self):
+        """实际被剔除的（空轨 减去 用户加回的）。"""
+        return [n for n in self._empty_track_names()
+                if n not in self.track_restored]
+
+    def _update_excluded_btn(self):
+        n = len(self._dropped_names())
+        if not getattr(self, "excluded_btn", None):
+            return
+        self.excluded_btn.configure(
+            text=T("e_excluded_view") % n,
+            state="normal" if n else "disabled")
+
+    def _show_excluded(self):
+        """查看被剔除的轨道 —— 逐条可「加回」（撤回）。"""
+        names = self._dropped_names()
+        if not names:
+            return
+        dlg = tk.Toplevel(self)
+        dlg.title(T("e_excluded_title"))
+        dlg.transient(self.winfo_toplevel())
+        dlg.geometry("420x320")
+        dlg.grab_set()
+        ttk.Label(dlg, text=T("e_excluded_title"),
+                  padding=(10, 8)).pack(fill="x")
+        lst = tk.Listbox(dlg)
+        lst.pack(fill="both", expand=True, padx=10)
+        for n in names:
+            lst.insert("end", n)
+
+        def restore():
+            sel = lst.curselection()
+            if not sel:
+                return
+            name = lst.get(sel[0])
+            self.track_restored.add(name)          # 豁免剔除（撤回）
+            self.track_checked.add(name)           # 加回 = 重新勾选
+            self._reload_sources()
+            self.app.log(T("e_restored") % name)
+            self._invalidate_preview()
+            dlg.destroy()
+
+        btns = ttk.Frame(dlg)
+        btns.pack(fill="x", padx=10, pady=10)
+        ttk.Button(btns, text=T("e_restore"),
+                   command=restore).pack(side="left")
+        ttk.Button(btns, text=T("e_close"),
+                   command=dlg.destroy).pack(side="right")
+        lst.bind("<Double-1>", lambda _e: restore())
 
     def _on_track_click(self, event):
-        """点击行切换勾选（点在「选」列或行任意处均可；滚动条除外）。"""
+        """点击行切换勾选（点在「选」列或行任意处均可；滚动条除外）。
+
+        v1.3.0：点在**「声道」列**时改为循环切换该轨的格式（跟随全局 → 立体声
+        → 单声道 → 每声道独立），而不是改勾选 —— 这是 Q5「每条轨道各选各的」。
+        """
         region = self.src_tree.identify("region", event.x, event.y)
         if region not in ("cell", "tree"):
             return
         iid = self.src_tree.identify_row(event.y)
         if not iid:
+            return
+        col = self.src_tree.identify_column(event.x)
+        if col == "#5":          # 第 5 列 = 声道
+            self._cycle_track_fmt(iid)
             return
         if iid in self.track_checked:
             self.track_checked.discard(iid)
@@ -1855,9 +2407,18 @@ class ExportTab(ttk.Frame):
     # ---------------- 参数收集与校验 ----------------
 
     def _selected_sources(self):
-        """勾选的轨道名（按档案顺序，不在列表中的勾选如跨档案残留则忽略）。"""
+        """勾选的轨道名（按档案顺序，不在列表中的勾选如跨档案残留则忽略）。
+
+        v1.3.0（Q7）：勾选「剔除空轨道」时，空轨一律不进选中列表 ——
+        **怎么选都不导出**（此前空轨只是"默认不勾"，用户一勾就又导了）。
+        在「查看被剔除」里点「加回」的轨道会记进 `track_restored`，豁免剔除。
+        """
         known = set(self.src_tree.get_children())
-        return [n for n in self.track_checked if n in known]
+        picked = [n for n in self.track_checked if n in known]
+        if self.exclude_empty_var.get() != "1":
+            return picked
+        empty = set(self._empty_track_names()) - self.track_restored
+        return [n for n in picked if n not in empty]
 
     def _param_signature(self):
         return json.dumps({
@@ -1870,6 +2431,8 @@ class ExportTab(ttk.Frame):
             "sr": self.sr_var.get(),
             "bd": self.bd_var.get(),
             "fmt": self.fmt_var.get(),
+            "track_fmt": dict(self.track_fmt),
+            "exclude_empty": self.exclude_empty_var.get(),
             "out": self.out_var.get(),
             "session": self.session_var.get()
                        if self.sess_mode_var.get() == "file" else "",
@@ -1915,6 +2478,9 @@ class ExportTab(ttk.Frame):
             bit_depth=self.bd_var.get(),
             fmt=self.fmt_var.get(),
             dry_run=dry_run,
+            # v1.3.0：每条轨道可覆盖全局格式（Q5）
+            track_formats=dict(self.track_fmt),
+            exclude_empty=self.exclude_empty_var.get() == "1",
         )
 
     # ---------------- 视频锁定时长（v1.2.0：自动检索 + 手动选择）----------------
@@ -1922,14 +2488,36 @@ class ExportTab(ttk.Frame):
     def _export_scripts_dir(self):
         return os.path.dirname(self.app.resolver.script("pt-exporter"))
 
-    def _session_video_root(self):
-        """视频检索根：指定文件模式用 .ptx 所在目录；否则档案工程的目录。"""
+    def _session_video_roots(self):
+        """视频检索候选根（v1.3.0 · Q1）——按顺序试，第一个检出视频的即用。
+
+        旧逻辑只查「.ptx 所在目录」向下 8 层，而实际工程里视频通常放在
+        **.ptx 的父级**（如 `D:\\DAW-Project\\<项目>\\Video\\` 与 .ptx 目录并列），
+        os.walk 只向下不向上，于是永远扫不到 —— 这就是"自动检测总是不对"的根因。
+        现在候选链：.ptx 同级 → 父目录 → 祖父目录（去重，只保留真实存在的）。
+        """
         p = ""
         if self.sess_mode_var.get() == "file" and self.session_var.get().strip():
             p = self.session_var.get().strip()
         elif self._profile:
             p = (self._profile.get("session") or {}).get("path") or ""
-        return os.path.dirname(os.path.abspath(p)) if p else ""
+        if not p:
+            return []
+        out, seen = [], set()
+        cur = os.path.dirname(os.path.abspath(p))
+        for _ in range(3):
+            if cur and cur not in seen and os.path.isdir(cur):
+                out.append(cur)
+                seen.add(cur)
+            parent = os.path.dirname(cur)
+            if not parent or parent == cur:
+                break
+            cur = parent
+        return out
+
+    def _session_video_root(self):
+        roots = self._session_video_roots()
+        return roots[0] if roots else ""
 
     def _session_fps(self):
         try:
@@ -1951,12 +2539,16 @@ class ExportTab(ttk.Frame):
         self.app.log(T("e_video_applied") % (video_name, tc, margin))
 
     def _autodetect_video(self):
-        """工程目录树自动检索视频 → 1 条直接应用；多条弹窗选择；0 条提示。"""
+        """工程目录树自动检索视频 → 1 条直接应用；多条弹窗选择；0 条提示。
+
+        v1.3.0（Q1）：检索根改**候选链**（.ptx 同级 → 父级 → 祖父级），
+        逐个试到检出为止，并把实际检索到的那个根写进日志，做到可核对。
+        """
         if not self._profile:
             messagebox.showerror(T("msg_missing"), T("msg_no_profile"))
             return
-        root = self._session_video_root()
-        if not root or not os.path.isdir(root):
+        roots = self._session_video_roots()
+        if not roots:
             self.app.log(T("e_video_none"))
             return
         script = os.path.join(self._export_scripts_dir(),
@@ -1964,36 +2556,47 @@ class ExportTab(ttk.Frame):
         if not os.path.isfile(script):
             self.app.log(T("e_video_fail") % ("script missing: %s" % script))
             return
-        self.app.log(T("e_video_searching") % root)
+        self.app.log(T("e_video_root_note") + "：\n")
+        for r in roots:
+            self.app.log("    · %s\n" % r)
         threading.Thread(target=self._video_detect_worker, daemon=True,
-                         args=(script, root)).start()
+                         args=(script, roots)).start()
 
-    def _video_detect_worker(self, script, root):
-        try:
-            p = subprocess.run(
-                [self.app.resolver.venv_python, script,
-                 "--dir", root, "--profile", self._profile_path],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=120,
-                creationflags=CREATE_NO_WINDOW)
-            text = p.stdout or ""
-        except Exception as exc:
-            self.app.after(0, lambda: self.app.log(
-                T("b_search_fail") % str(exc)))
-            return
-        data = None
-        try:
-            start = text.index("{")
-            data = json.loads(text[start:text.rindex("}") + 1])
-        except (ValueError, json.JSONDecodeError):
+    def _video_detect_worker(self, script, roots):
+        """按候选根顺序检索，第一个检出视频的根即采用。"""
+        for root in roots:
+            try:
+                p = subprocess.run(
+                    [self.app.resolver.venv_python, script,
+                     "--dir", root, "--profile", self._profile_path],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=120,
+                    creationflags=CREATE_NO_WINDOW)
+                text = p.stdout or ""
+            except Exception as exc:
+                self.app.after(0, lambda e=str(exc): self.app.log(
+                    T("b_search_fail") % e))
+                return
             data = None
-        self.app.after(0, lambda: self._video_detect_done(data))
+            try:
+                start = text.index("{")
+                data = json.loads(text[start:text.rindex("}") + 1])
+            except (ValueError, json.JSONDecodeError):
+                data = None
+            if (data or {}).get("videos"):
+                self.app.after(0, lambda d=data, r=root: self._video_detect_done(d, r))
+                return
+            self.app.after(0, lambda r=root: self.app.log(
+                T("e_video_root_empty") % r))
+        self.app.after(0, lambda: self._video_detect_done(None, ""))
 
-    def _video_detect_done(self, data):
+    def _video_detect_done(self, data, root=""):
         videos = (data or {}).get("videos") or []
         if not videos:
             self.app.log(T("e_video_none"))
             return
+        if root:
+            self.app.log(T("e_video_root_hit") % root)
         if len(videos) == 1:
             v = videos[0]
             self.app.log(T("e_video_found1") % v.get("name", ""))
@@ -2167,6 +2770,66 @@ class ExportTab(ttk.Frame):
         if chosen:
             self.session_var.set(chosen)
 
+    # ---------------- 输出目录锁定 / 落盘预览（v1.3.0 · Q3 Q6）----------------
+
+    def _toggle_out_lock(self):
+        """输出目录锁定：锁定后禁止改动，防止换工程时误导出到上一个目录。"""
+        self.out_locked = not self.out_locked
+        st = "disabled" if self.out_locked else "normal"
+        self.out_entry.configure(state=st)
+        self.out_browse_btn.configure(state=st)
+        self.out_lock_btn.configure(
+            text=T("e_locked") if self.out_locked else T("e_lock"))
+
+    def _preview_out_paths(self):
+        """只读预览：本次导出会落到哪个目录、哪些文件（不写盘、不改任何状态）。"""
+        out = self.out_var.get().strip()
+        if not out:
+            messagebox.showerror(T("msg_invalid"), T("msg_out_missing"))
+            return
+        sess_name = ((self._profile or {}).get("session") or {}).get("name", "")
+        root = os.path.join(out, sess_name) if (
+            self.by_session_var.get() == "1" and sess_name) else out
+
+        srcs = (self._profile or {}).get("sources", {})
+        empty = set(self._empty_track_names())
+        picked = [i for i in self.src_tree.get_children()
+                  if i in self.track_checked]
+        if self.exclude_empty_var.get() == "1":
+            picked = [p for p in picked if p not in empty]
+
+        lines = [root, ""]
+        n = 0
+        if self._mode_on("mix"):
+            for name in (srcs.get("output") or []):
+                lines.append("  MIX   %s" % name)
+                n += 1
+        if self._mode_on("bus"):
+            for name in (srcs.get("bus") or []):
+                lines.append("  BUS   %s" % name)
+                n += 1
+        if self._mode_on("stem") or self._mode_on("track"):
+            for name in picked:
+                lines.append("  STEM  %s   （声道：%s）"
+                             % (name, self._fmt_cell_text(name)))
+                n += 1
+        if n == 0:
+            lines.append(T("e_out_preview_none"))
+        lines += ["", T("e_out_preview_total") % n]
+        if empty and self.exclude_empty_var.get() == "1":
+            lines.append(T("e_out_preview_dropped") % len(empty))
+
+        dlg = tk.Toplevel(self)
+        dlg.title(T("e_out_preview_title"))
+        dlg.transient(self.winfo_toplevel())
+        dlg.geometry("640x380")
+        txt = tk.Text(dlg, wrap="none", font=("Consolas", 10))
+        txt.insert("1.0", "\n".join(lines))
+        txt.configure(state="disabled")
+        txt.pack(fill="both", expand=True, padx=10, pady=10)
+        ttk.Button(dlg, text=T("e_close"),
+                   command=dlg.destroy).pack(pady=(0, 10))
+
     # ---------------- 批量导出（v1.2.0）----------------
 
     def open_batch_dialog(self):
@@ -2268,9 +2931,24 @@ class BatchExportDialog(tk.Toplevel):
         if iid and (self.rows.get(iid, {}).get("videos")):
             self._pick_video(iid)
 
+    @staticmethod
+    def _video_roots_for(ptx):
+        """候选检索根（与导出页同源）：.ptx 同级 → 父级 → 祖父级。"""
+        out, seen = [], set()
+        cur = os.path.dirname(os.path.abspath(ptx))
+        for _ in range(3):
+            if cur and cur not in seen and os.path.isdir(cur):
+                out.append(cur)
+                seen.add(cur)
+            parent = os.path.dirname(cur)
+            if not parent or parent == cur:
+                break
+            cur = parent
+        return out
+
     def _search_one(self, ptx):
         """后台检索一个工程的视频（不开 PT，纯文件系统）。"""
-        root = os.path.dirname(os.path.abspath(ptx))
+        roots = self._video_roots_for(ptx)
         script = os.path.join(self.tab._export_scripts_dir(),
                               "find_session_videos.py")
         if not os.path.isfile(script):
@@ -2278,27 +2956,39 @@ class BatchExportDialog(tk.Toplevel):
             return
         self.tab.app.log(T("b_searching") % os.path.basename(ptx))
         threading.Thread(target=self._search_worker, daemon=True,
-                         args=(ptx, script, root)).start()
+                         args=(ptx, script, roots)).start()
 
-    def _search_worker(self, ptx, script, root):
-        try:
-            p = subprocess.run(
-                [self.tab.app.resolver.venv_python, script,
-                 "--session", ptx, "--profile", self.tab._profile_path],
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=120,
-                creationflags=CREATE_NO_WINDOW)
-            text = p.stdout or ""
-        except Exception as exc:
-            self.after(0, lambda: self._search_done(ptx, None, str(exc)))
+    def _search_worker(self, ptx, script, roots):
+        """按候选根顺序检索，第一个检出视频的即用（v1.3.0 · Q1）。"""
+        if not roots:
+            self.after(0, lambda: self._search_done(ptx, None, "no search root"))
             return
-        data = None
-        try:
-            start = text.index("{")
-            data = json.loads(text[start:text.rindex("}") + 1])
-        except (ValueError, json.JSONDecodeError):
+        text = ""
+        for root in roots:
+            try:
+                p = subprocess.run(
+                    # 只给 --dir（脚本里显式 --dir 优先；同时给 --session 会被
+                    # 抢回 .ptx 同级目录，父级候选就永远走不到）
+                    [self.tab.app.resolver.venv_python, script,
+                     "--dir", root,
+                     "--profile", self.tab._profile_path],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=120,
+                    creationflags=CREATE_NO_WINDOW)
+                text = p.stdout or ""
+            except Exception as exc:
+                self.after(0, lambda e=str(exc): self._search_done(ptx, None, e))
+                return
             data = None
-        self.after(0, lambda: self._search_done(ptx, data, text[-200:]))
+            try:
+                start = text.index("{")
+                data = json.loads(text[start:text.rindex("}") + 1])
+            except (ValueError, json.JSONDecodeError):
+                data = None
+            if (data or {}).get("videos"):
+                self.after(0, lambda d=data: self._search_done(ptx, d, ""))
+                return
+        self.after(0, lambda: self._search_done(ptx, None, text[-200:]))
 
     def _search_done(self, ptx, data, raw):
         row = self.rows.get(ptx)
@@ -2361,9 +3051,9 @@ class BatchExportDialog(tk.Toplevel):
             margin = max(float(tab.margin_var.get() or 0), 0)
         except ValueError:
             margin = 0
-        fallback = 240
+        fallback = float(DEFAULT_FALLBACK_DURATION)
         try:
-            fallback = max(float(tab.fallback_var.get() or 240), 1)
+            fallback = max(float(tab.fallback_var.get() or DEFAULT_FALLBACK_DURATION), 1)
         except ValueError:
             pass
         exclude = list(tab._exclude_pats)
@@ -2410,6 +3100,7 @@ class BatchExportDialog(tk.Toplevel):
             return
 
         jobs = []
+        self._fallback_used = False
         for i, (ptx, info) in enumerate(self.rows.items(), 1):
             job = {"id": str(i), "ptx": ptx, "session_name_expect": "",
                    "exports": exports}
@@ -2425,6 +3116,7 @@ class BatchExportDialog(tk.Toplevel):
             else:
                 if self.no_video_var.get() == "fallback":
                     job["duration_sec"] = fallback
+                    self._fallback_used = True
                 else:
                     job["_videos"] = []
                     job["skip_on_no_duration"] = True
@@ -2438,7 +3130,8 @@ class BatchExportDialog(tk.Toplevel):
             "defaults": {
                 "sample_rate": tab.sr_var.get(),
                 "bit_depth": tab.bd_var.get(),
-                "format": tab.fmt_var.get(),
+                # v1.3.0：UI 里存的是显示名，写进 jobs.json 必须是内部 key
+                "format": fmt_key_of(tab.fmt_var.get()) or DEFAULT_EXPORT_FORMAT,
                 "fps": tab._session_fps(),
                 "save_on_close": True,
             },
@@ -2462,6 +3155,9 @@ class BatchExportDialog(tk.Toplevel):
         cmd = [tab.app.resolver.venv_python, batch_script, "--jobs", jobs_path]
         tab.app.log(T("b_generating") % jobs_path)
         tab.app.log(T("b_started") % len(jobs))
+        if getattr(self, "_fallback_used", False):
+            # 兜底是"猜"的，必须显式告警（旧默认值 240s 会悄悄截断长片）
+            tab.app.log(T("e_fallback_warn") % int(fallback))
         tab.app.start_worker([cmd])
         self.destroy()
 

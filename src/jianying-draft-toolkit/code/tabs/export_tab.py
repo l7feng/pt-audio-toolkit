@@ -12,6 +12,28 @@ from tkinter import ttk, messagebox
 import main as core
 from .base import BaseTab
 
+# ---------------------------------------------------------------------------
+# 下拉「显示名 ⇄ 内部 key」（v2.6.2 · Q9 Q11）
+#
+# 旧版把内部 key 直接拼进显示串（"48k24b_st  48k/24bit 立体声"、
+# "media  AAF + Media 文件夹"），用户看到的是给程序读的英文；更糟的是
+# `_read_spec()` 取首 token 当 key、查不到就**静默回落默认值且不报错** ——
+# 用户以为选了 44.1k/16bit，实际导出的是默认值。现在：显示名里只有人话，
+# 取不回 key 就 **显式报错**（见 _read_spec / _read_aaf_mode / _read_conflict）。
+# ---------------------------------------------------------------------------
+SPEC_LABEL_TO_KEY = {v[0]: k for k, v in core.SPEC_PRESETS.items()}
+AAF_MODES = {
+    "media": "AAF + Media 文件夹（推荐，便于核对素材）",
+    "embed": "仅单个 .aaf 文件（体积小，不含素材副本）",
+}
+AAF_LABEL_TO_KEY = {v: k for k, v in AAF_MODES.items()}
+CONFLICT_MODES = {
+    "rename": "自动重命名（两份都留）",
+    "cover": "覆盖同名文件",
+    "skip": "跳过不导出",
+}
+CONFLICT_LABEL_TO_KEY = {v: k for k, v in CONFLICT_MODES.items()}
+
 
 class ExportTab(BaseTab):
     title = "① 导出音频"
@@ -49,32 +71,35 @@ class ExportTab(BaseTab):
             variable=self.var_mode_clips, command=self._sync_mode,
         ).grid(row=1, column=0, columnspan=4, sticky="w", padx=4, pady=2)
 
+        # v2.6.2 布局修正：旧版「整轨规格」下拉与「整轨命名」Label **都占了
+        # row2/column1**，Label 又被 sticky="e" 挤到右边 —— 视觉上就是下拉框的
+        # 边框被压掉一截。现在各占一行，不再抢格。
         ttk.Label(mode_box, text="整轨规格").grid(row=2, column=0, sticky="w", padx=4, pady=3)
-        self.var_spec = tk.StringVar(value=self.cfg.get("track_spec", core.DEFAULT_SPEC_KEY))
+        self.var_spec = tk.StringVar()
         self.cb_spec = ttk.Combobox(
-            mode_box, textvariable=self.var_spec, state="readonly", width=22,
-            values=[f"{k}  {v[0]}" for k, v in core.SPEC_PRESETS.items()])
+            mode_box, textvariable=self.var_spec, state="readonly", width=34,
+            values=list(SPEC_LABEL_TO_KEY))
         self._set_spec_display()
-        self.cb_spec.grid(row=2, column=1, sticky="w", padx=4, pady=3)
+        self.cb_spec.grid(row=2, column=1, columnspan=3, sticky="w", padx=4, pady=3)
 
-        ttk.Label(mode_box, text="整轨命名").grid(row=2, column=1, sticky="e", padx=(24, 4))
+        ttk.Label(mode_box, text="整轨命名").grid(row=3, column=0, sticky="w", padx=4, pady=3)
         self.var_track_tpl = tk.StringVar(
             value=self.cfg.get("track_name_template") or core.DEFAULT_TRACK_TEMPLATE)
-        self.entry_track_tpl = ttk.Entry(mode_box, textvariable=self.var_track_tpl, width=40)
-        self.entry_track_tpl.grid(row=2, column=2, columnspan=2, sticky="we", padx=4, pady=3)
+        self.entry_track_tpl = ttk.Entry(mode_box, textvariable=self.var_track_tpl, width=52)
+        self.entry_track_tpl.grid(row=3, column=1, columnspan=3, sticky="we", padx=4, pady=3)
 
         self.var_aaf = tk.BooleanVar(value=bool(self.cfg.get("export_aaf", False)))
         self.var_aaf_mode = tk.StringVar(value=self.cfg.get("aaf_media_mode", "media"))
         aaf_row = ttk.Frame(mode_box)
-        aaf_row.grid(row=3, column=0, columnspan=4, sticky="w", padx=4, pady=3)
+        aaf_row.grid(row=4, column=0, columnspan=4, sticky="w", padx=4, pady=3)
         self.chk_aaf = ttk.Checkbutton(
             aaf_row, text="同时导出 AAF（交给 Pro Tools 混音）",
             variable=self.var_aaf, command=self._sync_mode)
         self.chk_aaf.pack(side="left")
         ttk.Label(aaf_row, text="交付方式").pack(side="left", padx=(16, 4))
         self.cb_aaf = ttk.Combobox(
-            aaf_row, textvariable=self.var_aaf_mode, state="readonly", width=26,
-            values=("media  AAF + Media 文件夹（推荐）", "embed  仅单个 .aaf 文件"))
+            aaf_row, textvariable=self.var_aaf_mode, state="readonly", width=42,
+            values=list(AAF_LABEL_TO_KEY))
         self._set_aaf_display()
         self.cb_aaf.pack(side="left")
 
@@ -86,15 +111,19 @@ class ExportTab(BaseTab):
         # 草稿目录
         self.var_input_dir = tk.StringVar(value=self.cfg.get("input_dir", ""))
         self.path_row(cfg_box, 0, "剪映草稿目录", self.var_input_dir,
-                      lambda: self._pick_dir(self.var_input_dir),
-                      "留空 = 自动定位剪映默认目录")
+                      self._browse_input_dir,
+                      "留空 = 自动定位剪映默认目录；可填草稿根目录，也可填单个草稿文件夹")
         self.entry_input_dir = cfg_box.grid_slaves(row=0, column=1)[0]
+        # 目录内容变化即刷新识别结果（手填路径也生效，不只浏览按钮）
+        self.var_input_dir.trace_add("write", lambda *a: self._schedule_input_summary())
 
         # 输出目录
         self.var_output_dir = tk.StringVar(value=self.cfg.get("output_dir", ""))
         self.path_row(cfg_box, 1, "输出目录（必填）", self.var_output_dir,
                       lambda: self._pick_dir(self.var_output_dir),
                       "按 类型/素材 自动分目录")
+        # 也可直接把文件夹拖到这个框里（v2.6.2 Q10）
+        self.entry_output_dir = cfg_box.grid_slaves(row=1, column=1)[0]
 
         # 命名模板（多选：勾选多个 → 各生成一份输出）
         ttk.Label(cfg_box, text="命名模板（可多选）").grid(row=2, column=0, sticky="nw", padx=4, pady=3)
@@ -125,14 +154,17 @@ class ExportTab(BaseTab):
         ttk.Label(cfg_box, text="码率 kbps").grid(row=3, column=1, sticky="e", padx=(24, 4))
         self.var_bitrate = tk.StringVar(value=str(self.cfg.get("bitrate_kbps", 192)))
         self.cb_bitrate = ttk.Combobox(cfg_box, textvariable=self.var_bitrate,
-                                       values=("128", "192", "256", "320"), width=8)
+                                       values=("128", "192", "256", "320"), width=8,
+                                       state="readonly")
         self.cb_bitrate.grid(row=3, column=2, sticky="w", padx=4)
 
         ttk.Label(cfg_box, text="重名策略").grid(row=3, column=2, sticky="e", padx=(24, 4))
-        self.var_conflict = tk.StringVar(value=self.cfg.get("conflict", "rename"))
+        self.var_conflict = tk.StringVar()
+        # v2.6.2：旧版这里是纯英文的 rename/cover/skip
         ttk.Combobox(cfg_box, textvariable=self.var_conflict,
-                     values=("rename", "cover", "skip"), width=10, state="readonly").grid(
-            row=3, column=3, sticky="w", padx=4)
+                     values=list(CONFLICT_LABEL_TO_KEY), width=20,
+                     state="readonly").grid(row=3, column=3, sticky="w", padx=4)
+        self._set_conflict_display()
 
         # 开关
         self.var_dedupe = tk.BooleanVar(value=bool(self.cfg.get("dedupe", True)))
@@ -169,32 +201,28 @@ class ExportTab(BaseTab):
             row=5, column=1, columnspan=3, sticky="we", padx=4, pady=3)
         cfg_box.columnconfigure(1, weight=1)
 
-        # 拖拽区
-        drop_box = ttk.LabelFrame(
-            outer, text="拖拽区（可直接把文件夹 / 草稿 / 音视频拖到这里）", padding=8)
-        drop_box.pack(fill="x", padx=8, pady=(0, 6))
-        self.drop_label = tk.Label(
-            drop_box,
-            text=("拖拽到此处\n"
-                  "· 文件夹 → 自动识别其中的剪映草稿\n"
-                  "· 剪映草稿文件夹 / draft_content.json / .jane → 按时间线片段导出\n"
-                  "· 音视频文件 → 整轨提取音频"),
-            justify="center", anchor="center", bg="#2b2b2b", fg="#9cdcfe",
-            font=("Microsoft YaHei UI", 10), height=4, relief="ridge", bd=1,
-            cursor="hand2")
-        self.drop_label.pack(fill="x", padx=2, pady=2)
-        drop_btns = ttk.Frame(drop_box)
-        drop_btns.pack(fill="x", pady=(6, 0))
-        ttk.Button(drop_btns, text="选择文件夹…",
-                   command=self._pick_input_dir).pack(side="left", padx=4)
-        ttk.Button(drop_btns, text="选择文件…",
+        # v2.6.2（Q10）：**取消拖拽区**。
+        #   ① 拖拽区占版面但拖进来的语义和「剪映草稿目录」重复；
+        #   ② 更严重的是 start_export 里 dropped_paths 恒优先，导致在上面
+        #      填/选的目录永远不生效 —— 看起来就是"只能靠拖拽读信息"。
+        # 现在只保留单一入口：上方「剪映草稿目录」+ 这里的选择按钮与即时反馈。
+        # 拖拽能力本身保留在代码层（on_drop 不删），需要时可随时加回。
+        src_box = ttk.LabelFrame(outer, text="输入源（与上方「剪映草稿目录」同一个入口）",
+                                 padding=8)
+        src_box.pack(fill="x", padx=8, pady=(0, 6))
+        src_btns = ttk.Frame(src_box)
+        src_btns.pack(fill="x")
+        ttk.Button(src_btns, text="选择草稿根目录 / 草稿文件夹…",
+                   command=self._browse_input_dir).pack(side="left", padx=4)
+        ttk.Button(src_btns, text="选择文件…",
                    command=self._pick_input_files).pack(side="left", padx=4)
-        ttk.Button(drop_btns, text="清空",
+        ttk.Button(src_btns, text="清空",
                    command=self._clear_dropped).pack(side="left", padx=4)
-        self.var_drop_summary = tk.StringVar(
-            value="尚未拖入任何内容（未拖入时按上方「剪映草稿目录」处理）")
-        ttk.Label(drop_btns, textvariable=self.var_drop_summary,
-                  foreground="#888").pack(side="left", padx=8)
+        ttk.Button(src_btns, text="重新识别", width=10,
+                   command=self._refresh_input_summary).pack(side="left", padx=(12, 0))
+        self.var_input_summary = tk.StringVar(value="")
+        ttk.Label(src_btns, textvariable=self.var_input_summary,
+                  foreground="#2a9").pack(side="left", padx=8)
 
         # 按钮
         btn_box = ttk.Frame(outer)
@@ -209,9 +237,10 @@ class ExportTab(BaseTab):
 
         # 日志
         self.make_log(outer, height=13,
-                      tip=("用法：① 把草稿/文件夹拖进拖拽区（或填草稿目录）"
+                      tip=("用法：① 填/选「剪映草稿目录」（下方会即时显示识别到几个草稿）"
                            "‣ ② 填输出目录 ‣ ③ 点开始导出。\n"
                            "本页功能完全独立，不需要 Pro Tools。\n"
+                           "· 该目录可填**草稿根目录**（自动向下找草稿），也可填**单个草稿文件夹**。\n"
                         "产物按类型分组（v2.6.1）：\n"
                         "  · <草稿名>/<集名>/01-多条WAV/ —— 整轨模式（一条轨一个 WAV，等长对齐）\n"
                         "  · <草稿名>/<集名>/02-素材片段/ —— 片段模式\n"
@@ -243,7 +272,7 @@ class ExportTab(BaseTab):
             self.cfg["bitrate_kbps"] = int(self.var_bitrate.get())
         except ValueError:
             self.cfg["bitrate_kbps"] = 192
-        self.cfg["conflict"] = self.var_conflict.get()
+        self.cfg["conflict"] = self._read_conflict()
         self.cfg["dedupe"] = bool(self.var_dedupe.get())
         self.cfg["extract_video_tracks"] = bool(self.var_extract_video.get())
         self.cfg["skip_existing"] = bool(self.var_skip_existing.get())
@@ -273,7 +302,7 @@ class ExportTab(BaseTab):
         self.var_template.set(c.get("name_template", ""))
         self.var_format.set(c.get("audio_format", "mp3"))
         self.var_bitrate.set(str(c.get("bitrate_kbps", 192)))
-        self.var_conflict.set(c.get("conflict", "rename"))
+        self._set_conflict_display()
         self.var_dedupe.set(bool(c.get("dedupe", True)))
         self.var_extract_video.set(bool(c.get("extract_video_tracks", True)))
         self.var_skip_existing.set(bool(c.get("skip_existing", True)))
@@ -287,7 +316,7 @@ class ExportTab(BaseTab):
         self.var_track_tpl.set(c.get("track_name_template")
                                or core.DEFAULT_TRACK_TEMPLATE)
         self.var_aaf.set(bool(c.get("export_aaf", False)))
-        self.var_aaf_mode.set(c.get("aaf_media_mode", "media"))
+        self._set_aaf_display()
         self.var_split_video.set(bool(c.get("split_by_video", False)))
         self._set_spec_display()
         self._set_aaf_display()
@@ -351,31 +380,52 @@ class ExportTab(BaseTab):
     # ───────────── 规格 / AAF 下拉的「值 ↔ 显示」转换 ─────────────
 
     def _set_spec_display(self):
-        """把配置里的 key 回填成下拉里的显示串（key 是前缀）。"""
+        """配置 key → 下拉显示名（v2.6.2：显示名里不再混内部 key）。"""
         key = self.cfg.get("track_spec", core.DEFAULT_SPEC_KEY)
-        for label in self.cb_spec["values"]:
-            if label.split()[0] == key:
-                self.var_spec.set(label)
-                return
-        self.var_spec.set(self.cb_spec["values"][0]) if self.cb_spec["values"] else None
+        if key not in core.SPEC_PRESETS:
+            key = core.DEFAULT_SPEC_KEY     # 脏数据只影响显示，写回前会报错
+        self.var_spec.set(core.SPEC_PRESETS[key][0])
 
     def _read_spec(self) -> str:
-        """从下拉显示串取回 key。"""
-        v = (self.var_spec.get() or "").split()
-        return v[0] if v else core.DEFAULT_SPEC_KEY
+        """显示名 → key。
+
+        ⚠️ v2.6.2：认不出来**抛 ValueError，绝不静默回落**。旧实现是
+        `v.split()[0] if v else DEFAULT` —— 把框里的字删空、或手打了任意字，
+        都会无声无息变成默认规格，用户以为选了 44.1k/16bit，实际导出的是默认值。
+        """
+        label = (self.var_spec.get() or "").strip()
+        if label in SPEC_LABEL_TO_KEY:
+            return SPEC_LABEL_TO_KEY[label]
+        if label in core.SPEC_PRESETS:          # 兼容旧 config 里存的裸 key
+            return label
+        raise ValueError("「整轨规格」当前值是「%s」，不在可选项里 —— 请从下拉重新选一项"
+                         "（工具不会擅自替你猜一个）。" % (label or "（空）"))
 
     def _set_aaf_display(self):
         key = self.cfg.get("aaf_media_mode", "media")
-        for label in self.cb_aaf["values"]:
-            if label.split()[0] == key:
-                self.var_aaf_mode.set(label)
-                return
-        if self.cb_aaf["values"]:
-            self.var_aaf_mode.set(self.cb_aaf["values"][0])
+        self.var_aaf_mode.set(AAF_MODES.get(key, AAF_MODES["media"]))
 
     def _read_aaf_mode(self) -> str:
-        v = (self.var_aaf_mode.get() or "").split()
-        return v[0] if v else "media"
+        label = (self.var_aaf_mode.get() or "").strip()
+        if label in AAF_LABEL_TO_KEY:
+            return AAF_LABEL_TO_KEY[label]
+        if label in AAF_MODES:
+            return label
+        raise ValueError("「交付方式」当前值是「%s」，不在可选项里 —— 请从下拉重新选一项。"
+                         % (label or "（空）"))
+
+    def _set_conflict_display(self):
+        key = self.cfg.get("conflict", "rename")
+        self.var_conflict.set(CONFLICT_MODES.get(key, CONFLICT_MODES["rename"]))
+
+    def _read_conflict(self) -> str:
+        label = (self.var_conflict.get() or "").strip()
+        if label in CONFLICT_LABEL_TO_KEY:
+            return CONFLICT_LABEL_TO_KEY[label]
+        if label in CONFLICT_MODES:
+            return label
+        raise ValueError("「重名策略」当前值是「%s」，不在可选项里 —— 请从下拉重新选一项。"
+                         % (label or "（空）"))
 
     def _sync_mode(self):
         """按勾选模式开关控件：整轨专属项（规格/整轨命名/AAF）仅在勾了整轨时可用；
@@ -389,23 +439,37 @@ class ExportTab(BaseTab):
         state = "normal" if tracks else "disabled"
         # 分包依赖整轨（按视频区间切整轨），未勾整轨时置灰
         self.chk_split.configure(state=state)
-        for w in (self.cb_spec, self.entry_track_tpl, self.chk_aaf):
+        for w in (self.entry_track_tpl, self.chk_aaf):
             try:
                 w.configure(state=state)
             except Exception:
                 pass
+        # ⚠️ v2.6.2 真 bug 修复：下拉必须用 **readonly**，不能用 normal。
+        #    旧版这里写 `state = "normal" if tracks else "disabled"`，把建控件时
+        #    设的 readonly 覆盖掉 → 框里的字能删；删空后旧 `_read_spec()` 取首
+        #    token 查不到就静默回落默认值，用户完全不知情。
+        combo_state = "readonly" if tracks else "disabled"
+        try:
+            self.cb_spec.configure(state=combo_state)
+        except Exception:
+            pass
         # AAF 交付方式只在勾了整轨且勾了 AAF 时可改
         try:
-            self.cb_aaf.configure(state="normal" if (tracks and self.var_aaf.get()) else "disabled")
+            self.cb_aaf.configure(state="readonly" if (tracks and self.var_aaf.get())
+                                  else "disabled")
         except Exception:
             pass
         # 片段专属项（整轨固定 WAV，码率/去重无意义）
-        clip_state = "normal" if clip else "disabled"
-        for w in (self.cb_format, self.cb_bitrate, self.chk_dedupe):
+        clip_state = "readonly" if clip else "disabled"
+        for w in (self.cb_format, self.cb_bitrate):
             try:
                 w.configure(state=clip_state)
             except Exception:
                 pass
+        try:
+            self.chk_dedupe.configure(state="normal" if clip else "disabled")
+        except Exception:
+            pass
 
     # ───────────── 拖拽 ─────────────
 
@@ -432,13 +496,67 @@ class ExportTab(BaseTab):
         if files:
             self._set_dropped([Path(f) for f in files])
 
+    def _browse_input_dir(self):
+        """浏览选目录 → 写入「剪映草稿目录」并**立刻反馈识别结果**。
+
+        v2.6.2（Q10）：旧版只 `var.set(p)` 就结束，没有任何反馈；而且因为
+        start_export 里 `if self.dropped_paths:` 恒优先，历史上拖过一次后
+        这里填什么目录都不生效。现在改成「**最后操作者优先**」—— 选目录即清空
+        拖拽列表，目录里的草稿立刻数给你看，不用等到点「开始导出」才发现。
+        """
+        p = self.ask_dir("选择剪映草稿根目录 / 草稿文件夹",
+                         initial=self.var_input_dir.get())
+        if not p:
+            return
+        self.var_input_dir.set(p)
+        self.dropped_paths = []
+        self._refresh_input_summary()
+
+    def _schedule_input_summary(self):
+        """手填路径时延迟刷新识别（避免每敲一个字都递归扫描）。"""
+        if getattr(self, "_sum_job", None):
+            try:
+                self.after_cancel(self._sum_job)
+            except Exception:
+                pass
+        try:
+            self._sum_job = self.after(600, self._refresh_input_summary)
+        except Exception:
+            pass
+
+    def _refresh_input_summary(self):
+        """即时识别「剪映草稿目录」里有几个草稿，并给出可读反馈。"""
+        if not getattr(self, "var_input_summary", None):
+            return
+        raw = self.var_input_dir.get().strip()
+        if not raw:
+            self.var_input_summary.set("未填写 —— 将自动定位剪映默认草稿目录")
+            return
+        root = Path(raw)
+        if not root.exists():
+            self.var_input_summary.set("⚠ 路径不存在：%s" % raw)
+            return
+        try:
+            drafts, _r, _fm = core.resolve_input_paths([root])
+        except Exception as e:
+            self.var_input_summary.set("⚠ 识别失败：%s" % e)
+            return
+        if drafts:
+            self.var_input_summary.set("✓ 已识别 %d 个剪映草稿" % len(drafts))
+            self.log("· 草稿目录识别：%d 个 —— %s\n" % (
+                len(drafts), "、".join(d.name for d in drafts[:10])))
+        else:
+            self.var_input_summary.set("⚠ 该目录下没识别到剪映草稿"
+                                       "（可往上一级选草稿根目录）")
+
     def _set_dropped(self, paths):
         self.on_drop(list(paths))
 
     def _clear_dropped(self):
         self.dropped_paths = []
-        self.var_drop_summary.set("尚未拖入任何内容（未拖入时按上方「剪映草稿目录」处理）")
-        self.log("· 已清空拖拽列表，恢复按「剪映草稿目录」处理\n")
+        self.var_input_dir.set("")
+        self._refresh_input_summary()
+        self.log("· 已清空输入源\n")
 
     def on_drop(self, paths):
         """由主窗口的拖放处理器转发进来。"""
@@ -457,15 +575,15 @@ class ExportTab(BaseTab):
             names += f" 等 {len(paths)} 项"
 
         if draft_dirs:
-            self.var_drop_summary.set(f"已识别 {len(draft_dirs)} 个剪映草稿（来源：{names}）")
+            self.var_input_summary.set(f"✓ 已识别 {len(draft_dirs)} 个剪映草稿")
             self.log(f"✓ 拖入识别：{len(draft_dirs)} 个草稿 —— {names}\n")
             for d in draft_dirs[:20]:
                 self.log(f"    · 草稿 {d.name}\n")
         elif file_mode:
-            self.var_drop_summary.set(f"未发现草稿，将按媒体文件整轨提取（来源：{names}）")
+            self.var_input_summary.set(f"未发现草稿，将按媒体文件整轨提取（来源：{names}）")
             self.log(f"✓ 拖入识别：未发现草稿，按媒体文件处理 —— {names}\n")
         else:
-            self.var_drop_summary.set("拖入内容中未识别到草稿或音视频，请检查")
+            self.var_input_summary.set("拖入内容中未识别到草稿或音视频，请检查")
             self.log(f"✗ 未识别到可导出的内容: {names}\n")
 
         if len(paths) == 1 and paths[0].is_dir():
@@ -496,7 +614,12 @@ class ExportTab(BaseTab):
     def start_export(self):
         if self.running:
             return
-        self.collect()
+        try:
+            self.collect()
+        except ValueError as e:
+            # v2.6.2：界面取值不合法就**明确告知**，不再悄悄按默认值跑
+            messagebox.showwarning("界面取值有误", str(e))
+            return
 
         if not self._mode_set():
             messagebox.showwarning("未选择导出模式",
@@ -508,6 +631,10 @@ class ExportTab(BaseTab):
             return
 
         draft_dirs, media_files, root = [], [], None
+        # v2.6.2（Q10）：改成「**最后操作者优先**」。旧版这里 `if self.dropped_paths:`
+        # 恒优先 —— 只要历史拖过一次没清空，上面「剪映草稿目录」填什么目录都不生效，
+        # 于是看起来就是"只能通过拖拽读取信息"。现在：选/填目录会清空 dropped_paths，
+        # 拖入会写回目录框，两者互为最后操作，不会互相压过。
         if self.dropped_paths:
             draft_dirs, root, file_mode = core.resolve_input_paths(self.dropped_paths)
             if not draft_dirs and not media_files and not file_mode:
