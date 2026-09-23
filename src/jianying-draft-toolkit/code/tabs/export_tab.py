@@ -157,6 +157,7 @@ class ExportTab(BaseTab):
         self.chk_split.pack(side="left", padx=16)
         ttk.Label(cfg_box,
                   text="分包时可用新占位符：{视频项目} {集数} {编号} {AiFX} {视频名}；"
+                       "整轨命名另可用 {轨道类别}（MX/DX/SFX/AiFX 自动判定）；"
                        "视频名是纯数字或项目名超过 4 字时会弹窗请您补项目名。",
                   foreground="#888").grid(row=6, column=0, columnspan=4, sticky="w",
                                           padx=4, pady=(0, 4))
@@ -211,8 +212,11 @@ class ExportTab(BaseTab):
                       tip=("用法：① 把草稿/文件夹拖进拖拽区（或填草稿目录）"
                            "‣ ② 填输出目录 ‣ ③ 点开始导出。\n"
                            "本页功能完全独立，不需要 Pro Tools。\n"
-                           "整轨模式输出到「输出目录/<草稿名>/」，一条轨一个 WAV，"
-                           "所有轨等长对齐，导入 PT 无需手动摆位。\n\n"))
+                           "产物按类型分组（v2.6.0）：\n"
+                           "  · 01-多条WAV/<草稿名>/<集名>/ —— 整轨模式（一条轨一个 WAV，等长对齐）\n"
+                           "  · 02-素材片段/<music|audio…>/<集名>/ —— 片段模式\n"
+                           "  · 03-AAF/<草稿名>/<集名>/ —— AAF（整轨一个 / 分包每集一个，可直接交 PT）\n"
+                           "日志与断点续跑记录在「默认路径设置」指定的日志/数据目录，不混在产物里。\n\n"))
 
         self._sync_mode()
 

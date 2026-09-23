@@ -9,5 +9,7 @@
   "extract_video_tracks": true,
   "skip_existing": false,
   "temp_dir": "",
+  "log_dir": "D:/My-Temporary/Jianying-Backup/Tools/log",
+  "data_dir": "D:/My-Temporary/Jianying-Backup/Tools/data",
   "remarks": ""
 }

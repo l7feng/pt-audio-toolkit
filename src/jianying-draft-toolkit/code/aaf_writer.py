@@ -68,7 +68,42 @@ def render_segment_wav(seg, out_path: Path, sr: int = AAF_SR, bits: int = AAF_BI
     return r.returncode == 0 and Path(out_path).exists()
 
 
-def write_aaf(tracks, total_us: int, project: str, out_root: Path, cfg: dict):
+def _clip_tracks_to_window(tracks, win_start_us: int, win_end_us: int):
+    """把每条轨的片段裁到时间窗内（按集导出 AAF 用）。
+
+    与 ``main.extract_track_audio`` 的窗口裁剪完全同构：
+      · 与窗口无重叠的片段整段丢弃；
+      · 窗口起点落在片段中间 → 取材起点同步偏移；
+      · 时间线落点换算为**集内相对坐标**（AAF 里每集时间线从 0 开始）。
+    返回新 TrackSegment 列表的轨列表（不原地改），以及窗口总长（微秒）。
+    """
+    from dataclasses import replace
+    ws, we = int(win_start_us), int(win_end_us)
+    out = []
+    for t in tracks:
+        segs = []
+        for s in t.segments:
+            if s.tl_dur_us <= 0:
+                continue
+            o_start = max(s.tl_start_us, ws)
+            o_end = min(s.tl_start_us + s.tl_dur_us, we)
+            if o_end - o_start <= 0:
+                continue                       # 与窗口无重叠 → 整段丢弃
+            off = o_start - s.tl_start_us
+            segs.append(replace(
+                s,
+                src_start_us=s.src_start_us + off,
+                src_dur_us=o_end - o_start,
+                tl_start_us=o_start - ws,      # 集内相对坐标
+                tl_dur_us=o_end - o_start,
+            ))
+        if segs:
+            out.append(replace(t, segments=segs))
+    return out, we - ws
+
+
+def write_aaf(tracks, total_us: int, project: str, out_root: Path, cfg: dict,
+              win_start_us: int = None, win_end_us: int = None):
     """把轨道列表写成 AAF。
 
     返回 `(是否成功, 说明文本)`。
@@ -77,6 +112,9 @@ def write_aaf(tracks, total_us: int, project: str, out_root: Path, cfg: dict):
       - `media`（默认）→ 额外把片段 WAV 落到 `<输出>/<草稿>/Media/`，
         便于人工核对、复用素材、AAF 万一 Relink 失败时兜底。
       - `embed`        → 只产出单个 .aaf，不留副本。
+
+    `win_start_us / win_end_us`（v2.6.0）：指定后只取该时间窗 ——
+    按视频分包时**每集一个 AAF**，落点换算为集内相对坐标。
 
     ⚠️ 两种模式的 AAF **都是内嵌 essence**（不写外部链接）。原因是 PT 对
     「链接式多声道 WAV」支持不可靠（实测会只剩 ch1），内嵌是唯一稳妥解；
@@ -87,6 +125,9 @@ def write_aaf(tracks, total_us: int, project: str, out_root: Path, cfg: dict):
         from aaf2.rational import AAFRational
     except ImportError:
         return False, "未安装 pyaaf2（pip install pyaaf2）"
+
+    if win_start_us is not None and win_end_us is not None:
+        tracks, total_us = _clip_tracks_to_window(tracks, win_start_us, win_end_us)
 
     media_mode = cfg.get("aaf_media_mode", "media") != "embed"
     out_root = Path(out_root)

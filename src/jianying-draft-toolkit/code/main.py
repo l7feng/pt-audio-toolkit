@@ -36,7 +36,9 @@ from typing import List, Optional, Tuple
 #        → v2.4.0 导出模式多选 + 命名模板多选 + 整轨源文件相对路径解析修复（09-21）
 #        → v2.5.0 视频名提取字段（项目/集数/编号/AiFX）+ 按视频片段分包（09-23）
 #        → v2.5.1 片段模式也按视频窗归类（music/法老6/…，时间线落点归属）（09-23）
-APP_VERSION = "2.5.1"
+#        → v2.6.0 产物目录分组（01-多条WAV/02-素材片段/03-AAF）+ 分包下按集导出 AAF
+#          + 日志/运行数据独立目录（log_dir/data_dir）+ {轨道类别} 占位符（09-23）
+APP_VERSION = "2.6.0"
 
 
 def app_build_date() -> str:
@@ -92,7 +94,7 @@ from core.config import (              # noqa: E402
 # 视频名解析（v2.5.0）：从视频素材名提取 项目/集数/编号/AiFX
 from core.videoname import (          # noqa: E402
     parse_video_name, parse_many, pending_map, apply_project, suggest_project,
-    VideoNameInfo, MAX_PROJECT_LEN,
+    VideoNameInfo, MAX_PROJECT_LEN, AIFX_PAT,
 )
 
 # jy-draftc 定位：优先包内 tools/，命中前先看 exe 旁（onedir 打包时 tools/ 在 exe 同级）
@@ -133,6 +135,17 @@ TYPE_CATEGORY = {
     "sfx": "sfx",                        # 音效
     "video": "audio",                    # 视频内嵌音轨 → audio
     "video_original_sound": "voice",     # 视频原声（分离到独立音轨的干声/人声）→ voice
+}
+
+# 素材类型 → 轨道类别标签（v2.6.0：命名模板 {轨道类别} 的取值）
+# MX=Music 音乐 ｜ DX=Dialogue 对白 ｜ SFX=Sound FX 音效
+TYPE_CATEGORY_TRACK_LABEL = {
+    "music": "MX",
+    "voice": "DX",
+    "sfx": "SFX",
+    "audio": "DX",
+    "video": "DX",
+    "video_original_sound": "DX",
 }
 
 # 文件名非法字符与长度限制
@@ -529,6 +542,7 @@ class TrackSegment:
     src_dur_us: int = 0
     tl_start_us: int = 0
     tl_dur_us: int = 0
+    mat_type: str = ""                     # v2.6.0：素材类型（music/voice/sfx/audio…）
 
 
 @dataclass
@@ -544,6 +558,26 @@ class AudioTrack:
     def display_name(self) -> str:
         """轨道名（剪映里叫什么就叫什么；无名时退化 Track N）"""
         return self.name or f"Track {self.index}"
+
+    @property
+    def category(self) -> str:
+        """轨道类别（v2.6.0）：供命名模板 {轨道类别} 使用。
+
+        判定优先级：
+          1. 轨内任一素材名带 AiFX 标记 → `AiFX`（人工标注最可信）；
+          2. 轨内主导素材类型（时长加权）映射：music→MX、voice→DX、
+             sfx→SFX、其余（audio/video）→ DX。
+        """
+        for s in self.segments:
+            if AIFX_PAT.search(s.material_name or ""):
+                return "AiFX"
+        weight: dict = {}
+        for s in self.segments:
+            weight[s.mat_type or "audio"] = weight.get(s.mat_type or "audio", 0) + s.tl_dur_us
+        if not weight:
+            return "DX"
+        dominant = max(weight.items(), key=lambda kv: kv[1])[0]
+        return TYPE_CATEGORY_TRACK_LABEL.get(dominant, "DX")
 
     @property
     def end_us(self) -> int:
@@ -607,6 +641,7 @@ def parse_draft_tracks(draft_dir: Path, json_path: Path,
                 src_dur_us=s_dur,
                 tl_start_us=t_start,
                 tl_dur_us=t_dur,
+                mat_type=mat.get("type", "audio"),   # v2.6.0：轨道类别判定用
             ))
         if not segs:
             continue
@@ -754,17 +789,21 @@ def resolve_spec(spec_key: str, segments: List[TrackSegment]) -> Tuple[int, int,
 
 def render_track_name(template: str, project: str, track_name: str,
                       index: int, duration_s: float, remarks: str = "",
-                      extra: Optional[dict] = None) -> str:
+                      extra: Optional[dict] = None,
+                      category: str = "") -> str:
     """整轨命名：额外提供 {轨道名} 字段（片段模式没有这个概念）
 
     v2.5.0：`extra` 可注入视频名解析出的字段 ——
     `{视频项目}` `{集数}` `{编号}` `{AiFX}` `{视频名}`（见 core/videoname.py）。
     分包模式下默认由调用方传入；未分包时为 None，模板里写了这些占位符会被忽略。
+
+    v2.6.0：新增 `{轨道类别}` —— MX/DX/SFX/AiFX（见 AudioTrack.category）。
     """
     import datetime
     fields = {
         "项目名": project,
         "轨道名": track_name,
+        "轨道类别": category,
         "序号": index,
         "日期": datetime.date.today().strftime("%Y%m%d"),
         "时长": int(duration_s),
@@ -943,8 +982,13 @@ def extract_audio(seg: AudioSegment, output_file: Path, audio_format: str = "mp3
 # ──────────────────── Namer ────────────────────
 
 def sanitize_filename(name: str) -> str:
-    """替换非法字符并截断超长文件名"""
+    """替换非法字符并截断超长文件名
+
+    v2.6.0：连续空格压成单个（模板里可选字段渲染为空后，如 `EP{集数}` 的
+    集数为空时会留下 `EP  DX` 这类空洞，压缩后是 `EP DX`，观感干净）。
+    """
     name = ILLEGAL_CHARS.sub("_", name)
+    name = re.sub(r" {2,}", " ", name)
     name = name.strip().strip(".")
     if len(name) > MAX_FILENAME_LEN:
         name = name[:MAX_FILENAME_LEN]
@@ -1149,9 +1193,11 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
                 # 命名与归档
                 base_name = render_name(template, seg, i, remarks, extra=extra)
                 category = TYPE_CATEGORY.get(seg.track_type, "audio")
+                # v2.6.0 产物目录分组：片段统一进「02-素材片段/」，
+                # 内部再按素材类型（music/audio/voice/sfx）分目录
                 tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
                     else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
-                category_dir = tpl_root / category
+                category_dir = tpl_root / "02-素材片段" / category
                 if chunk_dir:
                     category_dir = category_dir / chunk_dir
                 category_dir.mkdir(parents=True, exist_ok=True)
@@ -1211,7 +1257,10 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
     spec_key = cfg.get("track_spec", DEFAULT_SPEC_KEY)
     template = cfg.get("track_name_template") or DEFAULT_TRACK_TEMPLATE
     remarks = cfg.get("remarks", "")
-    out_root = Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / draft_dir.name
+    # v2.6.0 产物目录分组：整轨 WAV 统一进「01-多条WAV/<草稿名>/」，
+    # AAF 统一进「03-AAF/<草稿名>/」—— 大类一眼可辨，不再与片段产物混居。
+    output_root = Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
+    out_root = output_root / "01-多条WAV" / draft_dir.name
     out_root.mkdir(parents=True, exist_ok=True)
     # 临时目录自建，不依赖调用方（execute_export 建了，但单独调用本函数时没有）
     Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -1252,7 +1301,8 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
                 try:
                     base = render_track_name(template, proj_for_name,
                                              t.display_name, t.index,
-                                             ch.duration_s, remarks, extra=extra)
+                                             ch.duration_s, remarks, extra=extra,
+                                             category=t.category)
                     out_file = out_dir / f"{base}.wav"
                     resolved = resolve_conflict(out_file, conflict)
                     if resolved is None:
@@ -1275,15 +1325,36 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
                     logging.error(f"[ERROR] {draft_dir.name}/{folder} 轨道异常: {e}",
                                   exc_info=True)
                     stats["failed"] += 1
-        # 分包模式下不产出 AAF：AAF 描述的是整条时间线，切成多段后语义不成立
-        if cfg.get("export_aaf"):
-            print("  [info] 分包模式下跳过 AAF（AAF 描述整条时间线，与分包语义冲突）")
+            # v2.6.0：分包模式下**按集导出 AAF**（每集时间窗渲染为一个 .aaf，
+            # 落点换算为集内相对坐标）—— 不再跳过。AAF 描述整条时间线的
+            # 顾虑通过时间窗裁剪解决：集内坐标下它就是一条完整时间线。
+            if cfg.get("export_aaf"):
+                try:
+                    from aaf_writer import write_aaf
+                    aaf_dir = output_root / "03-AAF" / draft_dir.name / folder
+                    ok, msg = write_aaf(tracks, ch.tl_dur_us, folder, aaf_dir, cfg,
+                                        win_start_us=ch.tl_start_us,
+                                        win_end_us=ch.tl_end_us)
+                    if ok:
+                        print(f"    ✓ AAF: {msg}")
+                        logging.info(f"[OK] AAF {draft_dir.name}/{folder} → {msg}")
+                        stats["success"] += 1
+                    else:
+                        print(f"    ✗ AAF 失败: {msg}")
+                        logging.error(f"[ERROR] {draft_dir.name}/{folder} AAF: {msg}")
+                        stats["failed"] += 1
+                except Exception as e:
+                    print(f"    ✗ AAF 导出异常: {e}")
+                    logging.error(f"[ERROR] {draft_dir.name}/{folder} AAF: {e}",
+                                  exc_info=True)
+                    stats["failed"] += 1
         return
 
     for t in tracks:
         try:
             base = render_track_name(template, draft_dir.name,
-                                     t.display_name, t.index, total_s, remarks)
+                                     t.display_name, t.index, total_s, remarks,
+                                     category=t.category)
             out_file = out_root / f"{base}.wav"
             resolved = resolve_conflict(out_file, conflict)
             if resolved is None:
@@ -1303,11 +1374,12 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
             logging.error(f"[ERROR] {draft_dir.name} 轨道异常: {e}", exc_info=True)
             stats["failed"] += 1
 
-    # AAF（可选，默认关）
+    # AAF（可选，默认关）—— v2.6.0 落点统一到 03-AAF/<草稿名>/
     if cfg.get("export_aaf"):
         try:
             from aaf_writer import write_aaf
-            ok, msg = write_aaf(tracks, total_us, draft_dir.name, out_root, cfg)
+            aaf_dir = output_root / "03-AAF" / draft_dir.name
+            ok, msg = write_aaf(tracks, total_us, draft_dir.name, aaf_dir, cfg)
             if ok:
                 print(f"  ✓ AAF: {msg}")
                 logging.info(f"[OK] AAF {draft_dir.name} → {msg}")
@@ -1382,9 +1454,10 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
 
             base_name = render_name(template, seg, 1, remarks)
             category = TYPE_CATEGORY.get(seg.track_type, "audio")
+            # v2.6.0 产物目录分组：拖入文件提取的音频同样进「02-素材片段/」
             tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
                 else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
-            category_dir = tpl_root / category
+            category_dir = tpl_root / "02-素材片段" / category
             category_dir.mkdir(parents=True, exist_ok=True)
 
             out_file = category_dir / f"{base_name}.{audio_format}"
@@ -1443,19 +1516,45 @@ def resolve_source_path(src: str, draft_dir: Path) -> Optional[Path]:
 
 
 
-def load_processed(output_dir: Path) -> set:
+def processed_state_file(data_dir: Path) -> Path:
+    """断点续跑状态文件落点（v2.6.0：进数据目录，不再混在产物区）。
+
+    旧版写在输出目录根 `.processed_drafts.txt`（点开头、Windows 里藏着头尾
+    都不好操作）；v2.6.0 改名 `processed_drafts.txt` 并搬进 data_dir。
+    """
+    return Path(data_dir) / "processed_drafts.txt"
+
+
+def migrate_legacy_state(output_dir: Path, data_dir: Path) -> None:
+    """旧状态文件一次性迁移：输出目录根 `.processed_drafts.txt` → data_dir。
+
+    幂等：新文件已存在时不搬（避免覆盖更新的状态）。
+    """
+    legacy = Path(output_dir) / ".processed_drafts.txt"
+    target = processed_state_file(data_dir)
+    try:
+        if legacy.is_file() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(legacy, target)
+            print(f"  [info] 断点续跑记录已迁移: {legacy} → {target}")
+    except Exception as e:
+        print(f"  [warn] 旧断点续跑记录迁移失败（不影响导出）: {e}")
+
+
+def load_processed(data_dir: Path) -> set:
     """加载已处理草稿记录（断点续跑）"""
-    state_file = output_dir / ".processed_drafts.txt"
+    state_file = processed_state_file(data_dir)
     if state_file.exists():
         return set(state_file.read_text(encoding="utf-8").splitlines())
     return set()
 
 
-def save_processed(output_dir: Path, name: str, processed: set):
+def save_processed(data_dir: Path, name: str, processed: set):
     """追加已处理草稿记录"""
     if name not in processed:
         processed.add(name)
-        state_file = output_dir / ".processed_drafts.txt"
+        state_file = processed_state_file(data_dir)
+        state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(state_file, "a", encoding="utf-8") as f:
             f.write(name + "\n")
 
@@ -1570,11 +1669,23 @@ def execute_export(cfg: dict, root: Path, log_file: Optional[Path] = None,
     output_dir = Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    temp_dir = Path(cfg["temp_dir"]) if cfg.get("temp_dir") else (output_dir / ".tmp")
+    # ── v2.6.0：日志 / 运行数据与产物分离 ──
+    # log_dir → 导出日志.log；data_dir → processed_drafts.txt / tmp 临时文件。
+    # 两者留空时回落输出目录根（兼容旧习惯）。
+    def _resolve_dir(key: str) -> Path:
+        raw = (cfg.get(key) or "").strip() if isinstance(cfg.get(key), str) else ""
+        p = Path(raw) if raw else output_dir
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    log_dir = _resolve_dir("log_dir")
+    data_dir = _resolve_dir("data_dir")
+
+    temp_dir = Path(cfg["temp_dir"]) if cfg.get("temp_dir") else (data_dir / "tmp")
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     if log_file is None:
-        log_file = output_dir / "导出日志.log"
+        log_file = log_dir / "导出日志.log"
     setup_logger(log_file)
 
     mode = cfg.get("export_mode", ["tracks"])
@@ -1592,7 +1703,8 @@ def execute_export(cfg: dict, root: Path, log_file: Optional[Path] = None,
 
     stats = {"success": 0, "failed": 0, "skipped": 0}
     seen_ids = {}
-    processed = load_processed(output_dir)
+    migrate_legacy_state(output_dir, data_dir)     # 旧状态文件一次性搬进数据目录
+    processed = load_processed(data_dir)
     skip_existing = cfg.get("skip_existing", True)
 
     # 直接文件（拖入音视频）优先处理
@@ -1610,7 +1722,7 @@ def execute_export(cfg: dict, root: Path, log_file: Optional[Path] = None,
             process_draft_tracks(d, cfg, temp_dir, stats)
         if "clips" in mode_set:
             process_draft(d, cfg, temp_dir, seen_ids, stats)
-        save_processed(output_dir, d.name, processed)
+        save_processed(data_dir, d.name, processed)
 
     # 清理临时目录
     shutil.rmtree(temp_dir, ignore_errors=True)

@@ -37,6 +37,7 @@ DEFAULT_CLIPS_TEMPLATE = "{项目名}_{素材类型}_{序号:03d}_{原始名}_{�
 
 # 命名模板预设库（「多选命名模板」的候选，用户可在界面增删）
 NAMING_PRESETS = [
+    "{项目名} EP{集数} {轨道类别} {序号:02d}",
     "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
     "{原始名}",
     "{素材类型}_{序号:03d}_{原始名}",
@@ -91,6 +92,10 @@ DEFAULT_CONFIG = {
     "track_spec": DEFAULT_SPEC_KEY,
     "export_aaf": False,
     "aaf_media_mode": "media",                   # media=AAF+Media 文件夹 | embed=单文件内嵌
+    # ── 日志 / 运行数据目录（v2.6.0：与产物分离，可配置）──
+    # 留空 = 回落输出目录根（兼容旧习惯）
+    "log_dir": "D:/My-Temporary/Jianying-Backup/Tools/log",   # 导出日志落点
+    "data_dir": "D:/My-Temporary/Jianying-Backup/Tools/data", # processed/临时文件等运行数据
     # ── 按视频分包（v2.5.0）──
     "split_by_video": False,                     # true=视频轨每个片段一个文件夹
     "video_project_answers": {},                 # {视频素材名: 人类补的项目名}，记住后不再问
@@ -124,7 +129,9 @@ CONFIG_FIELDS = {
     "dedupe": ("内容去重", "true=启用（基于首 4KB 哈希）| false=关闭"),
     "extract_video_tracks": ("提取视频内嵌音轨", "true=启用（方案扩展场景）| false=仅独立音频轨道"),
     "skip_existing": ("断点续跑", "true=跳过已处理草稿 | false=每次全量"),
-    "temp_dir": ("临时目录", "留空 = 输出目录/.tmp"),
+    "temp_dir": ("临时目录", "留空 = 数据目录/tmp（数据目录也空则 输出目录/.tmp）"),
+    "log_dir": ("导出日志目录", "导出日志.log 的落点；留空 = 输出目录根"),
+    "data_dir": ("运行数据目录", "processed_drafts.txt（断点续跑）/tmp 临时文件落点；留空 = 输出目录根"),
 }
 
 

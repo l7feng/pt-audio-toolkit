@@ -3,7 +3,7 @@
 """tabs/paths_dialog.py — 「默认路径设置」对话框（视图层）
 
 本项目三页的输入/输出目录分散在各自标签页，用户换工作目录要切页逐个改。
-本对话框把 5 个路径类字段集中到一处，改完写进 config.json 就成了**默认**——
+本对话框把 7 个路径类字段集中到一处，改完写进 config.json 就成了**默认**——
 下次开 exe 直接是这套路径。
 
 与菜单的关系：``gui.py`` 的「设置 → 默认路径设置…」调本对话框；
@@ -95,7 +95,7 @@ class PathsDialog(tk.Toplevel):
     def _pick(self, var: tk.StringVar, key: str):
         """浏览：输出/包目录选目录；其余（含文件型）也按目录处理。
 
-        这 5 个字段全是目录语义，统一用 askdirectory 最不容易选错。
+        这 7 个字段全是目录语义，统一用 askdirectory 最不容易选错。
         """
         cur = var.get().strip()
         initial = cur if cur and __import__("pathlib").Path(cur).is_dir() else None
@@ -106,8 +106,9 @@ class PathsDialog(tk.Toplevel):
     def _restore(self):
         if not messagebox.askyesno(
                 "恢复出厂默认",
-                "将把 5 个路径字段重置为出厂默认值：\n\n"
+                "将把 7 个路径字段重置为出厂默认值：\n\n"
                 f"  · 输出目录 → {DEFAULT_CONFIG['output_dir']}\n"
+                "  · 日志/数据目录 → Tools 下的 log / data\n"
                 "  · 其余路径 → 留空（自动定位）\n\n"
                 "命名模板 / 规格 / 开关等参数**不受影响**。继续？"):
             return
