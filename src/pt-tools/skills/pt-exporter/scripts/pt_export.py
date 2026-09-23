@@ -453,7 +453,12 @@ def _prof_attr(info, key):
 
 def _filter_by_profile(profile, tracks):
     """用 profile 的 contains_clips 信息做二次筛选（仅 --all-tracks 时）。
-    返回 (保留列表, 被排除的可疑名单)。"""
+    返回 (保留列表, 被排除的可疑名单)。
+
+    v1.1.0：空轨过滤从「仅 audio」扩到「audio + aux」——含效果辅助轨的
+    白名单模式（--track-type audio aux ...）下，无音频块的 aux 会导出成
+    纯静音文件（实测 aux 轨 ≈ 信号中间节点），一并排除以免交付混入空响。
+    """
     prof = {t.get("name"): t for t in profile.get("tracks", [])}
     if not prof:
         return tracks, []
@@ -463,7 +468,8 @@ def _filter_by_profile(profile, tracks):
         if info is None:
             keep.append(t)  # profile 里没有 → 可能工程已变，保守保留
             continue
-        if _prof_attr(info, "contains_clips") is False and t.type == pb.TType_Audio:
+        if (_prof_attr(info, "contains_clips") is False
+                and t.type in (pb.TType_Audio, pb.TType_Aux)):
             suspect.append(t)
         else:
             keep.append(t)

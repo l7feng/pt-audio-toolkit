@@ -14,6 +14,24 @@ python pt_tools_gui.py
 
 打包：在仓库根执行 `python tools/build.py pt-tools`（或本目录 `.\build.ps1` —— 转发薄壳）。
 
+## 导出页（v1.1.0 · 四模式多选）
+
+「导出模式」区四个复选框，**勾哪几个就按顺序导哪几路**（每路一条 CLI 命令顺序执行，失败即停）：
+
+| 模式 | 底层 | 产出 |
+|---|---|---|
+| ☑ **MIX 整段并轨** | ExportMix 主输出（`sources.output`） | 1 个 WAV |
+| ☑ **BUS 总线分轨** | ExportMix 全部总线（`sources.bus`） | 每条 bus 1 个 WAV |
+| ☑ **STEM 全部分轨** | BounceTrack `--all-tracks`，默认排除总线类轨 + 空轨 | 每根音源轨 1 个 WAV |
+| ☐ **按轨道名称** | BounceTrack 指定轨（勾选后从下方列表挑，列表带类型列） | 选中轨每根 1 个 WAV |
+
+- STEM 旁有子选项「**含效果辅助轨 (aux)**」：勾上改走 `--track-type audio/aux/instrument/midi`
+  白名单（aux 进、master/vca/folder 仍排除），空 aux 一并按档案 `contains_clips` 排除。
+- **按视频填入…**：选择工程对应视频，自动读时长并按工程帧率换算，
+  一键填「开始 00:00:00:00 → 结束=视频末帧」（底层 `video_duration.py`，纯标准库读 MP4/MOV）。
+- 预览闸门：所有勾选模式的 dry-run 计划全部列出后才解锁「执行导出」；
+  任何参数变化（含模式勾选、选轨）都会熄灭执行按钮，需重新预览。
+
 ## 前置条件
 
 | 项 | 说明 |
@@ -69,4 +87,5 @@ venv 含 py-ptsl、体积大，且属运行时环境，不随 exe 打包。
 python tests/run_import_tests.py    # 导入自检
 python tests/test_wiring.py         # CmdWorker / 接线
 python tests/run_gui_smoke.py       # 建窗即销毁
+python tests/test_pt_modes.py       # 导出模式多选专项（25 项）
 ```

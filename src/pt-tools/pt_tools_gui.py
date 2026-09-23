@@ -48,7 +48,9 @@ SCRIPTS = {
     "pt-cleaner": "pt_clean.py",
 }
 
-SOURCE_TYPES = ["bus", "output", "physicalout"]
+SOURCE_TYPES = ["bus", "output", "physicalout"]  # ExportMix 路径制三类（扫描摘要仍用）
+# 导出模式（v1.1.0 四模式多选；顺序即执行顺序）
+EXPORT_MODES = ["mix", "bus", "stem", "track"]
 SAMPLE_RATES = [48000, 44100, 96000, 88200, 192000]
 BIT_DEPTHS = [16, 24, 32]
 EXPORT_FORMATS = ["mono", "interleaved"]
@@ -63,7 +65,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ⚠️ build_date() 在 pt-project-folder-builder / jianying-draft-toolkit /
 #    rename-unify 各有一份逐字相同的实现（各工具独立打包、无共享模块），
 #    改动时四处需同步。
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 
 def build_date():
@@ -144,20 +146,28 @@ TEXTS = {
         # —— 导出页 ——
         "e_profile": "档案（pt-profile.json）:",
         "e_browse": "浏览…",
-        "e_mode": "导出模式:",
-        "e_mode_mix": "混音 Mix（整段并轨）",
-        "e_mode_stems": "分轨 Stems（按 bus 逐个 WAV）",
+        "e_mode": "导出模式（可多选）:",
+        "e_mode_mix": "MIX 整段并轨",
+        "e_mode_mix_tip": "主输出并成 1 个文件",
+        "e_mode_stem": "STEM 全部分轨",
+        "e_mode_stem_tip": "全部音源轨逐轨导出",
+        "e_mode_stem_aux": "含效果辅助轨(aux)",
+        "e_mode_bus": "BUS 总线分轨",
+        "e_mode_bus_tip": "每条总线 1 个文件",
+        "e_mode_track": "按轨道名称",
+        "e_mode_track_tip": "从下方列表挑选轨道",
         "e_session": "工程:",
         "e_sess_current": "当前打开的",
         "e_sess_file": "指定文件",
-        "e_source_frame": "导出源 —— 列表来自档案，杜绝猜名",
-        "e_stype": "源类型:",
+        "e_track_frame": "轨道列表 —— 勾「按轨道名称」后可多选",
+        "e_type_col": "类型",
         "e_search": "搜索:",
         "e_selected": "已选 %d 个",
         "e_name_col": "名称",
         "e_params": "参数",
         "e_start": "开始:",
         "e_end": "结束:",
+        "e_fill_video": "按视频填入…",
         "e_tc_hint": "格式 HH:MM:SS:FF",
         "e_sr": "采样率:",
         "e_bd": "位深:",
@@ -166,6 +176,11 @@ TEXTS = {
         "e_preview": "预览导出计划",
         "e_export": "执行导出",
         "e_verify": "校验：时长×采样率×位深≈WAV 字节数",
+        "e_video_title": "选择工程对应的视频文件",
+        "e_video_running": "[video] 正在读取视频时长：%s\n",
+        "e_video_ok": "[video] 已按视频填入时间范围：开始 00:00:00:00 → 结束 %s\n",
+        "e_video_fail": "[video] 视频时长读取失败：%s\n"
+                        "        支持 MP4/MOV 族（mvhd box）；也可手动填结束时间。\n",
 
         # —— 清理页 ——
         "c_warn": ("⚠ 需 Pro Tools 2025.10+（CId 146/147）。当前 PT 25.6.1 实测支持不了"
@@ -196,6 +211,7 @@ TEXTS = {
         "preview_pass": "[preview] 预览通过。参数未再改动前，可执行导出。\n",
         "cmd_done": "— 命令结束，退出码 %d —\n",
         "err_cmd_start": "[error] 无法启动命令：%s\n",
+        "err_cmd_stop": "[error] 第 %d 条命令失败，剩余 %d 条已跳过。\n",
 
         # —— 设置/技能目录 ——
         "skills_ok": "技能目录 OK：%s",
@@ -219,6 +235,10 @@ TEXTS = {
         "msg_invalid": "参数错误",
         "msg_no_profile": "尚未加载档案，请先扫描或浏览选择 pt-profile.json。",
         "msg_no_source": "请至少选择一个导出源。",
+        "msg_no_mode": "请至少勾选一种导出模式（MIX / BUS / STEM / 按轨道名称）。",
+        "msg_no_track_sel": "已勾选「按轨道名称」，请在下方轨道列表中选择要导出的轨道。",
+        "msg_no_output_src": "已勾选 MIX 整段并轨，但档案中没有输出路径（output）——请重新扫描。",
+        "msg_no_bus_src": "已勾选 BUS 总线分轨，但档案中没有总线（bus）——请重新扫描。",
         "msg_no_srctype": "档案中无 %s 类型源。",
         "msg_src_unknown": "源「%s」不在档案的 %s 列表内，请重新扫描。",
         "msg_tc_bad": "时间格式须为 HH:MM:SS:FF，如 00:00:00:00。",
@@ -253,7 +273,9 @@ TEXTS = {
             "   启动 Pro Tools 并打开工程，确认 PTSL 在线后，点「扫描并生成档案」。\n"
             "   扫描只读、安全；成功后档案自动应用，无需再做其他操作。\n\n"
             "2. 导出（页签 2）\n"
-            "   选择导出模式与源（列表来自档案，不会猜错名字），\n"
+            "   勾选导出模式（可多选）：MIX 整段并轨 / BUS 总线分轨 /\n"
+            "   STEM 全部分轨 / 按轨道名称（从列表挑轨）。\n"
+            "   结束时间可点「按视频填入…」自动对齐视频长度。\n"
             "   点「预览导出计划」核对，再点「执行导出」。\n\n"
             "3. 校验\n"
             "   底部公式：时长 × 采样率 × 位深 ≈ WAV 字节数。\n\n"
@@ -327,20 +349,28 @@ TEXTS = {
 
         "e_profile": "Profile (pt-profile.json):",
         "e_browse": "Browse…",
-        "e_mode": "Export mode:",
-        "e_mode_mix": "Mix (one merged file)",
-        "e_mode_stems": "Stems (one WAV per bus)",
+        "e_mode": "Export mode (multi-select):",
+        "e_mode_mix": "MIX (merged)",
+        "e_mode_mix_tip": "one merged file of the main output",
+        "e_mode_stem": "STEM (all tracks)",
+        "e_mode_stem_tip": "one WAV per source track",
+        "e_mode_stem_aux": "include aux",
+        "e_mode_bus": "BUS (per bus)",
+        "e_mode_bus_tip": "one WAV per bus",
+        "e_mode_track": "By track name",
+        "e_mode_track_tip": "pick tracks from the list below",
         "e_session": "Session:",
         "e_sess_current": "Current",
         "e_sess_file": "File…",
-        "e_source_frame": "Source — list comes from the profile",
-        "e_stype": "Source type:",
+        "e_track_frame": "Track list — selectable when \"By track name\" is on",
+        "e_type_col": "Type",
         "e_search": "Search:",
         "e_selected": "%d selected",
         "e_name_col": "Name",
         "e_params": "Parameters",
         "e_start": "Start:",
         "e_end": "End:",
+        "e_fill_video": "Fill from video…",
         "e_tc_hint": "Format HH:MM:SS:FF",
         "e_sr": "Sample rate:",
         "e_bd": "Bit depth:",
@@ -349,6 +379,12 @@ TEXTS = {
         "e_preview": "Preview Plan",
         "e_export": "Export",
         "e_verify": "Check: duration × rate × depth ≈ WAV bytes",
+        "e_video_title": "Choose the session's video file",
+        "e_video_running": "[video] Reading video duration: %s\n",
+        "e_video_ok": "[video] Range filled from video: start 00:00:00:00 -> end %s\n",
+        "e_video_fail": "[video] Failed to read video duration: %s\n"
+                        "        MP4/MOV family (mvhd box) is supported; "
+                        "or type the end time manually.\n",
 
         "c_warn": ("⚠ Requires Pro Tools 2025.10+ (CId 146/147). Tested on "
                    "PT 25.6.1 it raises ErrType 133 — disabled until you upgrade."),
@@ -377,6 +413,7 @@ TEXTS = {
         "preview_pass": "[preview] Preview passed. Export is enabled until parameters change.\n",
         "cmd_done": "— Command finished, exit code %d —\n",
         "err_cmd_start": "[error] Cannot start command: %s\n",
+        "err_cmd_stop": "[error] Command %d failed — remaining %d skipped.\n",
 
         "skills_ok": "Skills root OK: %s",
         "err_root_missing": "Skills root does not exist: %s",
@@ -398,6 +435,10 @@ TEXTS = {
         "msg_invalid": "Invalid parameters",
         "msg_no_profile": "No profile loaded. Scan first or browse for pt-profile.json.",
         "msg_no_source": "Select at least one source.",
+        "msg_no_mode": "Select at least one export mode (MIX / BUS / STEM / By track name).",
+        "msg_no_track_sel": "\"By track name\" is on — pick tracks in the list below.",
+        "msg_no_output_src": "MIX is on but the profile has no output paths — re-scan first.",
+        "msg_no_bus_src": "BUS is on but the profile has no buses — re-scan first.",
         "msg_no_srctype": "Profile has no %s sources.",
         "msg_src_unknown": "Source \"%s\" is not in the profile's %s list. Re-scan.",
         "msg_tc_bad": "Time must be HH:MM:SS:FF, e.g. 00:00:00:00.",
@@ -430,8 +471,10 @@ TEXTS = {
             "   Start Pro Tools, open the session, check PTSL online, click \"Scan & Save Profile\".\n"
             "   Read-only and safe; the profile is applied automatically.\n\n"
             "2. Export (tab 2)\n"
-            "   Pick the mode and sources (list comes from the profile), click \"Preview Plan\",\n"
-            "   then \"Export\".\n\n"
+            "   Tick export modes (multi-select): MIX merged / BUS per bus /\n"
+            "   STEM all tracks / By track name (pick from the list).\n"
+            "   Use \"Fill from video…\" to align the end time with the video.\n"
+            "   Click \"Preview Plan\", then \"Export\".\n\n"
             "3. Verify\n"
             "   duration × rate × depth ≈ WAV bytes.\n\n"
             "FAQ\n"
@@ -604,31 +647,56 @@ def ptsl_online():
 # ---------------------------------------------------------------------------
 
 class CmdWorker(threading.Thread):
-    def __init__(self, cmd, out_queue):
+    """命令队列执行器：逐条 subprocess，全部输出进队列，失败即停。
+
+    v1.1.0：接受单条命令或命令列表（多导出模式一次勾选 → 多条命令顺序跑）。
+    每条之间发 ("step", i/n) 供日志分节；结束发 ("done", 汇总退出码)
+    ——任一条非零即停并以其退出码收场。
+    """
+
+    def __init__(self, cmds, out_queue):
         super().__init__(daemon=True)
-        self.cmd = cmd
+        if cmds and isinstance(cmds[0], str):
+            cmds = [cmds]  # 兼容单命令
+        self.cmds = cmds
         self.out_queue = out_queue
         self.proc = None
+        self.cancelled = False
 
     def run(self):
-        try:
-            self.proc = subprocess.Popen(
-                self.cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                creationflags=CREATE_NO_WINDOW,
-            )
-        except Exception as exc:  # 找不到 python 等
-            self.out_queue.put(("line", T("err_cmd_start") % exc))
-            self.out_queue.put(("done", 1))
-            return
-        for line in self.proc.stdout:
-            self.out_queue.put(("line", line))
-        self.proc.wait()
-        self.out_queue.put(("done", self.proc.returncode))
+        total = len(self.cmds)
+        rc = 0
+        for i, cmd in enumerate(self.cmds):
+            if self.cancelled:
+                break
+            if total > 1:
+                self.out_queue.put(("line",
+                                    "\n──── [%d/%d] ────\n" % (i + 1, total)))
+            try:
+                self.proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    encoding="utf-8",
+                    errors="replace",
+                    bufsize=1,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+            except Exception as exc:  # 找不到 python 等
+                self.out_queue.put(("line", T("err_cmd_start") % exc))
+                rc = 1
+                break
+            for line in self.proc.stdout:
+                self.out_queue.put(("line", line))
+            self.proc.wait()
+            if self.proc.returncode != 0:
+                rc = self.proc.returncode
+                if i < total - 1:
+                    self.out_queue.put((
+                        "line",
+                        T("err_cmd_stop") % (i + 1, total - i - 1)))
+                break
+        self.out_queue.put(("done", rc))
 
 
 # ---------------------------------------------------------------------------
@@ -661,6 +729,114 @@ def open_in_explorer(path):
         os.startfile(path)  # noqa  Windows only
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# 导出模式 → CLI 命令序列（v1.1.0 · 纯逻辑，GUI 与回归测试共用）
+# ---------------------------------------------------------------------------
+
+# 模式 → 子命令与来源
+#   MIX  : ExportMix 主输出（sources.output）整段并轨，1 个文件
+#   BUS  : ExportMix 全部总线（sources.bus），每条 1 个文件
+#   STEM : BounceTrack 全部轨道（--all-tracks），默认排除总线类轨 + 空轨；
+#          stem_aux=True 时改白名单（audio/aux/instrument/midi），含效果辅助轨
+#   TRACK: BounceTrack 指定轨道名（用户从档案轨道列表挑选）
+def build_export_cmds(venv_python, script_path, profile_path, profile, *,
+                      modes, stem_aux=False, tracks=(), session=None,
+                      out="", start="", end="", sample_rate="48000",
+                      bit_depth="24", fmt="mono", dry_run=False):
+    """按勾选的导出模式构造 CLI 命令列表（顺序 MIX → BUS → STEM → TRACK）。
+
+    壳不动芯：每条命令独立调一次 pt_export.py（各自连接 PTSL，顺序执行，
+    该链路已在批量编排中实测连续连接/导出可行）。校验失败抛 ValueError
+    （消息已本地化，GUI 直接弹框、测试直接断言）。
+    ⚠️ --profile 是全局参数，必须位于子命令之前（§8.3 老坑，勿挪）。
+    """
+    if not profile:
+        raise ValueError(T("msg_no_profile"))
+    modes = [m for m in EXPORT_MODES if m in (modes or [])]
+    if not modes:
+        raise ValueError(T("msg_no_mode"))
+
+    # 通用参数校验（时间 / 输出 / 采样率）
+    if not fmt_tc_ok(start) or not fmt_tc_ok(end):
+        raise ValueError(T("msg_tc_bad"))
+    try:
+        fps = float(str(profile["session"].get("timecode_rate") or "25").split()[0])
+    except (ValueError, TypeError, AttributeError):
+        fps = 25.0
+    if tc_to_frame(end, fps) <= tc_to_frame(start, fps):
+        raise ValueError(T("msg_end_le"))
+    if not (out or "").strip():
+        raise ValueError(T("msg_out_missing"))
+    try:
+        int(sample_rate)
+    except (TypeError, ValueError):
+        raise ValueError(T("msg_sr_bad"))
+
+    common = ["--out", out, "--start", start, "--end", end,
+              "--sample-rate", str(sample_rate), "--bit-depth", str(bit_depth),
+              "--format", fmt]
+    if session:
+        common += ["--session", session]
+    if dry_run:
+        common += ["--dry-run"]
+
+    srcs = profile.get("sources", {})
+    cmds = []
+    for m in modes:
+        if m == "mix":
+            outs = srcs.get("output") or []
+            if not outs:
+                raise ValueError(T("msg_no_output_src"))
+            cmd = [venv_python, script_path, "--profile", profile_path, "mix"]
+            for name in outs:
+                cmd += ["--source", name]
+            cmd += ["--source-type", "output"] + common
+        elif m == "bus":
+            buses = srcs.get("bus") or []
+            if not buses:
+                raise ValueError(T("msg_no_bus_src"))
+            cmd = [venv_python, script_path, "--profile", profile_path, "mix"]
+            for name in buses:
+                cmd += ["--source", name]
+            cmd += ["--source-type", "bus"] + common
+        elif m == "stem":
+            cmd = [venv_python, script_path, "--profile", profile_path,
+                   "stems", "--source-type", "track", "--all-tracks"]
+            if stem_aux:
+                # 含效果辅助轨：白名单模式（aux 进来，master/vca/folder 仍排除）
+                for t in ("audio", "aux", "instrument", "midi"):
+                    cmd += ["--track-type", t]
+            else:
+                cmd += ["--skip-buses"]
+            cmd += ["--exclude-empty"] + common
+        elif m == "track":
+            names = [t for t in (tracks or []) if t]
+            if not names:
+                raise ValueError(T("msg_no_track_sel"))
+            known = {t.get("name", "") for t in profile.get("tracks", [])}
+            for name in names:
+                if name not in known:
+                    raise ValueError(T("msg_src_unknown") % (name, "tracks"))
+            cmd = [venv_python, script_path, "--profile", profile_path,
+                   "stems", "--source-type", "track"]
+            for name in names:
+                cmd += ["--source", name]
+            cmd += common
+        else:  # pragma: no cover — EXPORT_MODES 已约束
+            raise ValueError("unknown mode: %s" % m)
+        cmds.append(cmd)
+    return cmds
+
+
+TC_OUT_RE = re.compile(r"->\s*(\d{2}:\d{2}:\d{2}:\d{2})")
+
+
+def parse_video_duration_output(text):
+    """从 video_duration.py 输出解析 HH:MM:SS:FF（取第一个 `-> TC`）；失败返回 None。"""
+    m = TC_OUT_RE.search(text or "")
+    return m.group(1) if m else None
 
 
 # ---------------------------------------------------------------------------
@@ -932,9 +1108,13 @@ class App(tk.Tk):
         self._refresh_gating()
         self.log(T("cmd_done") % returncode)
 
-    def start_worker(self, cmd):
-        self.log("> %s\n" % " ".join('"%s"' % c if " " in c else c for c in cmd))
-        w = CmdWorker(cmd, self.out_queue)
+    def start_worker(self, cmds):
+        """启动后台命令队列。cmds 可为单条命令（list[str]）或命令列表。"""
+        if cmds and isinstance(cmds[0], str):
+            cmds = [cmds]
+        for cmd in cmds:
+            self.log("> %s\n" % " ".join('"%s"' % c if " " in c else c for c in cmd))
+        w = CmdWorker(cmds, self.out_queue)
         self.workers.append(w)
         w.start()
         return w
@@ -1176,41 +1356,58 @@ class ExportTab(ttk.Frame):
         ttk.Button(row, text=T("e_browse"),
                    command=self._browse_profile).pack(side="left")
 
-        # -- 模式 / 工程
+        # -- 导出模式（v1.1.0 四模式多选：勾哪几个就按顺序导哪几路）
         row2 = ttk.Frame(self)
         row2.pack(fill="x", pady=(6, 0))
         ttk.Label(row2, text=T("e_mode")).pack(side="left")
-        self.mode_var = app.v("export_mode", "stems")
-        ttk.Radiobutton(row2, text=T("e_mode_mix"), value="mix",
-                        variable=self.mode_var).pack(side="left", padx=4)
-        ttk.Radiobutton(row2, text=T("e_mode_stems"), value="stems",
-                        variable=self.mode_var).pack(side="left", padx=4)
-        ttk.Label(row2, text="  " + T("e_session") + " ",
-                  foreground="#555").pack(side="left", padx=(16, 0))
+        # 勾选用 StringVar("1"/"0")：走 App._vars 快照，语言切换整窗重建不丢状态
+        self.mode_mix_var = app.v("mode_mix", "1")
+        self.mode_stem_var = app.v("mode_stem", "1")
+        self.stem_aux_var = app.v("stem_aux", "0")
+        self.mode_bus_var = app.v("mode_bus", "0")
+        self.mode_track_var = app.v("mode_track", "0")
+        self.cb_mix = ttk.Checkbutton(row2, text=T("e_mode_mix"),
+                                      variable=self.mode_mix_var,
+                                      onvalue="1", offvalue="0")
+        self.cb_stem = ttk.Checkbutton(row2, text=T("e_mode_stem"),
+                                       variable=self.mode_stem_var,
+                                       onvalue="1", offvalue="0")
+        self.cb_stem_aux = ttk.Checkbutton(row2, text=T("e_mode_stem_aux"),
+                                           variable=self.stem_aux_var,
+                                           onvalue="1", offvalue="0")
+        self.cb_bus = ttk.Checkbutton(row2, text=T("e_mode_bus"),
+                                      variable=self.mode_bus_var,
+                                      onvalue="1", offvalue="0")
+        self.cb_track = ttk.Checkbutton(row2, text=T("e_mode_track"),
+                                        variable=self.mode_track_var,
+                                        onvalue="1", offvalue="0")
+        for _w in (self.cb_mix, self.cb_stem, self.cb_stem_aux,
+                   self.cb_bus, self.cb_track):
+            _w.pack(side="left", padx=3)
+
+        # -- 工程
+        row2b = ttk.Frame(self)
+        row2b.pack(fill="x", pady=(4, 0))
+        ttk.Label(row2b, text=T("e_session"),
+                  foreground="#555").pack(side="left")
         self.sess_mode_var = app.v("sess_mode", "current")
-        ttk.Radiobutton(row2, text=T("e_sess_current"), value="current",
+        ttk.Radiobutton(row2b, text=T("e_sess_current"), value="current",
                         variable=self.sess_mode_var).pack(side="left")
-        ttk.Radiobutton(row2, text=T("e_sess_file"), value="file",
+        ttk.Radiobutton(row2b, text=T("e_sess_file"), value="file",
                         variable=self.sess_mode_var).pack(side="left")
         self.session_var = app.v("session_file", "")
-        ttk.Entry(row2, textvariable=self.session_var, width=22,
+        ttk.Entry(row2b, textvariable=self.session_var, width=40,
                   state="readonly").pack(side="left", padx=4)
-        ttk.Button(row2, text=T("e_browse"),
+        ttk.Button(row2b, text=T("e_browse"),
                    command=self._browse_session).pack(side="left")
 
-        # -- source
-        src = ttk.LabelFrame(self, text="  " + T("e_source_frame") + "  ", padding=6)
+        # -- 轨道列表（「按轨道名称」模式的选轨来源，来自档案，杜绝猜名）
+        src = ttk.LabelFrame(self, text="  " + T("e_track_frame") + "  ", padding=6)
         src.pack(fill="both", expand=True, pady=(8, 0))
         srow = ttk.Frame(src)
         srow.pack(fill="x")
-        ttk.Label(srow, text=T("e_stype")).pack(side="left")
-        self.stype_var = app.v("src_type", "bus")
-        self.stype_cb = ttk.Combobox(srow, textvariable=self.stype_var,
-                                     values=SOURCE_TYPES, state="readonly", width=14)
-        self.stype_cb.pack(side="left", padx=6)
-        self.stype_cb.bind("<<ComboboxSelected>>", lambda e: self._reload_sources())
-        ttk.Label(srow, text="  " + T("e_search") + " ",
-                  foreground="#555").pack(side="left", padx=(16, 0))
+        ttk.Label(srow, text=T("e_search") + " ",
+                  foreground="#555").pack(side="left")
         self.search_var = app.v("src_search", "")
         ttk.Entry(srow, textvariable=self.search_var, width=18).pack(side="left", padx=6)
         self.search_var.trace_add("write", lambda *a: self._reload_sources())
@@ -1218,10 +1415,12 @@ class ExportTab(ttk.Frame):
         ttk.Label(srow, textvariable=self.src_count_var,
                   foreground="#555").pack(side="right")
 
-        self.src_tree = ttk.Treeview(src, columns=("name",), show="headings",
+        self.src_tree = ttk.Treeview(src, columns=("name", "type"), show="headings",
                                      selectmode="extended", height=6)
         self.src_tree.heading("name", text=T("e_name_col"))
-        self.src_tree.column("name", width=440)
+        self.src_tree.heading("type", text=T("e_type_col"))
+        self.src_tree.column("name", width=360)
+        self.src_tree.column("type", width=90, anchor="center")
         sb = ttk.Scrollbar(src, command=self.src_tree.yview)
         self.src_tree.configure(yscrollcommand=sb.set)
         self.src_tree.pack(side="left", fill="both", expand=True, pady=(4, 0))
@@ -1239,7 +1438,9 @@ class ExportTab(ttk.Frame):
         ttk.Label(opt, text=T("e_end")).grid(row=0, column=2, sticky="w")
         self.end_var = app.v("end", "")
         ttk.Entry(opt, textvariable=self.end_var, width=14).grid(row=0, column=3, sticky="w", padx=4)
-        ttk.Label(opt, text="  " + T("e_tc_hint"), foreground="#888").grid(row=0, column=4, sticky="w")
+        ttk.Button(opt, text=T("e_fill_video"), width=12,
+                   command=self._fill_from_video).grid(row=0, column=4, sticky="w", padx=(4, 0))
+        ttk.Label(opt, text=T("e_tc_hint"), foreground="#888").grid(row=0, column=5, sticky="w")
 
         ttk.Label(opt, text=T("e_sr")).grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.sr_var = app.v("sample_rate", str(SAMPLE_RATES[0]))
@@ -1252,12 +1453,22 @@ class ExportTab(ttk.Frame):
         ttk.Label(opt, text=T("e_fmt")).grid(row=1, column=4, sticky="w", pady=(4, 0))
         self.fmt_var = app.v("format", "mono")
         ttk.Combobox(opt, textvariable=self.fmt_var, values=EXPORT_FORMATS,
-                     state="readonly", width=12).grid(row=2, column=1, sticky="w", padx=4)
+                     state="readonly", width=12).grid(row=1, column=5, sticky="w", padx=4, pady=(4, 0))
 
         ttk.Label(opt, text=T("e_out")).grid(row=2, column=0, sticky="w", pady=(4, 0))
         self.out_var = app.v("export_out", app.cfg.get("last_out_dir", ""))
-        ttk.Entry(opt, textvariable=self.out_var).grid(row=2, column=1, columnspan=3, sticky="we", padx=4, pady=(4, 0))
-        ttk.Button(opt, text=T("e_browse"), command=self._browse_out).grid(row=2, column=4, sticky="w", padx=4)
+        ttk.Entry(opt, textvariable=self.out_var).grid(row=2, column=1, columnspan=4, sticky="we", padx=4, pady=(4, 0))
+        ttk.Button(opt, text=T("e_browse"), command=self._browse_out).grid(row=2, column=5, sticky="w", padx=4)
+
+        # -- 参数变化联动：勾选联动 + 预览失效闸门（v1.1.0 补实装）
+        #    此前 UI 文案承诺「参数一变执行按钮熄灭」但从未比对签名——现绑定 trace 补齐
+        for _var in (self.mode_mix_var, self.mode_stem_var, self.stem_aux_var,
+                     self.mode_bus_var, self.mode_track_var,
+                     self.start_var, self.end_var, self.sr_var, self.bd_var,
+                     self.fmt_var, self.out_var, self.session_var,
+                     self.sess_mode_var, self.profile_var):
+            _var.trace_add("write", lambda *a: self._on_param_changed())
+        self._sync_mode_gating()
 
         # -- 操作按钮
         btnrow = ttk.Frame(self)
@@ -1304,25 +1515,55 @@ class ExportTab(ttk.Frame):
         self.refresh_buttons()
 
     def _reload_sources(self):
+        """档案轨道 → 列表（名称 + 类型）。v1.1.0 起列表只服务「按轨道名称」。"""
         self.src_tree.delete(*self.src_tree.get_children())
         if not self._profile:
             self._update_src_count()
             return
-        stype = self.stype_var.get()
-        names = self._profile.get("sources", {}).get(stype, []) or []
         q = self.search_var.get().strip().lower()
-        for name in names:
+        for t in self._profile.get("tracks", []):
+            name = t.get("name", "")
             if q and q not in name.lower():
                 continue
-            self.src_tree.insert("", "end", iid=name, values=(name,))
+            self.src_tree.insert("", "end", iid=name,
+                                 values=(name, t.get("type", "")))
         self._update_src_count()
 
     def _on_src_select(self, _evt=None):
         self._update_src_count()
+        self._invalidate_preview()
 
     def _update_src_count(self):
         n = len(self.src_tree.selection())
         self.src_count_var.set(T("e_selected") % n)
+
+    # ---------------- 模式联动与预览闸门 ----------------
+
+    def _mode_on(self, m):
+        return {"mix": self.mode_mix_var, "stem": self.mode_stem_var,
+                "bus": self.mode_bus_var,
+                "track": self.mode_track_var}[m].get() == "1"
+
+    def _sync_mode_gating(self):
+        """勾选联动：未勾「按轨道名称」时轨道列表禁选；未勾 STEM 时 aux 子项禁用。"""
+        track_on = self.mode_track_var.get() == "1"
+        stem_on = self.mode_stem_var.get() == "1"
+        try:
+            self.src_tree.state(["!disabled"] if track_on else ["disabled"])
+            self.cb_stem_aux.state(["!disabled"] if stem_on else ["disabled"])
+        except tk.TclError:
+            pass
+
+    def _on_param_changed(self):
+        self._sync_mode_gating()
+        self._invalidate_preview()
+
+    def _invalidate_preview(self):
+        """参数变化后使预览失效（执行按钮熄灭），需重新预览才能导出。"""
+        if self.preview_ok and self._param_signature() != self._preview_signature:
+            self.preview_ok = False
+            self._preview_signature = ""
+            self.refresh_buttons()
 
     # ---------------- 参数收集与校验 ----------------
 
@@ -1333,69 +1574,92 @@ class ExportTab(ttk.Frame):
     def _param_signature(self):
         return json.dumps({
             "profile": self._profile_path,
-            "mode": self.mode_var.get(),
-            "sources": self._selected_sources(),
-            "stype": self.stype_var.get(),
+            "modes": [m for m in EXPORT_MODES if self._mode_on(m)],
+            "stem_aux": self.stem_aux_var.get() == "1",
+            "tracks": self._selected_sources(),
             "start": self.start_var.get(),
             "end": self.end_var.get(),
             "sr": self.sr_var.get(),
             "bd": self.bd_var.get(),
             "fmt": self.fmt_var.get(),
             "out": self.out_var.get(),
-            "session": self.session_var.get(),
+            "session": self.session_var.get()
+                       if self.sess_mode_var.get() == "file" else "",
         }, ensure_ascii=False)
 
-    def _build_cmd(self, dry_run):
-        """构造 CLI 参数（--profile 必须在子命令前）。失败抛 ValueError"""
+    def _build_cmds(self, dry_run):
+        """构造 CLI 命令列表（--profile 必须在子命令前）。失败抛 ValueError。"""
         if not self._profile:
             raise ValueError(T("msg_no_profile"))
-        sources = self._selected_sources()
-        if not sources:
-            raise ValueError(T("msg_no_source"))
-        stype = self.stype_var.get()
-        for s in sources:
-            if stype not in self._profile.get("sources", {}):
-                raise ValueError(T("msg_no_srctype") % stype)
-            if s not in self._profile["sources"][stype]:
-                raise ValueError(T("msg_src_unknown") % (s, stype))
-        start = self.start_var.get().strip()
-        end = self.end_var.get().strip()
-        if not fmt_tc_ok(start) or not fmt_tc_ok(end):
-            raise ValueError(T("msg_tc_bad"))
-        fps = float(self._profile["session"].get("timecode_rate") or 25)
-        if tc_to_frame(end, fps) <= tc_to_frame(start, fps):
-            raise ValueError(T("msg_end_le"))
-        out = self.out_var.get().strip()
-        if not out:
-            raise ValueError(T("msg_out_missing"))
-        try:
-            int(self.sr_var.get())
-        except ValueError:
-            raise ValueError(T("msg_sr_bad"))
+        sess = None
         if self.sess_mode_var.get() == "file":
             sess = self.session_var.get().strip()
             if not sess:
                 raise ValueError(T("msg_sess_missing"))
-        else:
-            sess = None
+        return build_export_cmds(
+            self.app.resolver.venv_python,
+            self.app.resolver.script("pt-exporter"),
+            self._profile_path,
+            self._profile,
+            modes=[m for m in EXPORT_MODES if self._mode_on(m)],
+            stem_aux=self.stem_aux_var.get() == "1",
+            tracks=self._selected_sources()
+                    if self.mode_track_var.get() == "1" else [],
+            session=sess,
+            out=self.out_var.get().strip(),
+            start=self.start_var.get().strip(),
+            end=self.end_var.get().strip(),
+            sample_rate=self.sr_var.get(),
+            bit_depth=self.bd_var.get(),
+            fmt=self.fmt_var.get(),
+            dry_run=dry_run,
+        )
 
-        cmd = [self.app.resolver.venv_python,
-               self.app.resolver.script("pt-exporter"),
-               "--profile", self._profile_path,
-               self.mode_var.get()]
-        for s in sources:
-            cmd += ["--source", s]
-        cmd += ["--source-type", stype,
-                "--out", out,
-                "--start", start, "--end", end,
-                "--sample-rate", self.sr_var.get(),
-                "--bit-depth", self.bd_var.get(),
-                "--format", self.fmt_var.get()]
-        if sess:
-            cmd += ["--session", sess]
-        if dry_run:
-            cmd.append("--dry-run")
-        return cmd
+    # ---------------- 按视频填入时间范围 ----------------
+
+    def _fill_from_video(self):
+        """选视频文件 → video_duration.py 读时长 → 自动填 开始/结束。"""
+        if not self._profile:
+            messagebox.showerror(T("msg_missing"), T("msg_no_profile"))
+            return
+        path = filedialog.askopenfilename(
+            title=T("e_video_title"),
+            filetypes=[("Video", "*.mp4 *.mov *.m4v *.webm"), ("All", "*.*")])
+        if not path:
+            return
+        script = os.path.join(
+            os.path.dirname(self.app.resolver.script("pt-exporter")),
+            "video_duration.py")
+        if not os.path.isfile(script):
+            self.app.log(T("e_video_fail") % ("script missing: %s" % script))
+            return
+        self.app.log(T("e_video_running") % os.path.basename(path))
+        threading.Thread(target=self._video_worker, daemon=True,
+                         args=(script, path)).start()
+
+    def _video_worker(self, script, video):
+        """后台读视频时长（venv python 冷启动约 1~2 秒，不阻塞 UI）。"""
+        try:
+            p = subprocess.run(
+                [self.app.resolver.venv_python, script, video,
+                 "--profile", self._profile_path],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=60,
+                creationflags=CREATE_NO_WINDOW)
+            text = (p.stdout or "") + (p.stderr or "")
+        except Exception as exc:
+            text = str(exc)
+        tc = parse_video_duration_output(text)
+        self.app.after(0, lambda: self._video_apply(tc, text))
+
+    def _video_apply(self, tc, raw):
+        if not tc:
+            lines = [x for x in (raw or "").strip().splitlines() if x.strip()]
+            self.app.log(T("e_video_fail") % (lines[-1] if lines else "?"))
+            return
+        self.start_var.set("00:00:00:00")
+        self.end_var.set(tc)
+        self.app.log(T("e_video_ok") % tc)
 
     # ---------------- 操作 ----------------
 
@@ -1409,7 +1673,7 @@ class ExportTab(ttk.Frame):
 
     def do_preview(self):
         try:
-            cmd = self._build_cmd(dry_run=True)
+            cmds = self._build_cmds(dry_run=True)
         except ValueError as exc:
             messagebox.showerror(T("msg_invalid"), str(exc))
             return
@@ -1418,7 +1682,7 @@ class ExportTab(ttk.Frame):
         self.preview_ok = False
         self._preview_signature = ""
         self.app.log(T("preview_start"))
-        self.app.start_worker(cmd)
+        self.app.start_worker(cmds)
 
     def do_export(self):
         if not self.preview_ok:
@@ -1426,7 +1690,7 @@ class ExportTab(ttk.Frame):
                                    T("msg_preview_first_body"))
             return
         try:
-            cmd = self._build_cmd(dry_run=False)
+            cmds = self._build_cmds(dry_run=False)
         except ValueError as exc:
             messagebox.showerror(T("msg_invalid"), str(exc))
             return
@@ -1437,7 +1701,7 @@ class ExportTab(ttk.Frame):
             return
         self.busy = True
         self.refresh_buttons()
-        self.app.start_worker(cmd)
+        self.app.start_worker(cmds)
 
     def on_worker_done(self, returncode):
         if not self.busy:

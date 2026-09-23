@@ -22,10 +22,12 @@
 
 ```bash
 python tests/run_import_tests.py     # 15 个模块逐个 import
-python tests/test_core_logic.py      # 24 项核心逻辑（与 GUI 解耦的纯函数）
+python tests/test_core_logic.py      # 30 项核心逻辑（与 GUI 解耦的纯函数）
 python tests/test_wiring.py          # 5 项 GUI↔核心接线 + CmdWorker
 python tests/run_gui_smoke.py        # 4 个界面建窗即销毁
 python tests/test_jy_multitpl.py     # 剪映片段模式 + 多命名模板端到端（真实草稿）
+python tests/test_videoname.py       # 12 项剪映视频名解析 + 时间窗裁剪（纯逻辑）
+python tests/test_pt_modes.py        # 25 项 pt-tools 导出模式多选专项（纯逻辑 + 轻冒烟）
 ```
 
 **用哪个 python 起都可以。** `test_core_logic.py` / `test_wiring.py` 会在**本进程内**
@@ -80,9 +82,11 @@ Python 直接起也不会崩 —— 历史上这会以 `ModuleNotFoundError: tki
 |---|---|
 | `_common.py` | 公共模块：跨机路径解析 + `PASS/SKIP/FAIL/ERROR` 分级与汇总 + `ensure_tk()` 无 tkinter 时自愈重启 |
 | `run_import_tests.py` | 15 个模块逐个 import（缺可选依赖记 SKIP） |
-| `test_core_logic.py` | 24 项与 GUI 解耦的纯函数逻辑 |
+| `test_core_logic.py` | 30 项与 GUI 解耦的纯函数逻辑 |
 | `test_wiring.py` | GUI↔核心接线 + `CmdWorker` 真跑 subprocess（历史 bug 高发区） |
 | `run_gui_smoke.py` / `gui_smoke_one.py` | 4 个界面真实建窗 → 600ms 自动销毁（独立子进程 + 超时） |
 | `test_jy_multitpl.py` | 剪映片段模式 + 多命名模板端到端（真实草稿，只读） |
+| `test_videoname.py` | 12 项剪映视频名解析 + 时间窗裁剪 + 窗归属（纯逻辑） |
+| `test_pt_modes.py` | 25 项 pt-tools 导出模式专项：四模式命令构造 / 校验链 / 视频时长解析 / CmdWorker 队列 / 模式联动冒烟 |
 
 > **沙箱安全**：所有落盘动作都被限制在 `PT_TEST_TMP` 内；`_common.fresh()` 对越界路径直接拒绝，不会误删仓库或其他目录。
