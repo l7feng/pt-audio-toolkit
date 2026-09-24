@@ -495,6 +495,29 @@ def parse_pt_clips(json_path: Path, exclude: tuple = (),
         for nm, k in skipped_tracks:
             print(f"    - {nm}  (命中 '{k}')")
 
+    # v2.6.5（J7）：0 片段时给结构化诊断 —— 用户遇到的「预演 0 可用片段、
+    # 涉及素材 0 个」不能只留一句空结果，把原因按概率排序讲清楚。
+    if not rows:
+        print("[diag] 没有解析出任何可用片段，常见原因按顺序排查：")
+        if not d.get("tracks"):
+            print("  1) json 里没有 tracks 字段 —— 这可能是一份工程档案"
+                  "（pt-profile.json）而不是片段清单（pt-clips.json）。")
+            print("     请在 pt-tools 生成片段清单 / 交付包后，用那份 json 导入。")
+        else:
+            n_empty = sum(1 for t in d.get("tracks", []) if not t.get("clips"))
+            if skipped_tracks:
+                print("  1) 有片段的轨道全部命中排除名单（上方 [info] 已列出命中词）。"
+                      "可在导入页「排除名单」清空或修正后重试。")
+            if n_empty:
+                names = [t.get("name", "?")
+                         for t in d.get("tracks", []) if not t.get("clips")]
+                print("  2) %d 条轨道没有任何片段：%s%s"
+                      % (n_empty, "、".join(names[:8]),
+                         " …" if n_empty > 8 else ""))
+            if not skipped_tracks and not n_empty:
+                print("  2) 片段均因「找不到素材文件」被跳过（见上方 [warn] 行）——"
+                      "确认 json 同级 audio/ 目录或素材原路径是否在位。")
+
     fade_map = _collect_fades(d, fps, start_tc)
     for row in rows:
         f = fade_map.get((row["_pt_track"], row["start_ms"]))

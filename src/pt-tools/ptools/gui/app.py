@@ -37,6 +37,24 @@ from ptools.worker.runner import CmdWorker, ptsl_online
 # 主窗口
 # ---------------------------------------------------------------------------
 
+def center_on_parent(win, parent):
+    """v2.6.5（P2）：Toplevel 相对父窗居中。
+
+    旧版所有 Toplevel 都不设位置，tkinter 默认把它们摆在父窗左上角附近——
+    用户反馈「弹窗出现在导出模式的位置」正好盖住该区块。统一改为相对父窗居中。
+    """
+    try:
+        win.update_idletasks()
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        ww, wh = win.winfo_width(), win.winfo_height()
+        x = px + max(0, (pw - ww) // 2)
+        y = py + max(0, (ph - wh) // 2)
+        win.geometry("+%d+%d" % (x, y))
+    except Exception:
+        pass
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -547,6 +565,7 @@ class App(tk.Tk):
         t.insert("1.0", T("help_text"))
         t.configure(state="disabled")
         t.pack(fill="both", expand=True)
+        center_on_parent(win, self)
 
     def _show_about(self):
         win = tk.Toplevel(self)
@@ -557,6 +576,7 @@ class App(tk.Tk):
         t.insert("1.0", T("about_text"))
         t.configure(state="disabled")
         t.pack(fill="both", expand=True)
+        center_on_parent(win, self)
 
 
 # ---------------------------------------------------------------------------
@@ -1202,6 +1222,7 @@ class ExportTab(ttk.Frame):
         ttk.Button(btns, text=T("e_close"),
                    command=dlg.destroy).pack(side="right")
         lst.bind("<Double-1>", lambda _e: restore())
+        center_on_parent(dlg, self)
 
     def _on_track_click(self, event):
         """点击行切换勾选（点在「选」列或行任意处均可；滚动条除外）。
@@ -1524,6 +1545,7 @@ class ExportTab(ttk.Frame):
         ttk.Button(btns, text="Cancel",
                    command=dlg.destroy).pack(side="right", padx=6)
         tree.bind("<Double-1>", confirm)
+        center_on_parent(dlg, self)
         dlg.wait_window()
         return result["picked"]
 
@@ -1801,6 +1823,7 @@ class ExportTab(ttk.Frame):
         txt.pack(fill="both", expand=True, padx=10, pady=10)
         ttk.Button(dlg, text=T("e_close"),
                    command=dlg.destroy).pack(pady=(0, 10))
+        center_on_parent(dlg, self)
 
     # ---------------- 批量导出（v1.2.0）----------------
 
@@ -1826,6 +1849,7 @@ class BatchExportDialog(tk.Toplevel):
         self.transient(tab.winfo_toplevel())
         self.geometry("860x560")
         self.rows: dict = {}          # ptx -> {"videos": [...], "picked": None}
+        center_on_parent(self, tab)
 
         # -- 工程列表
         box = ttk.LabelFrame(self, text="  " + T("b_ptx_frame") + "  ", padding=6)

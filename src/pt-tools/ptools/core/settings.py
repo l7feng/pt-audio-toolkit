@@ -98,7 +98,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # v1.5.0（2026-09-24）：① W4 配置/日志迁 exe 旁（旧 %APPDATA% 首次运行自动复制）
 #   ② P1 PT 离线常驻黄条 ③ P2 导出后自动质检 wav ④ P3 档案库页 ⑤ P4 导出历史
 #   ⑥ W8 --batch CLI（jobs.json 夜间批量）⑦ 批量对话框可保存 jobs.json。
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.5.1"
 
 
 def build_date():

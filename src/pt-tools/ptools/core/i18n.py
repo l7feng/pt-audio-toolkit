@@ -254,11 +254,12 @@ TEXTS = {
                         "（会先终止本工具自己启动的子进程，不会影响 Pro Tools 本体）",
 
         # —— v1.3.0 导出格式语义（Q5）——
+        # v2.6.5（P2）：「单声道（会下混）」文案有理解障碍，改写为动作描述
         "e_fmt_col": "声道",
         "e_fmt_follow": "跟随全局",
-        "e_fmt_interleaved": "立体声/多声道（保留原宽度）",
-        "e_fmt_mono": "单声道（会下混）",
-        "e_fmt_multimono": "每声道独立文件",
+        "e_fmt_interleaved": "立体声/多声道 · 保留原宽度（每轨 1 个文件）",
+        "e_fmt_mono": "单声道文件 · 立体声轨会被合并降混",
+        "e_fmt_multimono": "多单声道 · 立体声拆成 L/R 两个文件",
         "e_fmt_hint": "「声道」不是声道数，而是 bounce 产物的文件组织方式；"
                       "实际宽度由 PT 工程里该轨/该输出的宽度决定。",
 
@@ -609,12 +610,12 @@ TEXTS = {
         "quit_confirm": "A task is running. Quit anyway?\n"
                         "(Child processes started by this tool are terminated; Pro Tools is not affected.)",
 
-        # v1.3.0 export format semantics (Q5)
+        # v1.3.0 export format semantics (Q5) — v2.6.5 (P2): clearer wording
         "e_fmt_col": "Channels",
         "e_fmt_follow": "Follow global",
-        "e_fmt_interleaved": "Interleaved (keep width)",
-        "e_fmt_mono": "Mono (downmix)",
-        "e_fmt_multimono": "One file per channel",
+        "e_fmt_interleaved": "Interleaved · keep width (1 file per track)",
+        "e_fmt_mono": "Mono files · stereo tracks get downmixed",
+        "e_fmt_multimono": "Multi-mono · stereo split into L/R files",
         "e_fmt_hint": "This is not a channel count but how the bounce is laid out into files; "
                       "the real width comes from the track/output in the Pro Tools session.",
 

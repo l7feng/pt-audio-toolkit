@@ -427,6 +427,10 @@ class ImportTab(BaseTab):
             print(f"\n数据源: {jp.name}")
             print(f"可用片段 {len(rows)} 个，涉及素材 "
                   f"{len({r['source'] for r in rows})} 个\n")
+            if not rows:
+                # v2.6.5（J7）：诊断细节由 parse_pt_clips 的 [diag] 段输出
+                print("（预演不写任何文件）")
+                return
             by_track = {}
             for r in rows:
                 by_track.setdefault(r["_pt_track"], []).append(r)

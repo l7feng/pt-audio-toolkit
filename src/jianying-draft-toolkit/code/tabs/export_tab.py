@@ -448,11 +448,21 @@ class ExportTab(BaseTab):
         state = "normal" if tracks else "disabled"
         # 分包依赖整轨（按视频区间切整轨），未勾整轨时置灰
         self.chk_split.configure(state=state)
-        for w in (self.entry_track_tpl, self.chk_aaf):
-            try:
-                w.configure(state=state)
-            except Exception:
-                pass
+        # v2.6.5（J2）：AAF 只配整轨/分包模式（AAF 描述完整时间线；纯片段模式
+        # 只有素材块、无法生成时间线语义的 AAF）。置灰时把原因写进文案，
+        # 不再让用户对着灰色复选框猜「为什么不能用了」。
+        try:
+            self.chk_aaf.configure(
+                state=state,
+                text=("同时导出 AAF（交给 Pro Tools 混音）" if tracks else
+                      "同时导出 AAF —— 需先勾选「整轨」模式"
+                      "（AAF 描述完整时间线，纯片段模式无法生成）"))
+        except Exception:
+            pass
+        try:
+            self.entry_track_tpl.configure(state=state)
+        except Exception:
+            pass
         # ⚠️ v2.6.2 真 bug 修复：下拉必须用 **readonly**，不能用 normal。
         #    旧版这里写 `state = "normal" if tracks else "disabled"`，把建控件时
         #    设的 readonly 覆盖掉 → 框里的字能删；删空后旧 `_read_spec()` 取首

@@ -40,7 +40,7 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox
 # v1.0.1（2026-09-24 · GUI 美化）：单页平铺 grid 重排为 6 区块 LabelFrame
 #   （路径 / 本批内容 / 命名规则 / 命名信息 / 选项 / 预览 / 日志），主按钮
 #   「建立文件夹」固定最右；控件与逻辑不变，纯布局调整。
-APP_VERSION = "1.1.0"  # F1 建立前预检（v1.1.0）
+APP_VERSION = "1.2.0"  # F2 按钮区固定 / F3 默认名「测试」/ F6 根名提取（v1.2.0）
 
 
 def build_date():
@@ -140,6 +140,24 @@ def detect_next_seq(output_root):
         if m:
             mx = max(mx, int(m.group(1)))
     return mx + 1
+
+
+def parse_project_root_name(dirname):
+    """F6（v2.6.5）：解析「序号-项目名{等级}_YYYYMMDD_用户名」形态的项目根名。
+
+    根文件夹是信息最全的命名源（用户反馈定案），形态示例：
+      15-测试D_20260925_7F  →  name=测试, level=D, date=20260925, user=7F
+    等级是结尾的单字母 A/B/C/D 时拆出，否则整体算项目名。
+    解析失败（形态不符）返回 None。
+    """
+    m = re.match(r"^\d+-(.+)_(\d{8})_(.+)$", (dirname or "").strip())
+    if not m:
+        return None
+    body, date_str, user = m.group(1).strip(), m.group(2), m.group(3).strip()
+    if len(body) > 1 and body[-1] in "ABCD":
+        return {"name": body[:-1], "level": body[-1],
+                "date": date_str, "user": user}
+    return {"name": body, "level": "", "date": date_str, "user": user}
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +346,8 @@ class App(tk.Tk):
         super().__init__()
         self.withdraw()  # 避免 exe 启动时的空白 tk 残窗
         self.title("PT 工程文件夹生成器 v%s (%s)" % (APP_VERSION, build_date()))
-        self._center_on_screen(800, 780)
+        self._center_on_screen(860, 860)
+        self.minsize(800, 620)   # F2（v2.6.5）：低于此高度按钮区可能被裁
         self.configure(padx=12, pady=12)
 
         self.template_default = r"D:\DAW-Project\00文件夹模板"
@@ -378,9 +397,13 @@ class App(tk.Tk):
         batch_f.pack(fill="x", pady=(0, 6))
         batch_f.columnconfigure(1, weight=1)
         ttk.Label(batch_f, text="项目名称").grid(row=0, column=0, sticky="w", pady=3)
-        self.var_name = tk.StringVar(value="誓言")
+        # F3（v2.6.5）：出厂默认改「测试」——不携带个人项目信息
+        self.var_name = tk.StringVar(value="测试")
         ttk.Entry(batch_f, textvariable=self.var_name).grid(
             row=0, column=1, columnspan=2, sticky="ew", padx=6)
+        # F6（v2.6.5）：一键从输出根最新的「数字前缀项目根」提取项目名/等级
+        ttk.Button(batch_f, text="从上次项目提取", width=14,
+                   command=self._infer_name_from_root).grid(row=0, column=3, padx=(6, 0))
         ttk.Label(batch_f, text="集数").grid(row=1, column=0, sticky="nw", pady=3)
         self.var_eps = tk.StringVar(value="1-10, 23, 38, 46-49")
         ttk.Entry(batch_f, textvariable=self.var_eps).grid(
@@ -467,25 +490,28 @@ class App(tk.Tk):
         ttk.Checkbutton(ptx_row, text="已存在项跳过(不覆盖)",
                         variable=self.var_skip).pack(side="left", padx=(18, 0))
 
-        # ====== ⑥ 预览 ======
-        prev_f = ttk.LabelFrame(f, text=" 预览（将建立的目录结构） ", padding=4)
-        prev_f.pack(fill="both", expand=True, pady=(0, 6))
-        self.preview = scrolledtext.ScrolledText(prev_f, height=11, state="disabled",
-                                                 font=("Consolas", 9))
-        self.preview.pack(fill="both", expand=True)
+        # ====== ⑥ 预览 / 按钮 / 日志 ======
+        # F2（v2.6.5）：旧顺序「预览(expand) → 按钮 → 日志」在 800×780 默认窗口下，
+        # 上方五个固定区块 + 11 行预览已占满窗口，按钮和日志被挤出可视区——
+        # 必须放大全屏才能点。现改为「日志、按钮先从底部预留（side=bottom），
+        # 预览最后 pack(expand) 吃剩余」：tkinter 空间不足时先压缩最后 pack 的
+        # 预览区，按钮永远可见。预览 11→7 行、日志 6→4 行进一步减压。
+        log_f = ttk.LabelFrame(f, text=" 日志 ", padding=4)
+        log_f.pack(side="bottom", fill="x")
+        self.log = scrolledtext.ScrolledText(log_f, height=4, state="disabled",
+                                             font=("Consolas", 9))
+        self.log.pack(fill="x")
 
-        # ====== 按钮（主操作在最右）======
         btn = ttk.Frame(f)
-        btn.pack(fill="x", pady=(0, 6))
+        btn.pack(side="bottom", fill="x", pady=(6, 0))
         ttk.Button(btn, text="建立文件夹", command=self._on_build).pack(side="right", padx=4)
         ttk.Button(btn, text="刷新预览", command=self._refresh_preview).pack(side="right", padx=4)
 
-        # ====== 日志 ======
-        log_f = ttk.LabelFrame(f, text=" 日志 ", padding=4)
-        log_f.pack(fill="x")
-        self.log = scrolledtext.ScrolledText(log_f, height=6, state="disabled",
-                                             font=("Consolas", 9))
-        self.log.pack(fill="x")
+        prev_f = ttk.LabelFrame(f, text=" 预览（将建立的目录结构） ", padding=4)
+        prev_f.pack(fill="both", expand=True, pady=(0, 6))
+        self.preview = scrolledtext.ScrolledText(prev_f, height=7, state="disabled",
+                                                 font=("Consolas", 9))
+        self.preview.pack(fill="both", expand=True)
 
         # 绑定实时预览
         for v in (self.var_eps, self.var_name, self.var_output, self.var_template,
@@ -515,6 +541,51 @@ class App(tk.Tk):
         x, y = (sw - w) // 2, (sh - h) // 2
         self.geometry("%dx%d+%d+%d" % (w, h, x, y))
 
+    def _infer_name_from_root(self):
+        """F6（v2.6.5）：从输出根下「序号最大」的项目根文件夹提取命名字段。
+
+        背景：项目名称清空时，集名/ptx 只剩集数（build_episode_name 的 name
+        段为空串）。用户定案「根文件夹信息最全」——本按钮把项目名/等级一键
+        取回并写回输入框（不静默代填、不动日期与用户名：新项目日期应随当天）。
+        """
+        out_root = self.var_output.get().strip()
+        if not out_root or not os.path.isdir(out_root):
+            messagebox.showwarning("无法提取", "输出路径不存在：%s" % (out_root or "（空）"))
+            return
+        best = None                     # (seq, dirname)
+        try:
+            entries = os.listdir(out_root)
+        except OSError as e:
+            messagebox.showwarning("无法提取", "输出目录不可读：%s" % e)
+            return
+        for n in entries:
+            if os.path.isdir(os.path.join(out_root, n)):
+                m = re.match(r"^(\d+)-", n)
+                if m:
+                    seq = int(m.group(1))
+                    if best is None or seq > best[0]:
+                        best = (seq, n)
+        if best is None:
+            messagebox.showinfo(
+                "无法提取",
+                "输出目录下没有「数字前缀-」形态的项目文件夹。\n"
+                "（期待形态如：15-测试D_20260925_7F）\n"
+                "请手动填写项目名称。")
+            return
+        parsed = parse_project_root_name(best[1])
+        if parsed is None:
+            messagebox.showwarning(
+                "解析失败",
+                "「%s」不符合命名规则（序号-项目名{等级}_日期_用户名）。\n"
+                "请手动填写项目名称。" % best[1])
+            return
+        self.var_name.set(parsed["name"])
+        if parsed["level"] in ("A", "B", "C", "D"):
+            self.var_level.set(parsed["level"])
+        self._log("已从「%s」提取：项目名=%s 等级=%s"
+                  "（日期/用户名保持当前值，可手动修改）"
+                  % (best[1], parsed["name"], parsed["level"] or "（无）"))
+
     def _compute(self):
         eps, errs = parse_episodes(self.var_eps.get())
         project_root, steps, warns, ep_names = plan_creation(
@@ -533,6 +604,10 @@ class App(tk.Tk):
         # 更新规则示例
         self.var_example.set("示例: %s" % os.path.basename(project_root))
         lines = []
+        if not self.var_name.get().strip():
+            # F6（v2.6.5）：项目名为空时集名/ptx 只剩集数，预览里给出醒目引导
+            lines.append("⚠ 项目名称为空 —— 集名/ptx 将只有集数。"
+                         "可点「从上次项目提取」自动填入，或手动填写。")
         lines.append("项目根: %s" % project_root)
         if errs:
             lines.append("⚠ 集数解析警告: %s" % "; ".join(errs))
