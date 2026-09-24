@@ -54,6 +54,44 @@ class ExportTab(BaseTab):
     def build(self):
         outer = self
 
+        # ── 输入源（v2.6.3 · 五.2 合并）──
+        # 旧版有**两处**输入入口：「导出配置」里的「剪映草稿目录」行 +
+        # v2.6.2 新加的「输入源」按钮框，功能高度重复、视觉上像两套系统。
+        # 现在合并为一个块：手填 / 浏览目录 / 选文件 / 拖拽 全走这里，
+        # 识别状态就地反馈。拖拽能力保留在代码层（主窗口转发 on_drop）。
+        src_box = ttk.LabelFrame(
+            outer, text="输入源（草稿根目录 / 单个草稿 / 草稿或音视频文件，也可直接拖进窗口）",
+            padding=8)
+        src_box.pack(fill="x", padx=8, pady=(0, 6))
+
+        self.var_input_dir = tk.StringVar(value=self.cfg.get("input_dir", ""))
+        src_row = ttk.Frame(src_box)
+        src_row.grid(row=0, column=0, columnspan=2, sticky="we", pady=2)
+        ttk.Label(src_row, text="剪映草稿目录").pack(side="left")
+        self.entry_input_dir = ttk.Entry(src_row, textvariable=self.var_input_dir)
+        self.entry_input_dir.pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Button(src_row, text="浏览目录…",
+                   command=self._browse_input_dir).pack(side="left", padx=2)
+        ttk.Button(src_row, text="选择文件…",
+                   command=self._pick_input_files).pack(side="left", padx=2)
+
+        src_row2 = ttk.Frame(src_box)
+        src_row2.grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 0))
+        ttk.Button(src_row2, text="清空", width=6,
+                   command=self._clear_dropped).pack(side="left")
+        ttk.Button(src_row2, text="重新识别", width=9,
+                   command=self._refresh_input_summary).pack(side="left", padx=(6, 0))
+        self.var_input_summary = tk.StringVar(value="")
+        ttk.Label(src_row2, textvariable=self.var_input_summary,
+                  foreground="#2a9").pack(side="left", padx=10)
+        ttk.Label(src_box,
+                  text="目录内容变化即自动识别；「选择文件…」可多选草稿 json / 音视频文件。",
+                  foreground="#888").grid(row=2, column=0, columnspan=2,
+                                          sticky="w", pady=(4, 0))
+        src_box.columnconfigure(0, weight=1)
+        # 目录内容变化即刷新识别结果（手填路径也生效，不只浏览按钮）
+        self.var_input_dir.trace_add("write", lambda *a: self._schedule_input_summary())
+
         # ── 导出模式（整轨 / 片段 可多选，同时勾选则一次导出两种产物）──
         mode_box = ttk.LabelFrame(
             outer, text="导出模式（可多选：同时勾选则一次导出「整轨 + 片段」）", padding=8)
@@ -108,27 +146,18 @@ class ExportTab(BaseTab):
         cfg_box = ttk.LabelFrame(outer, text="导出配置（片段模式）", padding=8)
         cfg_box.pack(fill="x", padx=8, pady=(0, 6))
 
-        # 草稿目录
-        self.var_input_dir = tk.StringVar(value=self.cfg.get("input_dir", ""))
-        self.path_row(cfg_box, 0, "剪映草稿目录", self.var_input_dir,
-                      self._browse_input_dir,
-                      "留空 = 自动定位剪映默认目录；可填草稿根目录，也可填单个草稿文件夹")
-        self.entry_input_dir = cfg_box.grid_slaves(row=0, column=1)[0]
-        # 目录内容变化即刷新识别结果（手填路径也生效，不只浏览按钮）
-        self.var_input_dir.trace_add("write", lambda *a: self._schedule_input_summary())
-
         # 输出目录
         self.var_output_dir = tk.StringVar(value=self.cfg.get("output_dir", ""))
-        self.path_row(cfg_box, 1, "输出目录（必填）", self.var_output_dir,
+        self.path_row(cfg_box, 0, "输出目录（必填）", self.var_output_dir,
                       lambda: self._pick_dir(self.var_output_dir),
                       "按 类型/素材 自动分目录")
         # 也可直接把文件夹拖到这个框里（v2.6.2 Q10）
-        self.entry_output_dir = cfg_box.grid_slaves(row=1, column=1)[0]
+        self.entry_output_dir = cfg_box.grid_slaves(row=0, column=1)[0]
 
         # 命名模板（多选：勾选多个 → 各生成一份输出）
-        ttk.Label(cfg_box, text="命名模板（可多选）").grid(row=2, column=0, sticky="nw", padx=4, pady=3)
+        ttk.Label(cfg_box, text="命名模板（可多选）").grid(row=1, column=0, sticky="nw", padx=4, pady=3)
         nt_frame = ttk.Frame(cfg_box)
-        nt_frame.grid(row=2, column=1, columnspan=3, sticky="we", padx=4, pady=3)
+        nt_frame.grid(row=1, column=1, columnspan=3, sticky="we", padx=4, pady=3)
         self._seed_templates()
         self.lb_templates = tk.Listbox(nt_frame, height=4, selectmode="extended",
                                        exportselection=0)
@@ -145,25 +174,25 @@ class ExportTab(BaseTab):
         self._fill_templates()
 
         # 格式 / 码率 / 重名
-        ttk.Label(cfg_box, text="音频格式").grid(row=3, column=0, sticky="w", padx=4, pady=3)
+        ttk.Label(cfg_box, text="音频格式").grid(row=2, column=0, sticky="w", padx=4, pady=3)
         self.var_format = tk.StringVar(value=self.cfg.get("audio_format", "mp3"))
         self.cb_format = ttk.Combobox(cfg_box, textvariable=self.var_format, values=("mp3", "wav"),
                                       width=10, state="readonly")
-        self.cb_format.grid(row=3, column=1, sticky="w", padx=4)
+        self.cb_format.grid(row=2, column=1, sticky="w", padx=4)
 
-        ttk.Label(cfg_box, text="码率 kbps").grid(row=3, column=1, sticky="e", padx=(24, 4))
+        ttk.Label(cfg_box, text="码率 kbps").grid(row=2, column=1, sticky="e", padx=(24, 4))
         self.var_bitrate = tk.StringVar(value=str(self.cfg.get("bitrate_kbps", 192)))
         self.cb_bitrate = ttk.Combobox(cfg_box, textvariable=self.var_bitrate,
                                        values=("128", "192", "256", "320"), width=8,
                                        state="readonly")
-        self.cb_bitrate.grid(row=3, column=2, sticky="w", padx=4)
+        self.cb_bitrate.grid(row=2, column=2, sticky="w", padx=4)
 
-        ttk.Label(cfg_box, text="重名策略").grid(row=3, column=2, sticky="e", padx=(24, 4))
+        ttk.Label(cfg_box, text="重名策略").grid(row=2, column=2, sticky="e", padx=(24, 4))
         self.var_conflict = tk.StringVar()
         # v2.6.2：旧版这里是纯英文的 rename/cover/skip
         ttk.Combobox(cfg_box, textvariable=self.var_conflict,
                      values=list(CONFLICT_LABEL_TO_KEY), width=20,
-                     state="readonly").grid(row=3, column=3, sticky="w", padx=4)
+                     state="readonly").grid(row=2, column=3, sticky="w", padx=4)
         self._set_conflict_display()
 
         # 开关
@@ -175,7 +204,7 @@ class ExportTab(BaseTab):
         self.var_split_video = tk.BooleanVar(
             value=bool(self.cfg.get("split_by_video", False)))
         row = ttk.Frame(cfg_box)
-        row.grid(row=4, column=0, columnspan=4, sticky="w", padx=4, pady=3)
+        row.grid(row=3, column=0, columnspan=4, sticky="w", padx=4, pady=3)
         self.chk_dedupe = ttk.Checkbutton(row, text="按内容去重", variable=self.var_dedupe)
         self.chk_dedupe.pack(side="left")
         ttk.Checkbutton(row, text="提取视频内嵌音轨",
@@ -191,38 +220,15 @@ class ExportTab(BaseTab):
                   text="分包时可用新占位符：{视频项目} {集数} {编号} {AiFX} {视频名}；"
                        "整轨命名另可用 {轨道类别}（MX/DX/SFX/AiFX 自动判定）；"
                        "视频名是纯数字或项目名超过 4 字时会弹窗请您补项目名。",
-                  foreground="#888").grid(row=6, column=0, columnspan=4, sticky="w",
+                  foreground="#888").grid(row=5, column=0, columnspan=4, sticky="w",
                                           padx=4, pady=(0, 4))
 
         # 备注
-        ttk.Label(cfg_box, text="备注文案").grid(row=5, column=0, sticky="w", padx=4, pady=3)
+        ttk.Label(cfg_box, text="备注文案").grid(row=4, column=0, sticky="w", padx=4, pady=3)
         self.var_remarks = tk.StringVar(value=self.cfg.get("remarks", ""))
         ttk.Entry(cfg_box, textvariable=self.var_remarks, width=66).grid(
-            row=5, column=1, columnspan=3, sticky="we", padx=4, pady=3)
+            row=4, column=1, columnspan=3, sticky="we", padx=4, pady=3)
         cfg_box.columnconfigure(1, weight=1)
-
-        # v2.6.2（Q10）：**取消拖拽区**。
-        #   ① 拖拽区占版面但拖进来的语义和「剪映草稿目录」重复；
-        #   ② 更严重的是 start_export 里 dropped_paths 恒优先，导致在上面
-        #      填/选的目录永远不生效 —— 看起来就是"只能靠拖拽读信息"。
-        # 现在只保留单一入口：上方「剪映草稿目录」+ 这里的选择按钮与即时反馈。
-        # 拖拽能力本身保留在代码层（on_drop 不删），需要时可随时加回。
-        src_box = ttk.LabelFrame(outer, text="输入源（与上方「剪映草稿目录」同一个入口）",
-                                 padding=8)
-        src_box.pack(fill="x", padx=8, pady=(0, 6))
-        src_btns = ttk.Frame(src_box)
-        src_btns.pack(fill="x")
-        ttk.Button(src_btns, text="选择草稿根目录 / 草稿文件夹…",
-                   command=self._browse_input_dir).pack(side="left", padx=4)
-        ttk.Button(src_btns, text="选择文件…",
-                   command=self._pick_input_files).pack(side="left", padx=4)
-        ttk.Button(src_btns, text="清空",
-                   command=self._clear_dropped).pack(side="left", padx=4)
-        ttk.Button(src_btns, text="重新识别", width=10,
-                   command=self._refresh_input_summary).pack(side="left", padx=(12, 0))
-        self.var_input_summary = tk.StringVar(value="")
-        ttk.Label(src_btns, textvariable=self.var_input_summary,
-                  foreground="#2a9").pack(side="left", padx=8)
 
         # 按钮
         btn_box = ttk.Frame(outer)
@@ -237,10 +243,10 @@ class ExportTab(BaseTab):
 
         # 日志
         self.make_log(outer, height=13,
-                      tip=("用法：① 填/选「剪映草稿目录」（下方会即时显示识别到几个草稿）"
+                      tip=("用法：① 填/选「输入源」（右侧会即时显示识别到几个草稿）"
                            "‣ ② 填输出目录 ‣ ③ 点开始导出。\n"
                            "本页功能完全独立，不需要 Pro Tools。\n"
-                           "· 该目录可填**草稿根目录**（自动向下找草稿），也可填**单个草稿文件夹**。\n"
+                           "· 目录可填**草稿根目录**（自动向下找草稿），也可填**单个草稿文件夹**。\n"
                         "产物按类型分组（v2.6.1）：\n"
                         "  · <草稿名>/<集名>/01-多条WAV/ —— 整轨模式（一条轨一个 WAV，等长对齐）\n"
                         "  · <草稿名>/<集名>/02-素材片段/ —— 片段模式\n"
@@ -299,7 +305,10 @@ class ExportTab(BaseTab):
         c = self.cfg
         self.var_input_dir.set(c.get("input_dir", ""))
         self.var_output_dir.set(c.get("output_dir", ""))
-        self.var_template.set(c.get("name_template", ""))
+        # ⚠️ v2.6.3 真 bug 修复：旧版这里引用 self.var_template.set(...)，
+        #    但该控件在 v1.2.0 改多选 Listbox 时已被删除 —— 菜单点
+        #    「重新载入配置 / 默认路径设置」会直接 AttributeError 崩溃。
+        #    name_template 由 collect() 从勾选模板派生，此处无需也不应回填。
         self.var_format.set(c.get("audio_format", "mp3"))
         self.var_bitrate.set(str(c.get("bitrate_kbps", 192)))
         self._set_conflict_display()
@@ -477,11 +486,6 @@ class ExportTab(BaseTab):
         p = self.ask_dir(initial=var.get())
         if p:
             var.set(p)
-
-    def _pick_input_dir(self):
-        p = self.ask_dir("选择文件夹（草稿目录 / 媒体目录）")
-        if p:
-            self._set_dropped([Path(p)])
 
     def _pick_input_files(self):
         from tkinter import filedialog

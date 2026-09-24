@@ -392,16 +392,21 @@ def gui_modes():
         # 出厂默认：MIX + STEM 勾选，BUS/TRACK 未勾
         assert tab._mode_on("mix") and tab._mode_on("stem"), "出厂默认勾选错误"
         assert not tab._mode_on("bus") and not tab._mode_on("track")
-        # 未勾「按轨道名称」→ 轨道列表禁选；未勾 STEM 的 aux 子项应可用（STEM 已勾）
-        assert "disabled" in tab.src_tree.state(), tab.src_tree.state()
+        # v1.2.0 勾选式选轨语义：STEM 或「按轨道名称」任一勾选 → 轨道列表可交互
+        # （STEM 勾选轨 = 只导勾选的；全不勾 = 全轨模式）。出厂默认 STEM 已勾
+        # → 列表与 aux 子项都应可用。⚠️ 旧断言写的是 v1.1.0 语义（TRACK 不勾
+        # 就禁用），v1.2.0 改勾选式后未同步；v2.6.2 轮无法带 tkinter 跑全量，
+        # 此项 FAIL 一直未暴露（2026-09-24 修正为现行语义）。
+        assert "disabled" not in tab.src_tree.state(), tab.src_tree.state()
         assert "disabled" not in tab.cb_stem_aux.state()
-        # 勾 TRACK → 列表启用；取消 STEM → aux 子项禁用
+        # STEM / TRACK 全不勾 → 列表与 aux 子项禁用；勾 TRACK → 列表恢复
+        tab.mode_stem_var.set("0")
+        assert "disabled" in tab.src_tree.state(), tab.src_tree.state()
+        assert "disabled" in tab.cb_stem_aux.state()
         tab.mode_track_var.set("1")
         assert "disabled" not in tab.src_tree.state()
-        tab.mode_stem_var.set("0")
-        assert "disabled" in tab.cb_stem_aux.state()
-        tab.mode_stem_var.set("1")
-        tab.mode_track_var.set("0")     # 复原联动测试的勾选，回到默认 MIX+STEM
+        tab.mode_track_var.set("0")
+        tab.mode_stem_var.set("1")      # 复原联动测试的勾选，回到默认 MIX+STEM
         # 无档案时 _build_cmds 报「未加载档案」
         try:
             tab._build_cmds(dry_run=True)

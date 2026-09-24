@@ -41,7 +41,10 @@ from typing import List, Optional, Tuple
 #        → v2.6.1 文件夹结构反转（<草稿名|集名>/01-多条WAV/ 而非 01-多条WAV/<草稿名>/<集名>/）
 #          + 素材片段去掉 audio/music 子目录 + render_name KeyError 循环移除未知字段后重新 format
 #          + 浏览按钮选中的目录走递归草稿识别（与拖拽一致）（09-23）
-APP_VERSION = "2.6.2"
+#        → v2.6.3 出厂默认路径收口到 Jianying-Backup（out/log/data/tmp/deliver/草稿库）
+#          + 导出页两个输入源合并为一块（五.2）+ 导入页草稿下拉跟随配置的草稿库
+#          + 修 apply_config 引用已删控件 var_template 的崩溃（09-24）
+APP_VERSION = "2.6.3"
 
 
 def app_build_date() -> str:

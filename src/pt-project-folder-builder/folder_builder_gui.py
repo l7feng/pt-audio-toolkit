@@ -37,7 +37,10 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox
 # 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），标题写 vX.Y.Z (YYYY-MM-DD)。
 # ⚠️ build_date() 在 pt-tools / jianying-draft-toolkit / rename-unify 各有一份
 #    逐字相同的实现（各工具独立打包、无共享模块），改动时四处需同步。
-APP_VERSION = "1.0.0"
+# v1.0.1（2026-09-24 · GUI 美化）：单页平铺 grid 重排为 6 区块 LabelFrame
+#   （路径 / 本批内容 / 命名规则 / 命名信息 / 选项 / 预览 / 日志），主按钮
+#   「建立文件夹」固定最右；控件与逻辑不变，纯布局调整。
+APP_VERSION = "1.0.1"
 
 
 def build_date():
@@ -236,7 +239,7 @@ class App(tk.Tk):
         super().__init__()
         self.withdraw()  # 避免 exe 启动时的空白 tk 残窗
         self.title("PT 工程文件夹生成器 v%s (%s)" % (APP_VERSION, build_date()))
-        self._center_on_screen(760, 720)
+        self._center_on_screen(800, 780)
         self.configure(padx=12, pady=12)
 
         self.template_default = r"D:\DAW-Project\00文件夹模板"
@@ -255,53 +258,71 @@ class App(tk.Tk):
         self.focus_force()
 
     # ----- 布局 -----
+    # v1.0.1（2026-09-24 · GUI 美化）：旧版全部控件挤在一个平铺 grid 里
+    # （路径 / 集数 / 选项 / 预览 / 日志混排，row 0-14 一路排下来），视觉上
+    # 分不清哪几行是一组的。现按功能分成 6 个区块，自上而下即操作顺序：
+    # 路径 → 本批内容 → 命名规则 → 命名信息 → 选项 → 预览 → 按钮 → 日志。
+    # 控件与变量名全部不变，只动布局。
     def _build_widgets(self):
-        f = ttk.Frame(self)
+        f = ttk.Frame(self, padding=4)
         f.pack(fill="both", expand=True)
 
-        # 模板路径
-        ttk.Label(f, text="模板路径").grid(row=0, column=0, sticky="w", pady=2)
+        # ====== ① 路径 ======
+        path_f = ttk.LabelFrame(f, text=" 路径 ", padding=8)
+        path_f.pack(fill="x", pady=(0, 6))
+        path_f.columnconfigure(1, weight=1)
+        ttk.Label(path_f, text="模板路径").grid(row=0, column=0, sticky="w", pady=3)
         self.var_template = tk.StringVar(value=self.template_default)
-        ttk.Entry(f, textvariable=self.var_template, width=56).grid(row=0, column=1, sticky="ew", padx=4)
-        ttk.Button(f, text="浏览", command=self._pick_template).grid(row=0, column=2)
-
-        # 输出路径
-        ttk.Label(f, text="输出路径").grid(row=1, column=0, sticky="w", pady=2)
+        ttk.Entry(path_f, textvariable=self.var_template).grid(
+            row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(path_f, text="浏览", width=8,
+                   command=self._pick_template).grid(row=0, column=2)
+        ttk.Label(path_f, text="输出路径").grid(row=1, column=0, sticky="w", pady=3)
         self.var_output = tk.StringVar(value=self.output_default)
-        ttk.Entry(f, textvariable=self.var_output, width=56).grid(row=1, column=1, sticky="ew", padx=4)
-        ttk.Button(f, text="浏览", command=self._pick_output).grid(row=1, column=2)
+        ttk.Entry(path_f, textvariable=self.var_output).grid(
+            row=1, column=1, sticky="ew", padx=6)
+        ttk.Button(path_f, text="浏览", width=8,
+                   command=self._pick_output).grid(row=1, column=2)
 
-        # 集数
-        ttk.Label(f, text="集数").grid(row=2, column=0, sticky="nw", pady=2)
-        self.var_eps = tk.StringVar(value="1-10, 23, 38, 46-49")
-        ttk.Entry(f, textvariable=self.var_eps, width=56).grid(row=2, column=1, sticky="ew", padx=4, columnspan=2)
-        ttk.Label(f, text="支持 逗号分隔 + 连字符区间，如 1-10, 23, 38, 46-49").grid(row=3, column=1, sticky="w", padx=4)
-
-        # 项目名称（对应命名里的「项目名」）
-        ttk.Label(f, text="项目名称").grid(row=4, column=0, sticky="w", pady=2)
+        # ====== ② 本批内容 ======
+        batch_f = ttk.LabelFrame(f, text=" 本批内容 ", padding=8)
+        batch_f.pack(fill="x", pady=(0, 6))
+        batch_f.columnconfigure(1, weight=1)
+        ttk.Label(batch_f, text="项目名称").grid(row=0, column=0, sticky="w", pady=3)
         self.var_name = tk.StringVar(value="誓言")
-        ttk.Entry(f, textvariable=self.var_name, width=56).grid(row=4, column=1, sticky="ew", padx=4, columnspan=2)
+        ttk.Entry(batch_f, textvariable=self.var_name).grid(
+            row=0, column=1, columnspan=2, sticky="ew", padx=6)
+        ttk.Label(batch_f, text="集数").grid(row=1, column=0, sticky="nw", pady=3)
+        self.var_eps = tk.StringVar(value="1-10, 23, 38, 46-49")
+        ttk.Entry(batch_f, textvariable=self.var_eps).grid(
+            row=1, column=1, columnspan=2, sticky="ew", padx=6)
+        ttk.Label(batch_f, text="支持 逗号分隔 + 连字符区间，如 1-10, 23, 38, 46-49",
+                  foreground="#888").grid(row=2, column=1, sticky="w", padx=6)
 
-        # ====== 命名规则（结构，固定默认）======
-        rule_f = ttk.LabelFrame(f, text="命名规则（结构，默认固定）")
-        rule_f.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(8, 2))
-        ttk.Label(rule_f, text="结构:  {序号} - {项目名}{等级} _ {日期} _ {用户名}").pack(anchor="w", padx=8, pady=(4, 0))
-        ttk.Label(rule_f, text="集数文件夹默认: 项目名+数字（如 睡父亲1）；可在下方「命名信息」切换").pack(anchor="w", padx=8, pady=(0, 2))
+        # ====== ③ 命名规则（结构，固定默认）======
+        rule_f = ttk.LabelFrame(f, text=" 命名规则（结构，默认固定） ", padding=6)
+        rule_f.pack(fill="x", pady=(0, 6))
+        ttk.Label(rule_f, text="结构:  {序号} - {项目名}{等级} _ {日期} _ {用户名}").pack(
+            anchor="w", padx=4)
+        ttk.Label(rule_f, text="集数文件夹默认: 项目名+数字（如 睡父亲1）；可在下方「命名信息」切换",
+                  foreground="#666").pack(anchor="w", padx=4)
         self.var_example = tk.StringVar(value="")
-        ttk.Label(rule_f, textvariable=self.var_example, foreground="#2a7").pack(anchor="w", padx=8, pady=(0, 6))
+        ttk.Label(rule_f, textvariable=self.var_example,
+                  foreground="#2a7").pack(anchor="w", padx=4, pady=(2, 0))
 
-        # ====== 命名信息（均可更改）======
-        info_f = ttk.LabelFrame(f, text="命名信息（均可更改）")
-        info_f.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(2, 4))
+        # ====== ④ 命名信息（均可更改）======
+        info_f = ttk.LabelFrame(f, text=" 命名信息（均可更改） ", padding=8)
+        info_f.pack(fill="x", pady=(0, 6))
         info_f.columnconfigure(1, weight=1)
 
         # 序号
-        ttk.Label(info_f, text="序号").grid(row=0, column=0, sticky="w", padx=8, pady=3)
+        ttk.Label(info_f, text="序号").grid(row=0, column=0, sticky="w", padx=4, pady=3)
         ttk.Entry(info_f, textvariable=self.var_seq, width=10).grid(row=0, column=1, sticky="w", padx=4)
-        ttk.Label(info_f, text="自动顺延（扫描输出目录下最大数字前缀 +1），可手动改").grid(row=0, column=2, sticky="w", padx=8)
+        ttk.Label(info_f, text="自动顺延（扫描输出目录下最大数字前缀 +1），可手动改",
+                  foreground="#888").grid(row=0, column=2, sticky="w", padx=8)
 
         # 等级（ABCD）
-        ttk.Label(info_f, text="等级").grid(row=1, column=0, sticky="w", padx=8, pady=3)
+        ttk.Label(info_f, text="等级").grid(row=1, column=0, sticky="w", padx=4, pady=3)
         level_row = ttk.Frame(info_f)
         level_row.grid(row=1, column=1, columnspan=2, sticky="w", padx=4)
         for lv in ("A", "B", "C", "D"):
@@ -309,17 +330,17 @@ class App(tk.Tk):
                             command=self._refresh_preview).pack(side="left", padx=6)
 
         # 日期
-        ttk.Label(info_f, text="日期").grid(row=2, column=0, sticky="w", padx=8, pady=3)
+        ttk.Label(info_f, text="日期").grid(row=2, column=0, sticky="w", padx=4, pady=3)
         self.var_date = tk.StringVar(value=self.date_str)
         ttk.Entry(info_f, textvariable=self.var_date, width=14).grid(row=2, column=1, sticky="w", padx=4)
-        ttk.Label(info_f, text="格式 YYYYMMDD").grid(row=2, column=2, sticky="w", padx=8)
+        ttk.Label(info_f, text="格式 YYYYMMDD", foreground="#888").grid(row=2, column=2, sticky="w", padx=8)
 
         # 用户名称
-        ttk.Label(info_f, text="用户名称").grid(row=3, column=0, sticky="w", padx=8, pady=3)
+        ttk.Label(info_f, text="用户名称").grid(row=3, column=0, sticky="w", padx=4, pady=3)
         ttk.Entry(info_f, textvariable=self.var_user, width=14).grid(row=3, column=1, sticky="w", padx=4)
 
         # 集数文件夹命名
-        ttk.Label(info_f, text="集数文件夹命名").grid(row=4, column=0, sticky="w", padx=8, pady=3)
+        ttk.Label(info_f, text="集数文件夹命名").grid(row=4, column=0, sticky="w", padx=4, pady=3)
         epname_row = ttk.Frame(info_f)
         epname_row.grid(row=4, column=1, columnspan=2, sticky="w", padx=4)
         ttk.Radiobutton(epname_row, text="纯数字", variable=self.var_ep_naming, value="num",
@@ -329,45 +350,53 @@ class App(tk.Tk):
         ttk.Radiobutton(epname_row, text="项目名+等级+数字", variable=self.var_ep_naming, value="name_level_num",
                         command=self._refresh_preview).pack(side="left", padx=6)
 
-        # 集数位置
-        ttk.Label(f, text="集数位置").grid(row=7, column=0, sticky="w", pady=2)
+        # ====== ⑤ 选项 ======
+        opt_f = ttk.LabelFrame(f, text=" 选项 ", padding=8)
+        opt_f.pack(fill="x", pady=(0, 6))
+        opt_f.columnconfigure(1, weight=1)
+
+        ttk.Label(opt_f, text="集数位置").grid(row=0, column=0, sticky="w", pady=3)
+        place_row = ttk.Frame(opt_f)
+        place_row.grid(row=0, column=1, columnspan=2, sticky="w", padx=4)
         self.var_placement = tk.StringVar(value="项目根")
-        ttk.Radiobutton(f, text="项目根（1/ 2/ ...）", variable=self.var_placement,
-                        value="项目根", command=self._refresh_preview).grid(row=7, column=1, sticky="w", padx=4)
-        ttk.Radiobutton(f, text="Project 子目录", variable=self.var_placement,
-                        value="Project子目录", command=self._refresh_preview).grid(row=7, column=2, sticky="w")
+        ttk.Radiobutton(place_row, text="项目根（1/ 2/ ...）", variable=self.var_placement,
+                        value="项目根", command=self._refresh_preview).pack(side="left", padx=6)
+        ttk.Radiobutton(place_row, text="Project 子目录", variable=self.var_placement,
+                        value="Project子目录", command=self._refresh_preview).pack(side="left", padx=6)
 
-        # ptx 处理
-        ttk.Label(f, text="模板 ptx").grid(row=8, column=0, sticky="w", pady=2)
+        ttk.Label(opt_f, text="模板 ptx").grid(row=1, column=0, sticky="w", pady=3)
+        ptx_row = ttk.Frame(opt_f)
+        ptx_row.grid(row=1, column=1, columnspan=2, sticky="w", padx=4)
         self.var_ptx = tk.StringVar(value="原样复制")
-        ttk.Radiobutton(f, text="原样复制", variable=self.var_ptx, value="原样复制",
-                        command=self._refresh_preview).grid(row=8, column=1, sticky="w", padx=4)
-        ttk.Radiobutton(f, text="重命名(项目名+集数)", variable=self.var_ptx, value="重命名",
-                        command=self._refresh_preview).grid(row=8, column=2, sticky="w")
-        ttk.Radiobutton(f, text="不复制(只建空文件夹)", variable=self.var_ptx, value="none",
-                        command=self._refresh_preview).grid(row=9, column=1, sticky="w", padx=4)
-
-        # 跳过已存在
+        ttk.Radiobutton(ptx_row, text="原样复制", variable=self.var_ptx, value="原样复制",
+                        command=self._refresh_preview).pack(side="left", padx=6)
+        ttk.Radiobutton(ptx_row, text="重命名(项目名+集数)", variable=self.var_ptx, value="重命名",
+                        command=self._refresh_preview).pack(side="left", padx=6)
+        ttk.Radiobutton(ptx_row, text="不复制(只建空文件夹)", variable=self.var_ptx, value="none",
+                        command=self._refresh_preview).pack(side="left", padx=6)
         self.var_skip = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f, text="已存在项跳过(不覆盖)", variable=self.var_skip).grid(row=9, column=2, sticky="w")
+        ttk.Checkbutton(ptx_row, text="已存在项跳过(不覆盖)",
+                        variable=self.var_skip).pack(side="left", padx=(18, 0))
 
-        # 预览
-        ttk.Label(f, text="预览（将建立的目录结构）").grid(row=10, column=0, sticky="w", pady=(8, 2))
-        self.preview = scrolledtext.ScrolledText(f, height=13, width=90, state="disabled")
-        self.preview.grid(row=11, column=0, columnspan=3, sticky="ew", pady=2)
+        # ====== ⑥ 预览 ======
+        prev_f = ttk.LabelFrame(f, text=" 预览（将建立的目录结构） ", padding=4)
+        prev_f.pack(fill="both", expand=True, pady=(0, 6))
+        self.preview = scrolledtext.ScrolledText(prev_f, height=11, state="disabled",
+                                                 font=("Consolas", 9))
+        self.preview.pack(fill="both", expand=True)
 
-        # 按钮
+        # ====== 按钮（主操作在最右）======
         btn = ttk.Frame(f)
-        btn.grid(row=12, column=0, columnspan=3, sticky="e", pady=(6, 0))
-        ttk.Button(btn, text="刷新预览", command=self._refresh_preview).pack(side="right", padx=4)
+        btn.pack(fill="x", pady=(0, 6))
         ttk.Button(btn, text="建立文件夹", command=self._on_build).pack(side="right", padx=4)
+        ttk.Button(btn, text="刷新预览", command=self._refresh_preview).pack(side="right", padx=4)
 
-        # 日志
-        ttk.Label(f, text="日志").grid(row=13, column=0, sticky="w", pady=(8, 2))
-        self.log = scrolledtext.ScrolledText(f, height=6, width=90, state="disabled")
-        self.log.grid(row=14, column=0, columnspan=3, sticky="ew")
-
-        f.columnconfigure(1, weight=1)
+        # ====== 日志 ======
+        log_f = ttk.LabelFrame(f, text=" 日志 ", padding=4)
+        log_f.pack(fill="x")
+        self.log = scrolledtext.ScrolledText(log_f, height=6, state="disabled",
+                                             font=("Consolas", 9))
+        self.log.pack(fill="x")
 
         # 绑定实时预览
         for v in (self.var_eps, self.var_name, self.var_output, self.var_template,

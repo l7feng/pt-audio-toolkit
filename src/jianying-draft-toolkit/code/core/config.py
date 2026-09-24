@@ -71,10 +71,13 @@ LEGACY_CONFIG_PATH: Path = SCRIPT_DIR / "config.json"
 
 
 # ──────────────────── 默认配置模板 ────────────────────
+# 出厂默认路径（2026-09-24 定稿，权威清单见知识库
+# 4-项目/12-pt-audio-toolkit仓库维护/06-2026-09-24-四工具默认路径总表.md）：
+# 统一收口到 D:/My-Temporary/Jianying-Backup/ 下的 Tools / Project 两个分区。
 
 DEFAULT_CONFIG = {
-    "input_dir": "",
-    "output_dir": "D:/My-Temporary/jianying-out/导出音频",
+    "input_dir": "D:/My-Temporary/Jianying-Backup/Project/JianyingPro Drafts",
+    "output_dir": "D:/My-Temporary/Jianying-Backup/Tools/out",
     "name_template": "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
     # ── 命名模板多选（2026-09-22 新增）──
     "name_templates": NAMING_PRESETS,                 # 命名模板库（候选清单，可增删）
@@ -85,7 +88,7 @@ DEFAULT_CONFIG = {
     "dedupe": True,
     "extract_video_tracks": True,
     "skip_existing": True,
-    "temp_dir": "",
+    "temp_dir": "D:/My-Temporary/Jianying-Backup/Tools/tmp",
     # ── 整轨 / AAF（2026-09-18 新增）──
     "export_mode": "tracks",                     # tracks=整轨（默认）| clips=片段
     "track_name_template": DEFAULT_TRACK_TEMPLATE,
@@ -101,8 +104,8 @@ DEFAULT_CONFIG = {
     "video_project_answers": {},                 # {视频素材名: 人类补的项目名}，记住后不再问
     # ── 导入页配置（与导出页完全独立，见 tabs/import_tab.py）──
     "import_json": "",
-    "import_draft_dir": "",
-    "import_pkg_out": "",
+    "import_draft_dir": "",    # 钉死单个目标草稿；默认空 = 每次在下拉里选（下拉列表走 input_dir 草稿库）
+    "import_pkg_out": "D:/My-Temporary/Jianying-Backup/Tools/deliver",
     "import_exclude": "",
     "import_keep_aux": False,
 }
@@ -118,7 +121,7 @@ DEFAULT_IMPORT_CONFIG = {
 
 # 配置字段说明（用于向导提示与诊断）
 CONFIG_FIELDS = {
-    "input_dir": ("剪映草稿输入目录", "留空 = 自动定位剪映默认草稿目录"),
+    "input_dir": ("剪映草稿目录", "出厂默认 = Jianying-Backup 草稿库；清空 = 自动定位剪映默认草稿目录"),
     "output_dir": ("音频输出目录（必填）", ""),
     "name_template": ("命名模板（主模板/兼容字段）", "{项目名}/{素材类型}/{序号:03d}/{原始名}/{日期}/{时长}/{备注}，示例 `{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s`"),
     "name_templates": ("命名模板库（多选）", "片段导出可用的命名模板清单，界面可增删"),
@@ -129,7 +132,7 @@ CONFIG_FIELDS = {
     "dedupe": ("内容去重", "true=启用（基于首 4KB 哈希）| false=关闭"),
     "extract_video_tracks": ("提取视频内嵌音轨", "true=启用（方案扩展场景）| false=仅独立音频轨道"),
     "skip_existing": ("断点续跑", "true=跳过已处理草稿 | false=每次全量"),
-    "temp_dir": ("临时目录", "留空 = 数据目录/tmp（数据目录也空则 输出目录/.tmp）"),
+    "temp_dir": ("临时目录", "出厂默认 = Tools/tmp；留空 = 数据目录/tmp（数据目录也空则 输出目录/.tmp）"),
     "log_dir": ("导出日志目录", "导出日志.log 的落点；留空 = 输出目录根"),
     "data_dir": ("运行数据目录", "processed_drafts.txt（断点续跑）/tmp 临时文件落点；留空 = 输出目录根"),
 }

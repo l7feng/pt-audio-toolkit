@@ -229,7 +229,20 @@ class BaseTab(ttk.Frame):
 
 
 def default_draft_root() -> Path:
-    """剪映默认草稿根目录。"""
+    """剪映草稿根目录：优先用配置里设置的草稿目录（input_dir，存在即用），
+    否则回落自动定位（AppData 剪映默认位置）。
+
+    v2.6.3：出厂默认草稿库迁到 Jianying-Backup 后，**导入页的草稿下拉
+    也必须列新库** —— 旧版写死 DEFAULT_JIANYING_DRAFT_ROOT，配置里
+    改了草稿目录对导入页完全不生效，两页看到的草稿库不一致。
+    """
+    try:
+        disk = core.load_config(core.config_path()) or {}
+        p = Path(str(disk.get("input_dir", "") or "").strip())
+        if p.is_dir():
+            return p
+    except Exception:
+        pass
     return core.DEFAULT_JIANYING_DRAFT_ROOT
 
 

@@ -40,6 +40,13 @@ PTSL_PORT = 31416
 DEFAULT_SKILLS_ROOT = r"D:\Ai-Files\Agent-Preset\Skills\protools-skills"
 ENV_SKILLS_ROOT = "PTOOLS_SKILLS_ROOT"
 
+# 出厂默认路径（2026-09-24 定稿；权威清单见知识库
+# 4-项目/12-pt-audio-toolkit仓库维护/06-2026-09-24-四工具默认路径总表.md）：
+#   · 档案（pt-profile.json）平铺存 json 目录，扫描完自动命名 <工程名>-pt-profile.json
+#   · 导出产物统一落 out 目录
+DEFAULT_PROFILE_DIR = r"D:\My-Temporary\PT-Tools-Backup\json"
+DEFAULT_OUT_ROOT = r"D:\My-Temporary\PT-Tools-Backup\out"
+
 APP_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
                        "pt-tools")
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
@@ -87,7 +94,11 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # ⚠️ build_date() 在 pt-project-folder-builder / jianying-draft-toolkit /
 #    rename-unify 各有一份逐字相同的实现（各工具独立打包、无共享模块），
 #    改动时四处需同步。
-APP_VERSION = "1.3.0"
+# v1.4.0（2026-09-24）：① 建档/档案/输出默认路径收口（profile_dir=json 目录、
+#   last_out_dir=out 目录，_migrate_cfg 2→3 只补缺不覆盖）② 档案平铺存放，
+#   扫描完自动改名 <工程名>-pt-profile.json ③「指定文件」模式预填档案里的
+#   .ptx 路径、浏览框默认开其父级 ④ 输出/建档目录不存在时现建。
+APP_VERSION = "1.4.0"
 
 
 def build_date():
@@ -766,6 +777,10 @@ def load_config():
     cfg.setdefault("last_profile", "")
     cfg.setdefault("last_out_dir", "")
     cfg.setdefault("lang", detect_system_lang())
+    # v1.4.0：档案目录 / 输出根的出厂默认（老配置缺键时补，不覆盖已设值）
+    cfg.setdefault("profile_dir", DEFAULT_PROFILE_DIR)
+    if not str(cfg.get("last_out_dir") or "").strip():
+        cfg["last_out_dir"] = DEFAULT_OUT_ROOT
     _migrate_cfg(cfg)
     return cfg
 
@@ -778,18 +793,26 @@ def _migrate_cfg(cfg):
       ② video_margin：旧默认 240s，每条片子都被加 4 分钟尾巴 → 0
       ③ fallback_duration：旧默认 240s，没检出视频时**假装片子 4 分钟**
         （6 分钟的片会被悄悄截断）→ 60
-    用户若手工改过这些值（不等于旧默认值），一律保留，不覆盖。
+    v1.4.0（cfg_version 2 → 3）默认路径收口：
+      ④ profile_dir 缺省 → PT-Tools-Backup/json（建档输出 + 档案浏览默认目录）
+      ⑤ last_out_dir 为空 → PT-Tools-Backup/out
+    用户若手工改过这些值，一律保留，不覆盖。
     """
     ver = int(cfg.get("cfg_version") or 0)
-    if ver >= 2:
+    if ver >= 3:
         return
-    if cfg.get("format") in (None, "", "mono"):
-        cfg["format"] = DEFAULT_EXPORT_FORMAT
-    if _as_int(cfg.get("video_margin")) in (None, 240):
-        cfg["video_margin"] = DEFAULT_VIDEO_MARGIN
-    if _as_int(cfg.get("fallback_duration")) in (None, 240):
-        cfg["fallback_duration"] = DEFAULT_FALLBACK_DURATION
-    cfg["cfg_version"] = 2
+    if ver < 2:
+        if cfg.get("format") in (None, "", "mono"):
+            cfg["format"] = DEFAULT_EXPORT_FORMAT
+        if _as_int(cfg.get("video_margin")) in (None, 240):
+            cfg["video_margin"] = DEFAULT_VIDEO_MARGIN
+        if _as_int(cfg.get("fallback_duration")) in (None, 240):
+            cfg["fallback_duration"] = DEFAULT_FALLBACK_DURATION
+    if not str(cfg.get("profile_dir") or "").strip():
+        cfg["profile_dir"] = DEFAULT_PROFILE_DIR
+    if not str(cfg.get("last_out_dir") or "").strip():
+        cfg["last_out_dir"] = DEFAULT_OUT_ROOT
+    cfg["cfg_version"] = 3
 
 
 def _as_int(v):
@@ -1784,10 +1807,13 @@ class ScanTab(ttk.Frame):
         ttk.Label(steps, text=T("s_step3"), foreground="#555").pack(anchor="w", pady=(2, 0))
 
         # —— 输出目录 / 档案名 / 扫描按钮 ——
+        # v1.4.0：建档输出默认走 profile_dir（PT-Tools-Backup/json），不再与
+        # 导出输出共用 last_out_dir —— 两个落点语义不同，混用一个值会互相带偏。
         row = ttk.Frame(self)
         row.pack(fill="x", pady=(0, 6))
         ttk.Label(row, text=T("s_out")).pack(side="left")
-        self.out_var = app.v("scan_out", app.cfg.get("last_out_dir", ""))
+        self.out_var = app.v("scan_out",
+                             app.cfg.get("profile_dir") or app.cfg.get("last_out_dir", ""))
         ttk.Entry(row, textvariable=self.out_var, width=44).pack(side="left", padx=6)
         ttk.Button(row, text=T("s_browse"), command=self._browse_out,
                    width=10).pack(side="left")
@@ -1817,7 +1843,8 @@ class ScanTab(ttk.Frame):
             initialdir=self.out_var.get() or None)
         if chosen:
             self.out_var.set(chosen)
-            self.app.cfg["last_out_dir"] = chosen
+            # 建档目录单独记忆（profile_dir），不与导出输出（last_out_dir）混用
+            self.app.cfg["profile_dir"] = chosen
             save_config(self.app.cfg)
 
     def set_ptsl(self, on):
@@ -1840,6 +1867,12 @@ class ScanTab(ttk.Frame):
         if not name.endswith(".json"):
             messagebox.showerror(T("msg_invalid"), T("s_bad_name"))
             return
+        # v1.4.0：建档目录不存在就现建，别等扫描器写文件时才报错
+        try:
+            os.makedirs(out, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror(T("msg_invalid"), str(exc))
+            return
         cmd = [self.app.resolver.venv_python,
                self.app.resolver.script("pt-scanner"),
                "--out", out, "--name", name]
@@ -1852,13 +1885,44 @@ class ScanTab(ttk.Frame):
             return
         self.busy = False
         if returncode == 0:
-            path = os.path.join(self.out_var.get().strip(),
-                                self.name_var.get().strip())
+            out = self.out_var.get().strip()
+            path = os.path.join(out, self.name_var.get().strip())
+            # v1.4.0：平铺档案按工程名自动命名（用户拍板方案 B）
+            path = self._rename_by_session(out, path)
             self.last_profile_path = path
             self._show_summary(path)
             if self.app.apply_profile(path):
                 self.app.log(T("s_auto_applied") % path)
         self.refresh_buttons()
+
+    def _rename_by_session(self, out_dir, path):
+        """v1.4.0：扫描完成后把档案改名成 `<工程名>-pt-profile.json`。
+
+        档案存放方式（2026-09-24 拍板）：**平铺 + 文件名区分**，不建
+        per-project 文件夹 —— pt-profile.json 是自包含单文件，平铺后
+        「浏览档案」一眼看全所有工程，按名排序即按工程分组。
+        工程名取自扫描结果 session.name（非法文件名字符清洗为下划线）；
+        同名重扫直接覆盖（同一工程刷新档案）；改名失败不阻断流程，
+        保留原文件名照常加载。
+        """
+        try:
+            data = load_profile(path)
+            name = ((data.get("session") or {}).get("name") or "").strip()
+        except Exception:
+            return path
+        if not name:
+            return path
+        safe = re.sub(r'[\\/:*?"<>|]+', "_", name).strip(" .") or "pt-profile"
+        target = os.path.join(out_dir, "%s-pt-profile.json" % safe)
+        try:
+            if os.path.abspath(target) != os.path.abspath(path):
+                if os.path.exists(target):
+                    os.remove(target)
+                os.rename(path, target)
+            self.name_var.set(os.path.basename(target))
+            return target
+        except OSError:
+            return path
 
     def _show_summary(self, path):
         try:
@@ -1947,9 +2011,11 @@ class ExportTab(ttk.Frame):
                   foreground="#555").pack(side="left")
         self.sess_mode_var = app.v("sess_mode", "current")
         ttk.Radiobutton(row2b, text=T("e_sess_current"), value="current",
-                        variable=self.sess_mode_var).pack(side="left")
+                        variable=self.sess_mode_var,
+                        command=self._on_sess_mode_change).pack(side="left")
         ttk.Radiobutton(row2b, text=T("e_sess_file"), value="file",
-                        variable=self.sess_mode_var).pack(side="left")
+                        variable=self.sess_mode_var,
+                        command=self._on_sess_mode_change).pack(side="left")
         self.session_var = app.v("session_file", "")
         ttk.Entry(row2b, textvariable=self.session_var, width=40,
                   state="readonly").pack(side="left", padx=4)
@@ -2132,10 +2198,14 @@ class ExportTab(ttk.Frame):
     # ---------------- 档案与数据 ----------------
 
     def _browse_profile(self):
+        # v1.4.0：没加载过档案时，默认打开建档输出目录（profile_dir），
+        # 而不是系统「最近的」某个无关目录 —— 档案就该在档案库里找。
+        initial = os.path.dirname(self.profile_var.get()) if self.profile_var.get() \
+            else (self.app.cfg.get("profile_dir") or None)
         path = filedialog.askopenfilename(
             title=T("choose_profile_title"),
             filetypes=[("JSON", "*.json")],
-            initialdir=os.path.dirname(self.profile_var.get()) if self.profile_var.get() else None)
+            initialdir=initial or None)
         if path:
             self._load_profile(path)
 
@@ -2158,6 +2228,13 @@ class ExportTab(ttk.Frame):
         sr = sess.get("sample_rate")
         if sr and str(sr) in [str(x) for x in SAMPLE_RATES]:
             self.sr_var.set(str(sr))
+        # v1.4.0（Q·指定文件默认父级）：档案里记着扫描时的 .ptx 路径（= PT 当前
+        # 打开的工程）。此刻若处于「指定文件」模式且框是空的，直接预填它 ——
+        # 点「浏览」也会默认开在其父级目录，不用每次手翻。
+        if self.sess_mode_var.get() == "file" and not self.session_var.get().strip():
+            sp = (sess.get("path") or "").strip()
+            if sp:
+                self.session_var.set(sp)
         self._reload_sources()
         self.refresh_buttons()
 
@@ -2456,6 +2533,14 @@ class ExportTab(ttk.Frame):
             sess = self.session_var.get().strip()
             if not sess:
                 raise ValueError(T("msg_sess_missing"))
+        # v1.4.0：输出目录不存在就现建（出厂默认 PT-Tools-Backup/out 首次
+        # 使用时还没有实体目录），别等 exporter 写文件时才失败。
+        out_dir = self._resolve_out_dir()
+        if out_dir:
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+            except OSError as exc:
+                raise ValueError(T("msg_out_missing") + "\n%s\n%s" % (out_dir, exc))
         stem_on = self.mode_stem_var.get() == "1"
         track_on = self.mode_track_var.get() == "1"
         picked = self._selected_sources()
@@ -2471,7 +2556,7 @@ class ExportTab(ttk.Frame):
             stem_tracks=picked if (stem_on and picked) else [],
             exclude_names=self._exclude_pats,
             session=sess,
-            out=self._resolve_out_dir(),
+            out=out_dir,
             start=self.start_var.get().strip(),
             end=self.end_var.get().strip(),
             sample_rate=self.sr_var.get(),
@@ -2764,11 +2849,33 @@ class ExportTab(ttk.Frame):
             save_config(self.app.cfg)
 
     def _browse_session(self):
+        # v1.4.0：浏览框默认开在「当前工程 .ptx 的父级目录」——
+        # 优先取框里已填路径的目录，其次取档案里记录的 session.path（PT
+        # 当前打开的工程）所在目录，都不存在才走系统默认。
+        initial = ""
+        cur = self.session_var.get().strip()
+        if cur:
+            initial = os.path.dirname(cur)
+        else:
+            sp = ((self._profile or {}).get("session") or {}).get("path") or ""
+            if sp:
+                initial = os.path.dirname(sp)
         chosen = filedialog.askopenfilename(
             title=T("choose_ptx_title"),
-            filetypes=[("Pro Tools Session", "*.ptx"), ("All", "*.*")])
+            filetypes=[("Pro Tools Session", "*.ptx"), ("All", "*.*")],
+            initialdir=initial or None)
         if chosen:
             self.session_var.set(chosen)
+
+    def _on_sess_mode_change(self):
+        """v1.4.0：切到「指定文件」模式时预填当前工程的 .ptx 路径。
+
+        档案里的 session.path 就是扫描时 PT 打开的工程；预填后用户看到
+        的是完整默认值，要换工程点浏览（默认开在其父级）即可。"""
+        if self.sess_mode_var.get() == "file" and not self.session_var.get().strip():
+            sp = ((self._profile or {}).get("session") or {}).get("path") or ""
+            if sp:
+                self.session_var.set(sp)
 
     # ---------------- 输出目录锁定 / 落盘预览（v1.3.0 · Q3 Q6）----------------
 

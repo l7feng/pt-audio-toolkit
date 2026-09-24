@@ -7,6 +7,7 @@
 
 | 仓库版本 | 日期 | 工具版本（pt-tools / folder-builder / jianying / rename-unify） | 要点 |
 |---|---|---|---|
+| **2.6.3** | 2026-09-24 | **1.4.0** / **1.0.1** / **2.6.3** / 1.3.0 | 四工具出厂默认路径收口（Jianying-Backup / PT-Tools-Backup）· pt-tools 档案平铺自动命名 · 指定工程文件预填父级 · 剪映导出页输入源合并 · folder-builder 界面分区重排 · 修 apply_config 崩溃 |
 | **2.6.2** | 2026-09-24 | **1.3.0** / 1.0.0 / **2.6.2** / 1.3.0 | 13 项报障修复：批量导出可中止（修卡死）· 默认不再静默下混 · 逐轨声道 · 剔除空轨可撤回 · 路径锁定与预览 · 视频候选链 · 剪映下拉只读化与去英文 |
 | **1.4.0** | 2026-09-23 | **1.1.0** / 1.0.0 / 2.5.1 / 1.3.1 | pt-tools 导出模式多选改造（MIX/BUS/STEM/按轨道名称）+ 按视频填入时间范围 |
 | **1.3.1** | 2026-09-23 | 1.0.0 / 1.0.0 / 2.5.1 / **1.3.1** | Demo 无集数工程识别（用户报障修复） |
@@ -19,6 +20,56 @@
 > ⚠️ 登记断档说明：**1.5.0 → 2.6.1 期间仓库版本直接沿用 jianying 的工具版本号带飞**，
 > 本表未逐条登记（可从 `git log` 回溯：`68b890c feat(v1.5.0)`、`3f40f29 v2.6.1`）。
 > 自 **2.6.2** 起恢复逐版登记，历史不补写、不臆造。
+
+---
+
+## 2.6.3 — 2026-09-24
+
+**出厂默认路径收口 + 输入源合并 + GUI 整理**。需求来自用户当日清单（四工具默认路径 /
+档案存放方式 / 两个输入源合并 / GUI 美化）；路径权威清单入库知识库
+`06-2026-09-24-四工具默认路径总表.md`。
+
+### 默认路径（出厂值，四工具）
+
+- **jianying-draft-toolkit 2.6.3**：`input_dir` → `D:\My-Temporary\Jianying-Backup\Project\JianyingPro Drafts`、
+  `output_dir` → `...\Tools\out`、`temp_dir` → `...\Tools\tmp`、
+  `import_pkg_out` → `...\Tools\deliver`（log_dir / data_dir v2.6.0 起已在新位置，不变；
+  `import_draft_dir` 语义是"钉死单个目标草稿"，保持留空，草稿下拉列表跟随 input_dir 草稿库）。
+  仓库内源码模式 config.json 两份同步更新。exe 每次发新版都是全新目录，无需迁移代码。
+- **pt-tools 1.4.0**：新增 `profile_dir`（`D:\My-Temporary\PT-Tools-Backup\json`，建档输出 +
+  导出页浏览档案默认目录）；`last_out_dir` 缺省 → `D:\My-Temporary\PT-Tools-Backup\out`。
+  ⚠️ pt-tools 配置在 `%APPDATA%\pt-tools\` **跨 exe 版本共享**，故走既有 `_migrate_cfg`
+  （cfg_version 2→3），只补缺省、不覆盖用户已设值。输出/建档目录不存在时现建（makedirs）。
+- **pt-project-folder-builder 1.0.1 / rename-unify 1.3.0**：默认路径本已合规
+  （`D:\DAW-Project\00文件夹模板` / `D:\DAW-Project`），核对后未改动。
+
+### pt-tools 1.4.0 功能
+
+- **档案平铺自动命名（拍板方案 B）**：不建 per-project 文件夹；扫描完成后从档案取
+  `session.name` 自动改名为 `<工程名>-pt-profile.json`（非法字符清洗，同名重扫覆盖，
+  改名失败保留原名不阻断）。建档目录记忆键从 `last_out_dir` 拆出为 `profile_dir`，
+  两个落点语义分离、互不带偏。
+- **「指定文件」模式预填**：切到该模式或载入档案时，自动预填档案里记录的 `.ptx` 路径
+  （= 扫描时 PT 打开的工程）；「浏览」对话框默认开在**其父级目录**。
+
+### jianying-draft-toolkit 2.6.3
+
+- **导出页两个输入源合并（五.2）**：旧版「剪映草稿目录」行 + v2.6.2 的「输入源」按钮框
+  两处入口功能重复；合并为一个「输入源」块（手填 / 浏览目录 / 选择文件 / 清空 / 重新识别 /
+  即时识别状态），区块顺序统一为 输入源 → 导出模式 → 导出配置 → 操作按钮 → 运行日志。
+- **导入页草稿下拉跟随配置**：`default_draft_root()` 改为优先读配置的 `input_dir`
+  （存在即用），否则回落 AppData 自动定位 —— 旧版写死 AppData，改了草稿目录对导入页不生效。
+- **真 bug 修复**：`export_tab.apply_config()` 引用已被删除的 `self.var_template`
+  （v1.2.0 改多选 Listbox 时遗留）→ 菜单「重新载入配置 / 默认路径设置」必崩
+  AttributeError。已移除该行（name_template 由 collect() 从勾选模板派生）。
+- 清理死代码 `_pick_input_dir`。
+
+### pt-project-folder-builder 1.0.1
+
+- **界面分区重排（GUI 美化）**：单页平铺 grid（row 0-14 混排）重排为 6 个 LabelFrame
+  区块（路径 / 本批内容 / 命名规则 / 命名信息 / 选项 / 预览 / 日志），主按钮
+  「建立文件夹」固定最右；控件、变量、逻辑不变，纯布局调整。
+- pt-tools 与 rename-unify 布局本已结构化（Notebook 分页），本轮核对后**不做无效重排**。
 
 ---
 
