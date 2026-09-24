@@ -40,7 +40,7 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox
 # v1.0.1（2026-09-24 · GUI 美化）：单页平铺 grid 重排为 6 区块 LabelFrame
 #   （路径 / 本批内容 / 命名规则 / 命名信息 / 选项 / 预览 / 日志），主按钮
 #   「建立文件夹」固定最右；控件与逻辑不变，纯布局调整。
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.1.0"  # F1 建立前预检（v1.1.0）
 
 
 def build_date():
@@ -197,6 +197,63 @@ def locate_template_ptx(template_root):
             if f.lower().endswith(".ptx"):
                 return os.path.join(root, f)
     return None
+
+
+def precheck_build(template_root, output_root, project_root, steps, ptx_mode):
+    """F1（v1.1.0）：建立前预检 —— 模板存在性 / 可读性 / 输出盘可写，一次列全。
+
+    旧行为是"边建边报错"：模板缺失要到复制那一步才炸、输出盘只读要等
+    建目录失败才知道。现在确认框之前把问题一次列全，让用户先修再点。
+    返回问题列表（空 = 全部通过；纯可读性探测，不写任何业务文件）。
+    """
+    problems = []
+
+    # 1) 模板根
+    if not os.path.isdir(template_root):
+        problems.append("模板路径不存在: %s" % template_root)
+        return problems                      # 后面全是围绕它的，没有继续的意义
+
+    # 2) 分类目录模板
+    if not os.path.isdir(os.path.join(template_root, "文件夹模板")):
+        problems.append("模板缺少「文件夹模板」子目录（将只建集数文件夹）: %s"
+                        % os.path.join(template_root, "文件夹模板"))
+
+    # 3) .ptx 模板（ptx_mode != none 时必须可读，且不能被 PT 独占锁死）
+    if ptx_mode != "none":
+        src_ptx = locate_template_ptx(template_root)
+        if src_ptx is None:
+            problems.append("模板中未找到可复制的 .ptx 文件（ptx 选项≠不复制）")
+        else:
+            try:
+                with open(src_ptx, "rb"):
+                    pass
+            except OSError as e:
+                problems.append(".ptx 模板不可读: %s (%s)" % (src_ptx, e))
+            try:
+                # r+b 只在文件被独占锁（如 PT 正开着它）时失败，不改内容
+                with open(src_ptx, "r+b"):
+                    pass
+            except OSError as e:
+                problems.append(".ptx 模板疑似被占用（PT 开着它？）: %s (%s)"
+                                % (src_ptx, e))
+
+    # 4) 输出位置：已存在项目根 → 至少要可写；不存在 → 试建/试删同目录探针文件
+    probe_dir = project_root if os.path.isdir(project_root) else output_root
+    if not os.path.isdir(probe_dir):
+        try:
+            os.makedirs(probe_dir, exist_ok=True)
+        except OSError as e:
+            problems.append("输出目录不可创建: %s (%s)" % (probe_dir, e))
+            return problems
+    probe = os.path.join(probe_dir, "~fb_precheck_%d.tmp"
+                         % (os.getpid() % 100000))
+    try:
+        with open(probe, "w") as fh:
+            fh.write("precheck")
+        os.remove(probe)
+    except OSError as e:
+        problems.append("输出盘不可写: %s (%s)" % (probe_dir, e))
+    return problems
 
 
 def plan_creation(episodes, name, seq, level, date_str, username,
@@ -530,6 +587,19 @@ class App(tk.Tk):
         if not steps:
             messagebox.showwarning("无可建立项", "请检查集数/模板路径")
             return
+        # F1（v1.1.0）：建立前预检 —— 问题一次列全再让确认，不等边建边炸
+        try:
+            problems = precheck_build(self.var_template.get().strip(),
+                                      self.var_output.get().strip(),
+                                      project_root, steps, self.var_ptx.get())
+        except Exception as e:
+            problems = ["预检执行异常（不阻断，可继续）: %s" % e]
+        if problems:
+            if not messagebox.askokcancel(
+                    "预检发现 %d 个问题" % len(problems),
+                    "\n".join("· " + p for p in problems)
+                    + "\n\n仍要继续建立吗？"):
+                return
         # 确认
         n = len(steps)
         if not messagebox.askokcancel("确认建立",

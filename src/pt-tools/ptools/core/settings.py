@@ -25,9 +25,26 @@ ENV_SKILLS_ROOT = "PTOOLS_SKILLS_ROOT"
 DEFAULT_PROFILE_DIR = r"D:\My-Temporary\PT-Tools-Backup\json"
 DEFAULT_OUT_ROOT = r"D:\My-Temporary\PT-Tools-Backup\out"
 
-APP_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
-                       "pt-tools")
+# ---------------------------------------------------------------------------
+# 配置落点（W4 · 2026-09-24 拍板：四工具统一 **exe 旁**，便携、随 exe 走）
+# ---------------------------------------------------------------------------
+# 旧版 pt-tools 配置/日志在 %APPDATA%\pt-tools\，两机同步时与
+# 「剪映 / rename-unify 已是 exe 旁」的行为不一致。现在统一 exe 旁：
+#   frozen：exe 所在目录；源码模式：src/pt-tools（本文件向上三级）。
+# 首次运行时若 exe 旁还没有 config.json，会把旧 %APPDATA% 的一份**复制**过来
+# （迁移不删旧文件，见 config.migrate_legacy_config）。
+def _app_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    # settings.py 位于 <pt-tools>/ptools/core/ 下，向上三级 = src/pt-tools
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+LEGACY_APP_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
+                              "pt-tools")
+APP_DIR = _app_dir()
 CONFIG_FILE = os.path.join(APP_DIR, "config.json")
+LEGACY_CONFIG_FILE = os.path.join(LEGACY_APP_DIR, "config.json")
 
 SCRIPTS = {
     "pt-scanner": "pt_scan.py",
@@ -78,7 +95,10 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 #   .ptx 路径、浏览框默认开其父级 ④ 输出/建档目录不存在时现建。
 # v1.4.1（2026-09-24）：① 任务完成弹 Windows 托盘通知（W7）② 接入滚动日志
 #   %APPDATA%\pt-tools\pt-tools.log（W2 骨架，D2 并入诊断包）。
-APP_VERSION = "1.4.1"
+# v1.5.0（2026-09-24）：① W4 配置/日志迁 exe 旁（旧 %APPDATA% 首次运行自动复制）
+#   ② P1 PT 离线常驻黄条 ③ P2 导出后自动质检 wav ④ P3 档案库页 ⑤ P4 导出历史
+#   ⑥ W8 --batch CLI（jobs.json 夜间批量）⑦ 批量对话框可保存 jobs.json。
+APP_VERSION = "1.5.0"
 
 
 def build_date():

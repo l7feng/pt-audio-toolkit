@@ -5,6 +5,7 @@
 """
 import json
 import os
+import shutil
 from .i18n import detect_system_lang
 from .settings import (
     APP_DIR, CONFIG_FILE,
@@ -17,7 +18,25 @@ from .settings import (
 # 配置
 # ---------------------------------------------------------------------------
 
+def migrate_legacy_config():
+    """W4（v1.5.0）：旧 %APPDATA%\\pt-tools\\config.json → exe 旁（只复制不删除）。
+
+    仅当 exe 旁还没有配置且旧文件存在时执行一次；复制失败静默
+    （大不了从头配，绝不挡启动）。
+    """
+    from .settings import LEGACY_CONFIG_FILE
+    try:
+        if os.path.isfile(CONFIG_FILE) or not os.path.isfile(LEGACY_CONFIG_FILE):
+            return False
+        os.makedirs(APP_DIR, exist_ok=True)
+        shutil.copy2(LEGACY_CONFIG_FILE, CONFIG_FILE)
+        return True
+    except OSError:
+        return False
+
+
 def load_config():
+    migrate_legacy_config()
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as fh:
             cfg = json.load(fh)

@@ -31,6 +31,7 @@ import os
 import re
 import sys
 import datetime
+import json
 import threading
 import traceback
 
@@ -449,6 +450,9 @@ class App(tk.Tk):
 
         rb = ttk.Frame(f)
         rb.grid(row=1, column=0, sticky="sew", padx=16, pady=(0, 20))
+        # R3（v1.5.0）：规则集导出/导入 —— 两机同步不再依赖整仓 git
+        ttk.Button(rb, text="导入规则集…", command=self._import_rules).pack(side="right", padx=4)
+        ttk.Button(rb, text="导出规则集…", command=self._export_rules).pack(side="right", padx=4)
         ttk.Button(rb, text="恢复内置规则", command=self._reset_rules).pack(side="right", padx=4)
 
     def _reload_targets(self):
@@ -748,7 +752,9 @@ class App(tk.Tk):
         un.pack(fill="both", expand=True, padx=10, pady=6)
         ttk.Label(un, foreground=COLOR_WARN, justify="left",
                   text=("撤销按日志逐条反向改名。若原文件名已被别的文件占用，该条会失败并跳过。\n"
-                        "执行前请确认目标目录没有新增同名文件。")).pack(anchor="w", padx=8, pady=6)
+                        "执行前请确认目标目录没有新增同名文件。\n"
+                        "R1：执行前还会生成审计快照 rename_audit_*.json —— 就算执行中途退出，\n"
+                        "也能用「按审计回滚…」凭那份快照整批改回来。")).pack(anchor="w", padx=8, pady=6)
 
         self.txt_preview_log = tk.Text(un, height=16, wrap="none", state="disabled",
                                        font=("Consolas", 9))
@@ -761,6 +767,7 @@ class App(tk.Tk):
         ub.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(ub, text="执行撤销", command=self._on_undo).pack(side="right", padx=4)
         ttk.Button(ub, text="读取并预览", command=self._preview_log).pack(side="right", padx=4)
+        ttk.Button(ub, text="按审计回滚…", command=self._undo_from_audit).pack(side="left")
 
     # ------------------------------------------------------------------
     # 交互
@@ -1086,6 +1093,11 @@ class App(tk.Tk):
 
         def worker():
             try:
+                # R1（v1.5.0）：执行前先落审计 json —— 就算中途崩溃，
+                # 目标目录旁也有一份完整的「原→新」清单可供回滚。
+                audit_path = self._write_audit(todo)
+                if audit_path:
+                    self._log("审计文件: %s（%d 条）" % (audit_path, len(todo)))
                 done, failed, _ = CORE.apply_plan(self.items, write_log=False)
                 _log = CFG.setup_logging()
                 if _log is not None:
@@ -1131,6 +1143,26 @@ class App(tk.Tk):
             return path
         except OSError as e:
             self._log("  警告: 日志写入失败 (%s)" % e)
+            return None
+
+    def _write_audit(self, todo):
+        """R1（v1.5.0）：执行前把「原→新」计划落成审计 json（rename_audit_*.json）。
+
+        与回溯日志（执行成功后才写）互补：审计覆盖"执行到一半崩了"的场景。
+        写失败只告警不阻断执行（改名的第一步保护仍有两阶段提交 + 回溯日志）。
+        """
+        if not todo:
+            return None
+        rows = [[os.path.abspath(i.src), os.path.abspath(i.dst)] for i in todo]
+        base = os.path.dirname(rows[0][0]) or "."
+        path = os.path.join(base, "rename_audit_%s.json"
+                            % datetime.datetime.now().strftime("%Y%m%d_%H%M%S"))
+        meta = {"count": len(rows), "root": (self.var_root.get() or "").strip()}
+        try:
+            CORE.write_audit(path, rows, meta)
+            return path
+        except Exception as e:
+            self._log("  警告: 审计文件写入失败 (%s)" % e)
             return None
 
     def _after_apply(self):
@@ -1249,6 +1281,172 @@ class App(tk.Tk):
             self._log("  失败: %s (%s)" % (os.path.basename(a), err))
         self._preview_log()
         self._refresh_preview()
+
+    # ---- 审计回滚（R1 · v1.5.0）----
+    def _list_audits(self):
+        """列出目标目录树下的 rename_audit_*.json，弹窗选择，返回路径或 None。"""
+        root = (self.var_root.get() or "").strip()
+        if not root or not os.path.isdir(root):
+            messagebox.showwarning("目录无效", "请先在「预览与执行」页选择目标目录。")
+            return None
+        found = []
+        for dp, _dn, fns in os.walk(root):
+            for fn in fns:
+                if fn.lower().startswith("rename_audit_") and fn.lower().endswith(".json"):
+                    found.append(os.path.join(dp, fn))
+        if not found:
+            messagebox.showinfo("未找到审计文件",
+                                "该目录下没有 rename_audit_*.json\n"
+                                "（审计文件在每次「执行」前自动生成）")
+            return None
+        found.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+
+        infos = []
+        for p in found:
+            try:
+                rows, meta = CORE.load_audit(p)
+                infos.append((p, "%s   （%d 条 · %s）"
+                              % (os.path.basename(p), len(rows),
+                                 meta.get("created", "?"))))
+            except Exception:
+                infos.append((p, os.path.basename(p) + "   （读取失败）"))
+        dlg = tk.Toplevel(self)
+        dlg.title("选择审计快照")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.geometry("760x360")
+        lb = tk.Listbox(dlg, font=("Consolas", 9))
+        lb.pack(fill="both", expand=True, padx=8, pady=8)
+        for _p, label in infos:
+            lb.insert("end", label)
+        lb.selection_set(0)
+        result = {"p": None}
+
+        def choose():
+            sel = lb.curselection()
+            if sel:
+                result["p"] = infos[sel[0]][0]
+            dlg.destroy()
+
+        bf = ttk.Frame(dlg)
+        bf.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Button(bf, text="选用", command=choose).pack(side="right", padx=4)
+        ttk.Button(bf, text="取消", command=dlg.destroy).pack(side="right", padx=4)
+        lb.bind("<Double-Button-1>", lambda e: choose())
+        dlg.wait_window()
+        return result["p"]
+
+    def _undo_from_audit(self):
+        """「按上次审计回滚」入口：凭执行前的 rename_audit_*.json 整批改回。"""
+        p = self._list_audits()
+        if not p:
+            return
+        try:
+            rows, meta = CORE.load_audit(p)
+        except Exception as e:
+            messagebox.showerror("审计文件无效", str(e))
+            return
+        if not rows:
+            messagebox.showinfo("空快照", "这份审计快照里没有任何改名记录。")
+            return
+        if not messagebox.askokcancel(
+                "确认按审计回滚",
+                "快照：%s\n记录：%d 条（创建于 %s）\n\n"
+                "将按快照把文件改回「原文件名」（倒序执行；原名被占用或新文件"
+                "不存在的条目跳过并报告）。是否继续？"
+                % (p, len(rows), meta.get("created", "?"))):
+            return
+        done, failed = CORE.undo_from_rows(rows)
+        _log = CFG.setup_logging()
+        if _log is not None:
+            _log.info("按审计回滚（%s）：成功 %d / 失败 %d", p, len(done), len(failed))
+        self._log("=== 按审计回滚完成: 成功 %d / 失败 %d ===" % (len(done), len(failed)))
+        for a, b, err in failed:
+            self._log("  失败: %s (%s)" % (os.path.basename(a), err))
+        self._refresh_preview()
+
+    # ---- 规则集导入导出（R3 · v1.5.0）----
+    RULES_EXPORT_KEYS = ("fields", "template", "templates", "targets", "rules",
+                         "date_from_mtime", "rename_ep_dirs")
+
+    def _collect_rules_payload(self):
+        """当前界面状态 → 规则集 dict（导出用；与 _save_cfg 同源同构）。"""
+        return {
+            "fields": self._fields(),
+            "template": self._global_template(),
+            "templates": [dict(t) for t in self.templates],
+            "targets": [dict(t) for t in self.targets],
+            "rules": [list(r) for r in self.rules],
+            "date_from_mtime": bool(self.var_mtime_date.get()),
+            "rename_ep_dirs": bool(self.var_rename_dirs.get()),
+        }
+
+    def _export_rules(self):
+        data = self._collect_rules_payload()
+        p = filedialog.asksaveasfilename(
+            title="导出规则集", defaultextension=".json",
+            initialfile="rename-unify-rules.json",
+            filetypes=[("JSON", "*.json"), ("全部文件", "*.*")])
+        if not p:
+            return
+        try:
+            with open(p, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+        except OSError as e:
+            messagebox.showerror("导出失败", "规则集写入失败：%s" % e)
+            return
+        self._log("规则集已导出: %s" % p)
+        messagebox.showinfo("导出规则集", "已导出：%s\n（含 字段/模板库/目标表/识别规则/两个开关）" % p)
+
+    def _import_rules(self):
+        p = filedialog.askopenfilename(
+            title="导入规则集",
+            filetypes=[("JSON", "*.json"), ("全部文件", "*.*")])
+        if not p:
+            return
+        try:
+            with open(p, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError) as e:
+            messagebox.showerror("导入失败", "规则集读取失败：%s" % e)
+            return
+        if not isinstance(data, dict):
+            messagebox.showerror("导入失败", "格式不符：顶层应为 JSON 对象。")
+            return
+        applied = []
+        # 模板库 / 目标表 / 识别规则（结构合法才吃）
+        if isinstance(data.get("templates"), list):
+            self.templates = [dict(t) for t in data["templates"] if isinstance(t, dict)]
+            self._reload_templates()
+            applied.append("模板库 %d 套" % len(self.templates))
+        if isinstance(data.get("targets"), list):
+            self.targets = [dict(t) for t in data["targets"] if isinstance(t, dict)]
+            self._reload_targets()
+            applied.append("目标表 %d 项" % len(self.targets))
+        if isinstance(data.get("rules"), list):
+            self.rules = [list(r) for r in data["rules"]]
+            self._reload_rules()
+            applied.append("识别规则 %d 条" % len(self.rules))
+        # 字段（回填页1输入框）
+        if isinstance(data.get("fields"), dict) and data["fields"]:
+            for k, v in data["fields"].items():
+                var = self.field_vars.get(str(k))
+                if var is not None:
+                    var.set(str(v))
+            self._on_field_change()
+            applied.append("字段")
+        # 两个开关
+        if isinstance(data.get("date_from_mtime"), bool):
+            self.var_mtime_date.set(data["date_from_mtime"])
+            applied.append("mtime兜底开关")
+        if isinstance(data.get("rename_ep_dirs"), bool):
+            self.var_rename_dirs.set(data["rename_ep_dirs"])
+            applied.append("集目录改名开关")
+        self._save_cfg()
+        self._refresh_preview()
+        self._log("规则集已导入: %s（%s）" % (p, "、".join(applied) or "无有效内容"))
+        messagebox.showinfo("导入规则集",
+                            "已导入并保存：%s" % ("、".join(applied) or "无有效内容"))
 
     # ---- 配置 ----
     def _save_cfg(self):

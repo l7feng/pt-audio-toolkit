@@ -30,6 +30,7 @@ v1.2.0 改为「**目标（Target）+ 轨道信息（info）**」两段式：
 """
 
 import csv
+import json
 import os
 import re
 import datetime
@@ -941,6 +942,50 @@ def apply_plan(items, write_log=True, log_path=None):
 
 
 # ---------------------------------------------------------------------------
+# 审计快照（R1 · v1.5.0）：执行前把「改名计划（原→新）」落 json 到目标目录旁
+# ---------------------------------------------------------------------------
+
+AUDIT_HEADER_KEYS = ("app", "audit_version", "created", "meta", "items")
+
+
+def write_audit(audit_path, rows, meta=None):
+    """把改名计划写成审计 json（执行前调用 —— 中途崩溃也有完整原→新清单）。
+
+    rows = [[原文件, 新文件], …]；meta 任意 dict（GUI 传数量/根目录等）。
+    目录不存在会现建；失败抛 OSError（调用方决定是否阻断执行）。
+    """
+    folder = os.path.dirname(os.path.abspath(audit_path))
+    if folder and not os.path.isdir(folder):
+        os.makedirs(folder, exist_ok=True)
+    payload = {
+        "app": "rename-unify",
+        "audit_version": 1,
+        "created": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "meta": dict(meta or {}),
+        "items": [[os.path.abspath(r[0]), os.path.abspath(r[1])] for r in rows],
+    }
+    with open(audit_path, "w", encoding="utf-8") as fp:
+        json.dump(payload, fp, ensure_ascii=False, indent=2)
+    return audit_path
+
+
+def load_audit(audit_path):
+    """读审计 json，返回 (items_rows, meta)；格式不符抛 ValueError。"""
+    try:
+        with open(audit_path, "r", encoding="utf-8") as fp:
+            payload = json.load(fp)
+    except (OSError, ValueError) as e:
+        raise ValueError("审计文件读取失败: %s" % e)
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        raise ValueError("审计文件格式不符（缺 items 数组）: %s" % audit_path)
+    rows = []
+    for r in payload["items"]:
+        if isinstance(r, (list, tuple)) and len(r) >= 2 and r[0] and r[1]:
+            rows.append([str(r[0]), str(r[1])])
+    return rows, payload.get("meta") or {}
+
+
+# ---------------------------------------------------------------------------
 # 撤销（读日志反向改名）
 # ---------------------------------------------------------------------------
 
@@ -958,7 +1003,6 @@ def undo_from_log(log_path, dry_run=False):
     倒序执行，防同名交叉。dry_run=True 时只算不改。
     返回 (done, failed)，failed 项为 (新路径, 原路径, 原因)。
     """
-    done, failed = [], []
     try:
         with open(log_path, "r", encoding="utf-8-sig", newline="") as fp:
             rows = list(csv.reader(fp))
@@ -966,9 +1010,19 @@ def undo_from_log(log_path, dry_run=False):
         return [], [(log_path, "", "读取失败: %s" % e)]
     if not rows:
         return [], []
-
     body = rows[1:] if rows[0][:2] == LOG_HEADER else rows
-    for row in reversed(body):
+    return undo_from_rows(body, dry_run=dry_run)
+
+
+def undo_from_rows(rows, dry_run=False):
+    """核心回滚循环（v1.5.0 从 undo_from_log 抽出，审计 json 共用同一实现）。
+
+    rows = [[原文件, 新文件], …]；倒序执行，防同名交叉；
+    原名被占用跳过、新文件不存在跳过（8.3 短名先转长路径再试）。
+    返回 (done, failed)。
+    """
+    done, failed = [], []
+    for row in reversed(rows):
         if len(row) < 2:
             continue
         old_p, new_p = row[0], row[1]

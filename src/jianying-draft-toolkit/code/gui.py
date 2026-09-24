@@ -21,6 +21,7 @@ import json
 import os
 import queue
 import sys
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox
@@ -173,6 +174,11 @@ class JianYingToolkitApp:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_queue)
         self._refresh_status()
+        # J1（v2.7.0）：启动时扫描草稿 schema 版本 —— 发现"没见过的版本"就挂黄条
+        # 告警（不硬崩、不打断启动），提醒先备份再动导入。
+        self._draft_versions = {}
+        self._version_bar = None
+        self.root.after(400, self._startup_version_check)
 
     # ───────────── 配置 ─────────────
 
@@ -234,6 +240,9 @@ class JianYingToolkitApp:
         m_tool.add_command(label="环境自检（Python / ffmpeg / 剪映 / jy-draftc）",
                            command=self._menu_env_check)
         m_tool.add_separator()
+        # J1（v2.7.0）：草稿库一键备份 —— 剪映无草稿格式承诺，升级有风险，先备份再说
+        m_tool.add_command(label="一键备份草稿库…",
+                           command=self._menu_backup_drafts)
         m_tool.add_command(label="清理立体声合成缓存",
                            command=self._menu_clear_cache)
         m_tool.add_command(label="打开临时目录",
@@ -364,6 +373,144 @@ class JianYingToolkitApp:
     def _menu_open_temp(self):
         import tempfile
         self._menu_open_dir(Path(tempfile.gettempdir()))
+
+    # ───────────── J1：草稿库备份 + 版本防线 ─────────────
+
+    def _draft_root(self) -> Path:
+        """当前草稿库根：优先配置 input_dir，回落出厂默认草稿根。"""
+        raw = str(self.cfg.get("input_dir") or "").strip()
+        if raw and Path(raw).is_dir():
+            return Path(raw)
+        if core.DEFAULT_JIANYING_DRAFT_ROOT.is_dir():
+            return core.DEFAULT_JIANYING_DRAFT_ROOT
+        return Path(raw) if raw else core.DEFAULT_JIANYING_DRAFT_ROOT
+
+    def _menu_backup_drafts(self):
+        """工具 → 一键备份草稿库：先估体积并确认，后台 robocopy 整库复制。"""
+        root = self._draft_root()
+        if not root.is_dir():
+            messagebox.showerror(
+                "备份草稿库",
+                f"草稿库目录不存在：\n{root}\n\n"
+                "请先在「设置 → 默认路径设置…」里确认草稿目录。")
+            return
+        n, size = menu_actions.draft_library_size(root)
+        target = root.parent / ("草稿库备份-" +
+                                __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M%S"))
+        if not messagebox.askyesno(
+                "一键备份草稿库",
+                f"源：{root}\n目标：{target}\n\n"
+                f"约 {n} 个文件（{menu_actions.human_size(size)}）。\n"
+                "备份期间请勿在剪映里保存草稿（剪映没开最稳）。\n\n继续？"):
+            return
+        self.log_to_current(f"\n· 开始备份草稿库：{root} → {target}\n")
+
+        def job():
+            def prog(text):
+                self.msg_queue.put(text)
+            try:
+                dst = menu_actions.backup_draft_library(root, log=prog)
+                self.msg_queue.put(
+                    f"\n✓ 备份完成：{dst}\n")
+                try:
+                    self.root.after(0, lambda d=str(dst): toast(
+                        self.root, "剪映工程工具包", f"草稿库备份完成：{d}"))
+                except Exception:
+                    pass
+            except Exception as e:
+                self.msg_queue.put(f"\n✗ 备份失败：{e}\n")
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def _startup_version_check(self):
+        """J1 ②：后台扫描草稿版本，出现「已知列表之外」的版本就挂黄条。"""
+        root = self._draft_root()
+
+        def job():
+            try:
+                result = menu_actions.scan_draft_versions(root)
+            except Exception:
+                result = {"versions": {}, "unknown": [], "total": 0}
+            self.root.after(0, lambda: self._apply_version_scan(result))
+
+        threading.Thread(target=job, daemon=True).start()
+
+    def _apply_version_scan(self, result: dict):
+        self._draft_versions = result
+        versions = result.get("versions") or {}
+        known = set(self.cfg.get("known_draft_versions") or [])
+        fresh = sorted(v for v in versions if v and v not in known)
+        if fresh:
+            self._show_version_bar(fresh)
+
+    def _show_version_bar(self, fresh_versions):
+        """顶部黄色告警条：点了弹出明细对话框（记录已知 / 查看分布）。"""
+        if self._version_bar is not None:
+            try:
+                self._version_bar.destroy()
+            except Exception:
+                pass
+        total = sum((self._draft_versions or {}).get("versions", {}).values())
+        bar = tk.Label(
+            self.root,
+            text=("⚠ 检测到没见过的剪映草稿版本：%s（草稿库共 %d 个，点此查看）"
+                  "—— 新版本草稿结构可能不兼容，建议先「工具 → 一键备份草稿库」"
+                  % (", ".join(fresh_versions), total)),
+            bg="#ffe066", fg="#5a4a00", anchor="w", padx=10, pady=4,
+            cursor="hand2", wraplength=860, justify="left")
+        bar.bind("<Button-1>", lambda _e: self._version_dialog(fresh_versions))
+        try:
+            bar.pack(fill="x", before=self.notebook)
+        except Exception:
+            bar.pack(fill="x")
+        self._version_bar = bar
+
+    def _version_dialog(self, fresh_versions):
+        result = self._draft_versions or {}
+        versions = result.get("versions") or {}
+        unknown = result.get("unknown") or []
+        lines = ["草稿库各版本分布："]
+        for v, n in sorted(versions.items()):
+            mark = "（新）" if v in fresh_versions else ""
+            lines.append(f"  版本 {v}: {n} 个草稿 {mark}")
+        if unknown:
+            lines.append(f"  读不出的草稿（加密/损坏）: {len(unknown)} 个")
+        lines += ["", "说明：本工具按草稿 JSON 结构解析，剪映升级后结构可能变化。",
+                  "「记为已知」只关闭提醒；真的升级剪映前请先备份草稿库。"]
+        dlg = tk.Toplevel(self.root)
+        dlg.title("草稿版本检查")
+        dlg.transient(self.root)
+        dlg.geometry("560x360")
+        t = tk.Text(dlg, wrap="word", padx=12, pady=12,
+                    font=("Microsoft YaHei UI", 10))
+        t.insert("1.0", "\n".join(lines))
+        t.configure(state="disabled")
+        t.pack(fill="both", expand=True)
+
+        def mark_known():
+            merged = sorted(set(self.cfg.get("known_draft_versions") or [])
+                            | set(versions))
+            self.cfg["known_draft_versions"] = merged
+            try:
+                path = core.config_path()
+                disk = {k: self.cfg.get(k) for k in self.cfg}
+                path.write_text(json.dumps(disk, ensure_ascii=False, indent=2),
+                                encoding="utf-8")
+            except Exception as e:
+                messagebox.showerror("写入失败", f"配置写入失败：{e}", parent=dlg)
+            if self._version_bar is not None:
+                try:
+                    self._version_bar.destroy()
+                except Exception:
+                    pass
+                self._version_bar = None
+            dlg.destroy()
+
+        bf = ttk.Frame(dlg)
+        bf.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(bf, text="记为已知（不再提醒）",
+                   command=mark_known).pack(side="right")
+        ttk.Button(bf, text="关闭", command=dlg.destroy).pack(side="right", padx=6)
 
     def _menu_open_cfg_dir(self):
         self._menu_open_dir(menu_actions.config_file().parent)

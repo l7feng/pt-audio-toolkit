@@ -974,6 +974,16 @@ def apply_import(dec_content: dict, rows: list[dict], dry_run: bool = False,
             max_end = max(max_end, st + s["target_timerange"]["duration"])
     d["duration"] = max_end
 
+    # J2（v2.7.0）：把"计划写入"记录下来，写回后 verify_written() 逐轨核对
+    plan = {"tracks": {}, "audio_materials": len(audios), "max_end_us": max_end}
+    for key in ordered_keys:
+        t = tracks_by_key[key]
+        plan["tracks"][t["name"]] = {
+            "segments": len(t.get("segments", [])),
+            "duration_ms": sum(int((s.get("target_timerange") or {}).get("duration", 0))
+                               for s in t.get("segments", [])) // 1000,
+        }
+
     # 4) 清理空白轨道
     # 剪映草稿模板常带一条空的默认 video 轨；导入只加音频轨，空轨会让用户看到一条多余的
     # 「空轨」占位并影响导出。rule：只删「无片段」的轨道，且至少保留 1 条（剪映要求非空 tracks）。
@@ -1016,7 +1026,62 @@ def apply_import(dec_content: dict, rows: list[dict], dry_run: bool = False,
             print(f"    tl@{row['start_ms']:>8}ms  src@{row.get('_src_offset_ms',0):>8}ms  "
                   f"len={row['duration_ms']:>7}ms  {row['source'].name[:34]:<34}"
                   f" -> {row['_track']['name']}{fade}{tag}")
-    return d
+    return d, plan
+
+
+def verify_written(content: dict, plan: dict) -> tuple:
+    """J2（v2.7.0）：写回后复读草稿 JSON，把「计划」与「草稿实际」逐轨核对。
+
+    核对三件事：轨道在不在 / 片段数对不对 / 总时长对不对（±2s 或 2%），
+    外加素材引用完整性（material_id / extra_material_refs 悬空 = 静默损坏）。
+    返回 (报告行列表, 全部一致?)。只出报告不改数据 —— 真不行还有 .jybak。
+    """
+    lines = []
+    ok_all = True
+    jy_tracks = [t for t in content.get("tracks", []) if t.get("_jy_import")]
+    mat_ids = set()
+    for _cat, arr in (content.get("materials") or {}).items():
+        if isinstance(arr, list):
+            mat_ids.update(m.get("id") for m in arr
+                           if isinstance(m, dict) and m.get("id"))
+
+    plan_tracks = plan.get("tracks") or {}
+    got_names = {t.get("name") for t in jy_tracks}
+    for name in plan_tracks:
+        if name not in got_names:
+            ok_all = False
+            lines.append(f"  ✗ 轨道缺失: {name}（计划新建但写回后没找到）")
+
+    for t in jy_tracks:
+        name = t.get("name", "?")
+        segs = t.get("segments", [])
+        n = len(segs)
+        total = sum(int((s.get("target_timerange") or {}).get("duration", 0))
+                    for s in segs) // 1000
+        exp = plan_tracks.get(name) or {}
+        e_n = exp.get("segments")
+        e_ms = exp.get("duration_ms")
+        seg_ok = (e_n == n)
+        dur_ok = (e_ms is None) or abs(total - e_ms) <= max(2, e_ms * 0.02)
+        bad_ref = 0
+        for s in segs:
+            if s.get("material_id") and s["material_id"] not in mat_ids:
+                bad_ref += 1
+            for ref in s.get("extra_material_refs", []) or []:
+                if ref and ref not in mat_ids:
+                    bad_ref += 1
+        good = seg_ok and dur_ok and bad_ref == 0
+        ok_all = ok_all and good
+        dur_txt = (f"总时长 {total / 1000:.1f}s / {e_ms / 1000:.1f}s"
+                   if e_ms else f"总时长 {total / 1000:.1f}s")
+        lines.append(f"  {'✓' if good else '✗'} {name}: "
+                     f"片段 {n}/{e_n if e_n is not None else '?'}  {dur_txt}"
+                     + (f"  悬空素材引用 {bad_ref}" if bad_ref else ""))
+
+    max_end_us = plan.get("max_end_us") or 0
+    lines.append(f"  时间线总长: {(content.get('duration') or 0) / 1e6:.1f}s"
+                 f"（计划 {max_end_us / 1e6:.1f}s）")
+    return lines, ok_all
 
 
 def main():
@@ -1104,8 +1169,9 @@ def main():
         print(f"[错误] 解密 JSON 解析失败: {e}")
         sys.exit(1)
 
-    d2 = apply_import(d, rows, dry_run=args.dry_run, use_pt_tracks=from_pt,
-                      crossfade_ms=args.loop_crossfade)
+    d2, import_plan = apply_import(d, rows, dry_run=args.dry_run,
+                                   use_pt_tracks=from_pt,
+                                   crossfade_ms=args.loop_crossfade)
 
     if args.dry_run or d2 is None:
         return
@@ -1134,6 +1200,15 @@ def main():
     print(f"  audio 轨: {n_audio} 条，audio 片段: {n_seg} 个")
     print(f"  写入份数: {len(write_targets)}（根目录 + 时间线目录，保证剪映读到新内容）")
     print("  请用剪映打开该草稿验证轨道位置/时长/音频块完整性。")
+
+    # J2（v2.7.0）：逐轨校验报告 —— 计划 vs 写回，抓"写回的东西不对"的静默错误
+    print("[校验] 逐轨核对（计划 vs 草稿实际内容）：")
+    report, ok_all = verify_written(v, import_plan)
+    for line in report:
+        print(line)
+    if not ok_all:
+        print("[警告] 校验存在不一致 —— 请打开剪映对照复核；"
+              "必要时可用写入前备份（*.jybak）回滚。")
 
 
 if __name__ == "__main__":

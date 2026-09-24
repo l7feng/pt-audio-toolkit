@@ -37,12 +37,54 @@ TEXTS = {
         "msg_diag_exported": "诊断包已导出：%s",
         "msg_diag_failed": "诊断包导出失败：%s",
 
+        # —— P1 PT 离线黄条 ——
+        "pt_warn_bar": ("⚠  Pro Tools 未连接（PTSL 127.0.0.1:31416 不通）——扫描/导出暂不可用。"
+                        "自查：PT 是否启动？启动中则可能仍在加载或 PTSL 被占用，详见 docs/ptsl-boot-plan.md"),
+        "pt_warn_bar_ok": "",   # 在线时黄条隐藏，无文案
+
+        # —— P2 导出质检 ——
+        "qc_running": "质检中…",
+        "qc_none": "质检：输出目录里没有本次导出的 wav。",
+        "qc_ok": "质检通过：%d 个文件，声道/采样率/位深/时长全部符合。",
+        "qc_bad": "质检发现 %d 个异常（共 %d 个文件）：",
+        "qc_note": "质检只读文件头，不动产物；此报告同时写入日志文件。",
+
+        # —— P3 档案库页 / P4 导出历史 ——
+        "tab_library": " 3 · 档案库 ",
+        "lib_what_title": "本页功能",
+        "lib_what_body": ("管理档案目录（profile_dir）里平铺的 pt-profile.json：搜索 / 加载到导出页 / "
+                          "在资源管理器打开 / 删除（走回收站）。下方「导出历史」按修改时间列出输出根"
+                          "（last_out_dir）里的工程文件夹，双击可直接打开。"),
+        "lib_dir": "档案目录:",
+        "lib_search": "搜索:",
+        "lib_col_file": "档案文件",
+        "lib_col_project": "工程名",
+        "lib_col_mtime": "修改时间",
+        "lib_col_size": "大小",
+        "lib_refresh": "刷新",
+        "lib_load": "加载到导出页",
+        "lib_open_dir": "打开所在目录",
+        "lib_delete": "删除（回收站）",
+        "lib_delete_confirm": "确定把 %d 个档案移入回收站？\n（可在回收站恢复）",
+        "lib_deleted": "[library] 已移入回收站 %d 个档案",
+        "lib_delete_failed": "[library] 删除失败: %s",
+        "lib_empty": "（档案目录为空或不存在）",
+        "lib_hist_title": "导出历史（输出根，按修改时间）",
+        "lib_open_outroot": "打开输出根",
+        "lib_hist_empty": "（输出根为空或不存在）",
+        "lib_bad_json": "[library] 档案读取失败（跳过）: %s",
+
+        # —— W8 批量 CLI ——
+        "b_save_jobs": "保存任务清单（jobs.json）…",
+        "b_jobs_saved": "任务清单已保存（可交给 pt-tools --batch 夜间执行）：\n%s",
+        "b_jobs_save_failed": "任务清单保存失败: %s",
+
         "help_howto": "使用说明",
         "help_about": "关于 pt-tools",
 
         "tab_scan": " 1 · 扫描建档 ",
         "tab_export": " 2 · 导出 ",
-        "tab_clean": " 3 · 清理 ",
+        "tab_clean": " 4 · 清理 ",
 
         # —— 扫描页 ——
         "s_what_title": "本页功能",
@@ -349,12 +391,56 @@ TEXTS = {
         "msg_diag_exported": "Diagnostic bundle exported: %s",
         "msg_diag_failed": "Failed to export diagnostic bundle: %s",
 
+        # —— P1 offline banner ——
+        "pt_warn_bar": ("⚠  Pro Tools not connected (PTSL 127.0.0.1:31416 unreachable) — "
+                        "Scan/Export disabled. Check: is PT running? If starting, wait or see "
+                        "docs/ptsl-boot-plan.md"),
+        "pt_warn_bar_ok": "",
+
+        # —— P2 export QC ——
+        "qc_running": "QC running…",
+        "qc_none": "QC: no wav from this export found in the output folder.",
+        "qc_ok": "QC passed: %d files; channels / sample rate / bit depth / duration all OK.",
+        "qc_bad": "QC found %d issue(s) out of %d file(s):",
+        "qc_note": "QC only reads headers, never touches products; this report also goes to the log file.",
+
+        # —— P3 library tab / P4 export history ——
+        "tab_library": " 3 · Library ",
+        "lib_what_title": "What this tab does",
+        "lib_what_body": ("Manage flat pt-profile.json files in the profile folder: search / load into "
+                          "Export tab / reveal in Explorer / delete (to Recycle Bin). The \"Export "
+                          "history\" below lists session folders in the output root by modified time; "
+                          "double-click to open."),
+        "lib_dir": "Profile folder:",
+        "lib_search": "Search:",
+        "lib_col_file": "Profile file",
+        "lib_col_project": "Session",
+        "lib_col_mtime": "Modified",
+        "lib_col_size": "Size",
+        "lib_refresh": "Refresh",
+        "lib_load": "Load into Export tab",
+        "lib_open_dir": "Reveal in Explorer",
+        "lib_delete": "Delete (Recycle Bin)",
+        "lib_delete_confirm": "Move %d profile(s) to the Recycle Bin?\n(recoverable)",
+        "lib_deleted": "[library] %d profile(s) moved to Recycle Bin",
+        "lib_delete_failed": "[library] delete failed: %s",
+        "lib_empty": "(profile folder empty or missing)",
+        "lib_hist_title": "Export history (output root, by modified time)",
+        "lib_open_outroot": "Open output root",
+        "lib_hist_empty": "(output root empty or missing)",
+        "lib_bad_json": "[library] failed to read profile (skipped): %s",
+
+        # —— W8 batch CLI ——
+        "b_save_jobs": "Save job list (jobs.json)…",
+        "b_jobs_saved": "Job list saved (run with pt-tools --batch overnight):\n%s",
+        "b_jobs_save_failed": "Failed to save job list: %s",
+
         "help_howto": "How to Use",
         "help_about": "About pt-tools",
 
         "tab_scan": " 1 · Scan ",
         "tab_export": " 2 · Export ",
-        "tab_clean": " 3 · Clean ",
+        "tab_clean": " 4 · Clean ",
 
         "s_what_title": "What this tab does",
         "s_what_body": ("Scans the currently open Pro Tools session and builds a "

@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -149,6 +150,116 @@ def restore_default_paths() -> dict:
 
 
 # ──────────────────── ③ 工具：缓存 ────────────────────
+
+# ---------------------------------------------------------------------------
+# J1（v2.7.0）：草稿库一键备份 + 草稿 schema 版本扫描
+# ---------------------------------------------------------------------------
+
+def _iter_content_candidates(draft_dir: Path):
+    """草稿内容文件候选（与 main.resolve_draft_content_file 同语义的轻量版）。
+
+    menus.py 按分层纪律不 import main —— 这里复刻最小判定：
+    根目录 draft_content.json 优先级低于 Timelines/<id>/（剪映 6.x 权威源）。
+    """
+    tl = draft_dir / "Timelines"
+    if tl.is_dir():
+        try:
+            for sub in sorted(tl.iterdir()):
+                if sub.is_dir() and (sub / "draft_content.json").is_file():
+                    yield sub / "draft_content.json"
+        except OSError:
+            pass
+    root = draft_dir / "draft_content.json"
+    if root.is_file():
+        yield root
+
+
+def scan_draft_versions(draft_root: Path) -> dict:
+    """扫描草稿库，统计各草稿 content JSON 的 `version` 字段。
+
+    返回 {"versions": {版本: 数量}, "unknown": [草稿名…], "total": n}。
+    - 加密/损坏读不出的草稿计入 unknown（告警用，绝不抛异常）；
+    - 有 version 字段但不在「已知列表」的由调用方对照 config 判断。
+    用途：剪映升级后草稿 JSON 结构可能整条失效（J1 外部风险），
+    启动时发现"没见过的版本"就提示先备份，防患于未然。
+    """
+    versions: dict = {}
+    unknown: list = []
+    total = 0
+    if not draft_root or not Path(draft_root).is_dir():
+        return {"versions": versions, "unknown": unknown, "total": 0}
+    try:
+        drafts = [e for e in Path(draft_root).iterdir() if e.is_dir()]
+    except OSError:
+        return {"versions": versions, "unknown": unknown, "total": 0}
+    for d in drafts:
+        if d.parent.name == "Timelines":
+            continue
+        content = None
+        for cand in _iter_content_candidates(d):
+            content = cand
+            break
+        if content is None:
+            continue
+        total += 1
+        ver = None
+        try:
+            import json as _json
+            data = _json.loads(content.read_text(encoding="utf-8"))
+            ver = str((data or {}).get("version") or "").strip()
+        except Exception:
+            ver = None
+        if not ver:
+            unknown.append(d.name)
+            continue
+        versions[ver] = versions.get(ver, 0) + 1
+    return {"versions": versions, "unknown": unknown, "total": total}
+
+
+def draft_library_size(draft_root: Path) -> tuple:
+    """草稿库体积预估，返回 (文件数, 总字节数)。失败按 0 计（不阻断备份）。"""
+    n, size = 0, 0
+    try:
+        for f in Path(draft_root).rglob("*"):
+            if f.is_file():
+                n += 1
+                try:
+                    size += f.stat().st_size
+                except OSError:
+                    pass
+    except Exception:
+        pass
+    return n, size
+
+
+def backup_draft_library(draft_root: Path, log=None) -> Path:
+    """一键备份草稿库（J1 ③）：robocopy 整库复制到旁边带时间戳的备份夹。
+
+    备份落点：`<草稿库父目录>/草稿库备份-<yyyymmdd_HHMMSS>/`。
+    用 robocopy 而非 shutil.copytree：中文长路径 / 深目录更稳，且有增量语义。
+    robocopy 退出码 0-7 均为成功（1=有复制，2=有额外，…）；≥8 才是失败。
+    返回备份目录；失败抛 RuntimeError。
+    """
+    from datetime import datetime
+    src = Path(draft_root)
+    if not src.is_dir():
+        raise RuntimeError("草稿库不存在: %s" % src)
+    dst = src.parent / ("草稿库备份-" + datetime.now().strftime("%Y%m%d_%H%M%S"))
+    cmd = ["robocopy", str(src), str(dst),
+           "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP", "/R:1", "/W:1"]
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace",
+                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if proc.returncode >= 8:
+        raise RuntimeError("robocopy 失败（rc=%d）: %s"
+                           % (proc.returncode, (proc.stderr or proc.stdout or "")[-300:]))
+    if log is not None:
+        try:
+            log("[backup] robocopy rc=%d（<8 均为成功）\n" % proc.returncode)
+        except Exception:
+            pass
+    return dst
+
 
 def stereo_cache_dir() -> Path:
     """立体声合成缓存的候选目录（可能不存在）。

@@ -23,6 +23,14 @@ src/**/env/pyvenv.cfg
 *.local.json
 config.local.json
 
+# ===== W4 便携配置（exe 旁 = 源码模式 src/pt-tools/）=====
+# 个人配置与日志只落本机，不入库 —— 测试跑 App 时 W4 迁移会真实复制
+# %APPDATA% 配置过来，必须忽略，否则用户个人配置会被提交进仓库。
+src/pt-tools/config.json
+src/pt-tools/pt-tools.log*
+src/pt-tools/pt-batch-*.log
+src/pt-tools/pt-tools-diag-*.zip
+
 # ===== PyInstaller =====
 # 注：*.spec 由 build.ps1 自动重生成，无需入库
 *build.log

@@ -21,7 +21,7 @@ from ptools.core.i18n import T, get_lang, set_lang, LANG_EN, LANG_ZH
 from ptools.core.logs import setup_logging
 from ptools.core.naming import (
     build_export_cmds, fmt_choices, fmt_display_of, fmt_key_of,
-    fmt_label, frame_to_tc, load_profile, open_in_explorer,
+    fmt_label, fmt_tc_ok, frame_to_tc, load_profile, open_in_explorer,
     parse_video_duration_output, tc_to_frame,
 )
 from ptools.core.notify import toast
@@ -118,16 +118,47 @@ class App(tk.Tk):
         self.geometry("860x680")
         self.minsize(780, 600)
         self._build_menubar()
+        # P1（v1.5.0）：PT 离线常驻黄条 —— 离线时一眼可见，不再"点了按钮才深处报错"。
+        # 在线时由 _poll_ptsl pack_forget 隐藏；整窗重建（语言切换）按当时状态重挂。
+        self.pt_warn = tk.Label(self, text=T("pt_warn_bar"), fg="#5a4a00",
+                                bg="#ffe066", anchor="w", justify="left",
+                                padx=10, pady=4, wraplength=820)
+        self._warn_packed = False
         nb = ttk.Notebook(self)
+        self.nb = nb
         nb.pack(fill="both", expand=True, padx=8, pady=(4, 0))
         self.scan_tab = ScanTab(nb, self)
         self.export_tab = ExportTab(nb, self)
+        self.library_tab = LibraryTab(nb, self)
         self.clean_tab = CleanTab(nb, self)
         nb.add(self.scan_tab, text=T("tab_scan"))
         nb.add(self.export_tab, text=T("tab_export"))
+        nb.add(self.library_tab, text=T("tab_library"))
         nb.add(self.clean_tab, text=T("tab_clean"))
         self._build_log()
         self._build_statusbar()
+        if not self.ptsl_on:
+            self._show_warn_bar()
+
+    def _show_warn_bar(self):
+        """P1：挂出离线黄条（幂等）。"""
+        if getattr(self, "_warn_packed", False):
+            return
+        try:
+            self.pt_warn.pack(fill="x", padx=8, pady=(6, 0), before=self.nb)
+            self._warn_packed = True
+        except tk.TclError:
+            pass
+
+    def _hide_warn_bar(self):
+        """P1：收起离线黄条（幂等）。"""
+        if not getattr(self, "_warn_packed", False):
+            return
+        try:
+            self.pt_warn.pack_forget()
+        except tk.TclError:
+            pass
+        self._warn_packed = False
 
     def _rebuild_ui(self):
         """语言切换/设置变更后整体重建（StringVar 快照恢复）"""
@@ -260,6 +291,9 @@ class App(tk.Tk):
         frame.pack(fill="both", expand=True, padx=8, pady=(4, 4))
         self.log_text = tk.Text(frame, height=9, wrap="word", undo=False,
                                 font=("Consolas", 9))
+        # P2（v1.5.0）：质检报告的着色 tag（红=异常 / 绿=通过）
+        self.log_text.tag_configure("err", foreground="#c00")
+        self.log_text.tag_configure("ok", foreground="#070")
         sb = ttk.Scrollbar(frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
@@ -297,10 +331,14 @@ class App(tk.Tk):
     # 日志滚动上限：批量几十集时 Text 行数是主线程卡顿的隐形来源
     LOG_MAX_LINES = 5000
 
-    def log(self, text):
+    def log(self, text, tag=None):
+        """追加日志。tag="err"/"ok" 时按 _build_log 里配置的颜色渲染（P2）。"""
         if not getattr(self, "log_text", None):
             return
-        self.log_text.insert("end", text)
+        if tag:
+            self.log_text.insert("end", text, tag)
+        else:
+            self.log_text.insert("end", text)
         self.log_text.see("end")
         self._trim_log()
 
@@ -445,6 +483,11 @@ class App(tk.Tk):
         on = ptsl_online()
         self.ptsl_on = on
         self.status_ptsl_var.set(T("status_ptsl_on") if on else T("status_ptsl_off"))
+        # P1：离线黄条随探测结果收放
+        if on:
+            self._hide_warn_bar()
+        else:
+            self._show_warn_bar()
         self.scan_tab.set_ptsl(on)
         self._refresh_gating()
         self.after(5000, self._poll_ptsl)
@@ -635,6 +678,13 @@ class ScanTab(ttk.Frame):
             self._show_summary(path)
             if self.app.apply_profile(path):
                 self.app.log(T("s_auto_applied") % path)
+            # P3：档案库列表同步刷新（新档案立即可见）
+            lt = getattr(self.app, "library_tab", None)
+            if lt is not None:
+                try:
+                    lt.refresh()
+                except Exception:
+                    pass
         self.refresh_buttons()
 
     def _rename_by_session(self, out_dir, path):
@@ -707,6 +757,10 @@ class ExportTab(ttk.Frame):
         self._profile_path = ""
         self._profile = None
         self._preview_signature = ""
+        # P2（v1.5.0）：导出质检 —— 只有真导出（非预演）才触发，
+        # _qc_since 记录导出发起时刻，质检只看 mtime ≥ 它的产物。
+        self._last_was_export = False
+        self._qc_since = 0.0
 
         # -- 档案
         row = ttk.Frame(self)
@@ -1543,6 +1597,7 @@ class ExportTab(ttk.Frame):
         self.refresh_buttons()
         self.preview_ok = False
         self._preview_signature = ""
+        self._last_was_export = False      # 预演不触发质检
         self.app.log(T("preview_start"))
         self.app.start_worker(cmds)
 
@@ -1563,6 +1618,8 @@ class ExportTab(ttk.Frame):
             return
         self.busy = True
         self.refresh_buttons()
+        self._last_was_export = True
+        self._qc_since = time.time()
         self.app.start_worker(cmds)
 
     def on_worker_done(self, returncode):
@@ -1577,7 +1634,73 @@ class ExportTab(ttk.Frame):
             else:
                 self.preview_ok = False
                 self._preview_signature = ""
+            # P2（v1.5.0）：真导出成功 → 后台质检本次落盘的 wav
+            if self._last_was_export:
+                self._run_export_qc()
         self.refresh_buttons()
+
+    # ---------------- 导出质检（P2 · v1.5.0）----------------
+
+    def _expected_export_dir(self):
+        """本次导出的落盘目录（与 _build_cmds 的 _resolve_out_dir 同规则）。"""
+        out = self.out_var.get().strip()
+        if self.by_session_var.get() == "1" and self._profile:
+            name = ((self._profile.get("session") or {}).get("name") or "").strip()
+            if name:
+                out = os.path.join(out, name)
+        return out
+
+    def _run_export_qc(self):
+        from ptools.core.qc import qc_wavs   # noqa: F401  提前 import 触发语法自检
+        out_dir = self._expected_export_dir()
+        if not out_dir or not os.path.isdir(out_dir):
+            self.app.log(T("qc_none") + "\n")
+            return
+        try:
+            fps = self._session_fps()
+            start = self.start_var.get().strip()
+            end = self.end_var.get().strip()
+            expected = None
+            if fmt_tc_ok(start) and fmt_tc_ok(end):
+                expected = (tc_to_frame(end, fps) - tc_to_frame(start, fps)) / fps
+        except Exception:
+            expected = None
+        self.app.log(T("qc_running"))
+        threading.Thread(
+            target=self._qc_worker, daemon=True,
+            args=(out_dir, self._qc_since, self.sr_var.get(),
+                  self.bd_var.get(), expected)).start()
+
+    def _qc_worker(self, out_dir, since_ts, sr, bd, expected):
+        """后台核对 wav 头（不阻塞 UI），报告经 after 切回主线程渲染。"""
+        from ptools.core.qc import qc_wavs
+        try:
+            checked, issues = qc_wavs(out_dir, since_ts=since_ts,
+                                      expected_sr=sr, expected_bd=bd,
+                                      expected_dur_sec=expected)
+        except Exception as exc:
+            self.app.after(0, lambda e=exc: self.app.log(
+                "[qc] %s\n" % e, "err"))
+            return
+
+        def report():
+            if not checked and not issues:
+                self.app.log(T("qc_none") + "\n")
+                return
+            if issues:
+                self.app.log((T("qc_bad") % (len(issues), len(checked))) + "\n",
+                             "err")
+                for p, why in issues[:50]:
+                    self.app.log("  ✗ %s — %s\n" % (os.path.basename(p), why),
+                                 "err")
+                if len(issues) > 50:
+                    self.app.log("  … 共 %d 条异常，仅显示前 50 条\n"
+                                 % len(issues), "err")
+            else:
+                self.app.log((T("qc_ok") % len(checked)) + "\n", "ok")
+            self.app.log(T("qc_note") + "\n")
+
+        self.app.after(0, report)
 
     # ---------------- 小工具 ----------------
 
@@ -1748,6 +1871,9 @@ class BatchExportDialog(tk.Toplevel):
         # -- 开始
         start_row = ttk.Frame(self)
         start_row.pack(fill="x", padx=10, pady=(4, 10))
+        # W8（v1.5.0）：白天空好任务清单存盘，夜里 `pt-tools --batch jobs.json` 执行
+        ttk.Button(start_row, text=T("b_save_jobs"),
+                   command=self._save_jobs).pack(side="left")
         ttk.Button(start_row, text=T("b_start"), command=self._start).pack(side="right")
 
     # ---- 行管理 ----
@@ -1889,12 +2015,17 @@ class BatchExportDialog(tk.Toplevel):
         except Exception:
             pass
 
-    # ---- 生成 jobs 并启动 ----
+    # ---- 生成 jobs ----
 
-    def _start(self):
+    def _build_spec(self):
+        """校验对话框当前状态并构造 jobs spec dict；参数不全时弹框返回 None。
+
+        W8（v1.5.0）从 _start 中抽出：`开始执行` 与「保存任务清单」共用同一份
+        构造逻辑，保证 GUI 里跑的与存盘交给 --batch 的完全一致。
+        """
         if not self.rows:
             messagebox.showwarning(T("msg_invalid"), T("b_need_ptx"))
-            return
+            return None
         tab = self.tab
         try:
             margin = max(float(tab.margin_var.get() or 0), 0)
@@ -1915,7 +2046,7 @@ class BatchExportDialog(tk.Toplevel):
         modes = [m for m in EXPORT_MODES if tab._mode_on(m)]
         if not modes:
             messagebox.showwarning(T("msg_invalid"), T("msg_no_mode"))
-            return
+            return None
         srcs = (tab._profile or {}).get("sources", {})
         for m in modes:
             if m == "mix":
@@ -1938,7 +2069,7 @@ class BatchExportDialog(tk.Toplevel):
             elif m == "track":
                 if not picked_tracks:
                     messagebox.showwarning(T("msg_invalid"), T("msg_no_track_sel"))
-                    return
+                    return None
                 exports.append({"kind": "track", "sources": picked_tracks})
         if any((e.get("kind") in ("output", "bus")) and not e.get("sources")
                for e in exports):
@@ -1946,7 +2077,7 @@ class BatchExportDialog(tk.Toplevel):
                                    T("msg_no_output_src") if "output" in
                                    [e.get("kind") for e in exports if not e.get("sources")]
                                    else T("msg_no_bus_src"))
-            return
+            return None
 
         jobs = []
         self._fallback_used = False
@@ -1974,7 +2105,7 @@ class BatchExportDialog(tk.Toplevel):
         out_root = tab.out_var.get().strip()
         if not out_root:
             messagebox.showwarning(T("msg_invalid"), T("msg_out_missing"))
-            return
+            return None
         spec = {
             "defaults": {
                 "sample_rate": tab.sr_var.get(),
@@ -1994,6 +2125,14 @@ class BatchExportDialog(tk.Toplevel):
             },
             "jobs": jobs,
         }
+        return spec
+
+    def _start(self):
+        spec = self._build_spec()
+        if spec is None:
+            return
+        tab = self.tab
+        jobs = spec["jobs"]
         os.makedirs(spec["paths"]["profile_dir"], exist_ok=True)
         tmp = tempfile.mkdtemp(prefix="pt_batch_jobs_")
         jobs_path = os.path.join(tmp, "jobs.json")
@@ -2010,9 +2149,264 @@ class BatchExportDialog(tk.Toplevel):
         tab.app.start_worker([cmd])
         self.destroy()
 
+    def _save_jobs(self):
+        """W8（v1.5.0）：把任务清单存成 jobs.json，交给 `pt-tools --batch` 夜间执行。"""
+        spec = self._build_spec()
+        if spec is None:
+            return
+        path = filedialog.asksaveasfilename(
+            title=T("b_save_jobs"), defaultextension=".json",
+            initialfile="pt-batch-jobs.json",
+            filetypes=[("JSON", "*.json"), ("All", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(spec, f, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            messagebox.showerror(T("b_save_jobs"),
+                                 T("b_jobs_save_failed") % exc)
+            return
+        self.tab.app.log((T("b_jobs_saved") % path) + "\n")
+        messagebox.showinfo(T("b_save_jobs"), T("b_jobs_saved") % path)
+
 
 # ---------------------------------------------------------------------------
-# Tab 3 · 清理（骨架置灰：需 PT 2025.10+）
+# Tab 3 · 档案库（P3 · v1.5.0）+ 导出历史（P4）
+# ---------------------------------------------------------------------------
+
+class LibraryTab(ttk.Frame):
+    """档案库：profile_dir 平铺档案的列表 / 搜索 / 加载 / 打开 / 删除（回收站）。
+
+    档案自 v1.4.0 起按 `<工程名>-pt-profile.json` 平铺存放，本页为此而设：
+    「越攒越多、没有管理界面」的问题在这里收口。删除走 Windows 回收站
+    （PowerShell + Microsoft.VisualBasic），失败显式报错，绝不静默硬删。
+    下方「导出历史」按修改时间列出输出根里的工程文件夹（P4 最简形态）。
+    """
+
+    def __init__(self, master, app):
+        super().__init__(master, padding=12)
+        self.app = app
+        self._rows = {}      # iid -> 档案绝对路径
+        self._hist = {}      # iid -> 输出根条目绝对路径
+
+        what = ttk.LabelFrame(self, text="  " + T("lib_what_title") + "  ", padding=8)
+        what.pack(fill="x")
+        ttk.Label(what, text=T("lib_what_body"), wraplength=760,
+                  justify="left").pack(anchor="w")
+
+        # —— 档案目录 + 搜索 ——
+        row = ttk.Frame(self)
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Label(row, text=T("lib_dir")).pack(side="left")
+        self.var_dir = tk.StringVar(value=app.cfg.get("profile_dir", ""))
+        ttk.Label(row, textvariable=self.var_dir, foreground="#555",
+                  width=52).pack(side="left", padx=6)
+        ttk.Button(row, text=T("lib_refresh"), width=10,
+                   command=self.refresh).pack(side="left")
+        row2 = ttk.Frame(self)
+        row2.pack(fill="x", pady=(4, 0))
+        ttk.Label(row2, text=T("lib_search")).pack(side="left")
+        self.var_search = tk.StringVar()
+        self.var_search.trace_add("write", lambda *a: self._reload_profiles())
+        ttk.Entry(row2, textvariable=self.var_search, width=24).pack(
+            side="left", padx=6)
+
+        # —— 档案列表 ——
+        tree_wrap = ttk.LabelFrame(self, padding=6)
+        tree_wrap.pack(fill="both", expand=True, pady=(4, 0))
+        self.tree = ttk.Treeview(
+            tree_wrap, columns=("file", "project", "mtime", "size"),
+            show="headings", height=8)
+        self.tree.heading("file", text=T("lib_col_file"))
+        self.tree.heading("project", text=T("lib_col_project"))
+        self.tree.heading("mtime", text=T("lib_col_mtime"))
+        self.tree.heading("size", text=T("lib_col_size"))
+        self.tree.column("file", width=260)
+        self.tree.column("project", width=180)
+        self.tree.column("mtime", width=140, anchor="center", stretch=False)
+        self.tree.column("size", width=80, anchor="e", stretch=False)
+        sb = ttk.Scrollbar(tree_wrap, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<Double-1>", lambda _e: self._load_selected())
+
+        btns = ttk.Frame(self)
+        btns.pack(fill="x", pady=(6, 0))
+        ttk.Button(btns, text=T("lib_load"),
+                   command=self._load_selected).pack(side="left")
+        ttk.Button(btns, text=T("lib_open_dir"),
+                   command=self._open_dir).pack(side="left", padx=8)
+        ttk.Button(btns, text=T("lib_delete"),
+                   command=self._delete_selected).pack(side="left")
+
+        # —— 导出历史（P4）——
+        hist = ttk.LabelFrame(self, text="  " + T("lib_hist_title") + "  ", padding=6)
+        hist.pack(fill="both", pady=(8, 0))
+        self.hist_tree = ttk.Treeview(hist, columns=("name", "mtime"),
+                                      show="headings", height=5)
+        self.hist_tree.heading("name", text=T("lib_col_file"))
+        self.hist_tree.heading("mtime", text=T("lib_col_mtime"))
+        self.hist_tree.column("name", width=420)
+        self.hist_tree.column("mtime", width=160, anchor="center", stretch=False)
+        hsb = ttk.Scrollbar(hist, command=self.hist_tree.yview)
+        self.hist_tree.configure(yscrollcommand=hsb.set)
+        hsb.pack(side="right", fill="y")
+        self.hist_tree.pack(side="left", fill="both", expand=True)
+        self.hist_tree.bind("<Double-1>", self._open_hist_item)
+        ttk.Button(hist, text=T("lib_open_outroot"), width=14,
+                   command=self._open_outroot).pack(side="right", padx=4)
+
+        self.refresh()
+
+    # ---- 档案 ----
+
+    def _reload_profiles(self):
+        self.tree.delete(*self.tree.get_children())
+        self._rows.clear()
+        d = self.var_dir.get() or ""
+        if not d or not os.path.isdir(d):
+            self.tree.insert("", "end", values=(T("lib_empty"), "", "", ""))
+            return
+        q = self.var_search.get().strip().lower()
+        try:
+            names = [n for n in os.listdir(d) if n.lower().endswith(".json")]
+        except OSError:
+            names = []
+        names.sort()
+        for name in names:
+            p = os.path.join(d, name)
+            if q and q not in name.lower():
+                continue
+            try:
+                st = os.stat(p)
+                mtime = time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))
+                size = "%.1f KB" % (st.st_size / 1024.0)
+            except OSError:
+                mtime, size = "?", "?"
+            project = ""
+            try:
+                with open(p, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                project = ((data.get("session") or {}).get("name") or "").strip()
+            except Exception as exc:
+                # 档案库可能混入手改/损坏 json —— 标注但不炸（v1.5.0）
+                self.app.log(T("lib_bad_json") % name + " %s\n" % exc)
+            iid = self.tree.insert("", "end", values=(name, project, mtime, size))
+            self._rows[iid] = p
+
+    def _selected_path(self):
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        return self._rows.get(sel[0])
+
+    def _load_selected(self):
+        p = self._selected_path()
+        if not p:
+            return
+        if self.app.apply_profile(p):
+            try:
+                self.app.nb.select(1)      # 加载即切到导出页
+            except Exception:
+                pass
+
+    def _open_dir(self):
+        p = self._selected_path() or (self.var_dir.get() or "")
+        target = os.path.dirname(p) if (p and os.path.isfile(p)) else p
+        if not open_in_explorer(target):
+            messagebox.showinfo(T("menu_file"), T("no_outdir"))
+
+    def _delete_selected(self):
+        sel = [self._rows[i] for i in self.tree.selection() if i in self._rows]
+        if not sel:
+            return
+        if not messagebox.askyesno(T("lib_delete"),
+                                   T("lib_delete_confirm") % len(sel)):
+            return
+        ok = self._recycle_files(sel)
+        if ok is None:
+            self.app.log(T("lib_delete_failed") % "Recycle Bin 不可用" + "\n", "err")
+            return
+        if ok < len(sel):
+            self.app.log(T("lib_delete_failed") % "部分文件未能移入回收站" + "\n", "err")
+        self.app.log((T("lib_deleted") % ok) + "\n")
+        self._reload_profiles()
+
+    @staticmethod
+    def _recycle_files(paths):
+        """经 Windows 回收站删文件（PowerShell + VisualBasic）。
+
+        返回成功条数；PowerShell 本身不可用时返回 None（调用方显式报错，
+        绝不静默改成永久删除）。
+        """
+        import subprocess as _sp
+        from ptools.core.settings import CREATE_NO_WINDOW
+        lines = ["Add-Type -AssemblyName Microsoft.VisualBasic"]
+        for p in paths:
+            esc = str(p).replace("'", "''")
+            lines.append(
+                "try{[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("
+                "'%s','OnlyErrorDialogs','SendToRecycleBin');'OK'}catch{'FAIL'}" % esc)
+        try:
+            proc = _sp.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                 "\n".join(lines)],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=60, creationflags=CREATE_NO_WINDOW)
+        except Exception:
+            return None
+        if proc.returncode != 0:
+            return None
+        out = proc.stdout or ""
+        return out.count("OK")
+
+    # ---- 导出历史 ----
+
+    def _reload_history(self):
+        self.hist_tree.delete(*self.hist_tree.get_children())
+        self._hist.clear()
+        root = self.app.cfg.get("last_out_dir") or ""
+        if not root or not os.path.isdir(root):
+            self.hist_tree.insert("", "end", values=(T("lib_hist_empty"), ""))
+            return
+        try:
+            entries = [os.path.join(root, n) for n in os.listdir(root)]
+        except OSError:
+            entries = []
+        entries = [e for e in entries if os.path.isdir(e)]
+        entries.sort(key=lambda p: (os.path.getmtime(p) if os.path.exists(p) else 0),
+                     reverse=True)
+        for p in entries[:200]:
+            try:
+                mtime = time.strftime("%Y-%m-%d %H:%M",
+                                      time.localtime(os.path.getmtime(p)))
+            except OSError:
+                mtime = "?"
+            iid = self.hist_tree.insert("", "end",
+                                        values=(os.path.basename(p), mtime))
+            self._hist[iid] = p
+
+    def _open_hist_item(self, _e=None):
+        sel = self.hist_tree.selection()
+        p = self._hist.get(sel[0]) if sel else None
+        if p and not open_in_explorer(p):
+            messagebox.showinfo(T("menu_file"), T("no_outdir"))
+
+    def _open_outroot(self):
+        root = self.app.cfg.get("last_out_dir") or ""
+        if not open_in_explorer(root):
+            messagebox.showinfo(T("menu_file"), T("no_outdir"))
+
+    def refresh(self):
+        self.var_dir.set(self.app.cfg.get("profile_dir", ""))
+        self._reload_profiles()
+        self._reload_history()
+
+
+# ---------------------------------------------------------------------------
+# Tab 4 · 清理（骨架置灰：需 PT 2025.10+）
 # ---------------------------------------------------------------------------
 
 class CleanTab(ttk.Frame):

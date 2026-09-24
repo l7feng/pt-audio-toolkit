@@ -12,8 +12,9 @@ from logging.handlers import RotatingFileHandler
 
 APP_NAME = "rename-unify"
 # 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），显示时补 v（见 title()）。
-# v1.4.0（2026-09-24）：R2 识别率统计行 + 滚动日志接入（补记 v1.3.1 Demo 无集数工程）。
-APP_VERSION = "1.4.0"
+# v1.5.0（2026-09-24）：R1 执行前审计 json（rename_audit_*.json）+ 按审计跨会话回滚
+#   + R3 规则集导出/导入。
+APP_VERSION = "1.5.0"
 
 
 def app_dir():
