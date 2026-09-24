@@ -46,6 +46,65 @@ class QueueWriter:
         pass
 
 
+class ScrollableFrame(ttk.Frame):
+    """G2/J12（v2.6.6）：纵向可滚动容器 —— 信息密页的通用底座。
+
+    用法：页面 build() 里把 ``outer = self`` 换成::
+
+        outer = ScrollableFrame(self)
+        outer.pack(fill="both", expand=True)
+
+    之后照常向 ``outer`` 上 pack 子控件。窗口不够高时右侧出现滚动条，
+    鼠标滚轮直接滚动；鼠标指向日志框 / 列表框 / 树等**自身可滚的控件**
+    时让位给它们，不会双重滚动。
+    """
+
+    def __init__(self, master, padding=10, **kw):
+        super().__init__(master, **kw)
+        self.canvas = tk.Canvas(self, highlightthickness=0)
+        self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.vsb.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.inner = ttk.Frame(self.canvas, padding=padding)
+        self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
+            scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        # 滚轮绑定在 all 上（覆盖嵌套子控件），滚动时按鼠标位置智能让位
+        self.canvas.bind_all("<MouseWheel>", self._on_wheel)
+        self.bind("<Destroy>", self._on_destroy)
+
+    def _on_canvas_configure(self, e):
+        # inner 宽度跟随 canvas —— 保证 LabelFrame 等 stretch 控件不截断
+        self.canvas.itemconfigure(self._win, width=e.width)
+
+    def _on_wheel(self, e):
+        # 鼠标落在自身可滚的控件上时不代滚（Text/Listbox/Treeview/Combobox）
+        try:
+            w = self.winfo_containing(e.x_root, e.y_root)
+        except Exception:
+            w = None
+        while w is not None:
+            if isinstance(w, (tk.Text, tk.Listbox, tk.Toplevel, ttk.Treeview)):
+                return
+            if isinstance(w, ttk.Combobox):
+                return
+            w = getattr(w, "master", None)
+        try:
+            self.canvas.yview_scroll(int(-e.delta / 120), "units")
+        except Exception:
+            pass
+
+    def _on_destroy(self, _e):
+        # 只在本容器销毁时解绑全局滚轮，避免影响其他页/窗口
+        try:
+            if str(self) == str(_e.widget):
+                self.canvas.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+
+
 class BaseTab(ttk.Frame):
     """标签页基类：统一提供配置读写、日志、异步执行。"""
 

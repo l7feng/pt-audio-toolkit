@@ -2,8 +2,8 @@
   "input_dir": "D:/My-Temporary/Jianying-Backup/Project/JianyingPro Drafts",
   "output_dir": "D:/My-Temporary/Jianying-Backup/Tools/out",
   "name_template": "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
-  "audio_format": "mp3",
-  "bitrate_kbps": 192,
+  "audio_format": "wav",
+  "bitrate_kbps": 320,
   "conflict": "rename",
   "dedupe": true,
   "extract_video_tracks": true,
@@ -11,5 +11,6 @@
   "temp_dir": "D:/My-Temporary/Jianying-Backup/Tools/tmp",
   "log_dir": "D:/My-Temporary/Jianying-Backup/Tools/log",
   "data_dir": "D:/My-Temporary/Jianying-Backup/Tools/data",
-  "remarks": ""
+  "remarks": "",
+  "_migrated_266": true
 }

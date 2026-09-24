@@ -44,6 +44,44 @@ import config as CFG
 import core_rules as CORE
 
 
+# ---------------------------------------------------------------------------
+# G1（v2.6.6 / B批）：拖拽支持 —— tkinterdnd2 缺席时安全回退（无拖拽，不报错）
+# ---------------------------------------------------------------------------
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES as _DND_FILES
+    _TKDND_OK = True
+except ImportError:
+    TkinterDnD = None
+    _TKDND_OK = False
+
+
+def split_dnd_data(data):
+    """tkinterdnd2 的 drop 数据 → 路径列表（含空格路径是 {..} 花括号包裹）。"""
+    out = []
+    for tok in re.findall(r"\{[^}]*\}|\S+", data or ""):
+        out.append(tok.strip("{}"))
+    return [p for p in out if p]
+
+
+def enable_path_drop(entry, on_drop):
+    """给 Entry 注册文件夹/文件拖入；拖入后回调 on_drop(路径列表)。
+
+    tkinterdnd2 不可用（未安装/打包未带）时静默跳过，保持原有无拖拽行为。
+    """
+    if not _TKDND_OK:
+        return False
+
+    def _handle(e):
+        paths = split_dnd_data(e.data)
+        if paths:
+            on_drop(paths)
+        return e.action
+
+    entry.drop_target_register(_DND_FILES)
+    entry.dnd_bind("<<Drop>>", _handle)
+    return True
+
+
 # --- windowed 模式下 stdout/stderr 可能是 None，任何 print 都会崩 ---
 def _safe_io():
     for name in ("stdout", "stderr"):
@@ -102,7 +140,7 @@ class QueueWriter(object):
         pass
 
 
-class App(tk.Tk):
+class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
     def __init__(self):
         super().__init__()
         # 三重保险消除 Tk 启动闪窗
@@ -137,7 +175,9 @@ class App(tk.Tk):
             self.geometry(self.cfg.get("window") or "1280x820")
         except tk.TclError:
             self.geometry("1280x820")
-        self.minsize(1080, 700)
+        # R1（v2.6.6）：minsize 从 1080x700 下调 —— 页内树/列表各自带滚动，
+        # 小窗口依然可用，窗口可以随意收小放到屏幕边角（v1.5.0 时拉不小是痛点）
+        self.minsize(880, 560)
 
         self._center_on_screen()
         self.overrideredirect(False)
@@ -204,7 +244,7 @@ class App(tk.Tk):
         fld.pack(fill="x", padx=10, pady=(10, 6))
 
         hint_map = {
-            "片名": "剧名/项目名，如 法老、前夫、誓言",
+            "片名": "剧名/项目名缩写（开源版示例；工具不预设具体项目）",
             "日期": "如 0923 或 20260923",
             "版本": "如 V01、V02",
             "用户": "你的个人代号，如 7F（v1.1.0 里叫「档位」）",
@@ -650,7 +690,10 @@ class App(tk.Tk):
 
         ttk.Label(top, text="目标目录:").grid(row=0, column=0, sticky="w", padx=6, pady=4)
         self.var_root = tk.StringVar(value=self.cfg["last_root"])
-        ttk.Entry(top, textvariable=self.var_root).grid(row=0, column=1, sticky="ew", padx=6)
+        entry_root = ttk.Entry(top, textvariable=self.var_root)
+        entry_root.grid(row=0, column=1, sticky="ew", padx=6)
+        # G1（v2.6.6 / B批）：目标目录支持拖入，拖入即刷新预览
+        enable_path_drop(entry_root, self._drop_root)
         ttk.Button(top, text="浏览…", command=self._pick_root).grid(row=0, column=2, padx=6)
 
         opt = ttk.Frame(top)
@@ -793,6 +836,12 @@ class App(tk.Tk):
         if p:
             self.var_root.set(p)
             self._refresh_preview()
+
+    def _drop_root(self, paths):
+        """G1（v2.6.6 / B批）：拖入目标目录 —— 取首个路径并刷新预览。"""
+        p = paths[0]
+        self.var_root.set(p)
+        self._refresh_preview()
 
     def _pick_log(self):
         p = filedialog.askopenfilename(

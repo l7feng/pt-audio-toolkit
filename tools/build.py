@@ -47,7 +47,7 @@ TARGETS = [
         "key": "pt-tools",
         "entry": "src/pt-tools/pt_tools_gui.py",
         "name": "pt-tools",
-        "args": [],
+        "args": ["--hidden-import", "tkinterdnd2", "--collect-data", "tkinterdnd2"],
         "post": "pt_tools_skills",
     },
     {
@@ -68,7 +68,8 @@ TARGETS = [
         "key": "rename-unify",
         "entry": "src/rename-unify/code/main.py",
         "name": "rename-unify",
-        "args": ["--paths", "src/rename-unify/code"],
+        "args": ["--paths", "src/rename-unify/code",
+                 "--hidden-import", "tkinterdnd2", "--collect-data", "tkinterdnd2"],
         "post": None,
     },
 ]

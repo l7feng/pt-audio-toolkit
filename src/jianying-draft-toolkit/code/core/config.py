@@ -84,8 +84,8 @@ DEFAULT_CONFIG = {
     # ── 命名模板多选（2026-09-22 新增）──
     "name_templates": NAMING_PRESETS,                 # 命名模板库（候选清单，可增删）
     "name_templates_active": [NAMING_PRESETS[0]],     # 当前勾选的模板（多选 → 各生成一份）
-    "audio_format": "mp3",
-    "bitrate_kbps": 192,
+    "audio_format": "wav",
+    "bitrate_kbps": 320,
     "conflict": "rename",
     "dedupe": True,
     "extract_video_tracks": True,
@@ -177,13 +177,34 @@ def config_path() -> Path:
 
 
 def load_config(config_path: Path) -> dict:
-    """从磁盘读配置；文件不存在或 JSON 损坏时返回空 dict（调用方补默认值）。"""
+    """从磁盘读配置；文件不存在或 JSON 损坏时返回空 dict（调用方补默认值）。
+
+    v2.6.6（J4）：一次性默认值迁移 —— 旧出厂默认「mp3 / 192」在用户没特意
+    改过时升为「wav / 320」（用户反馈的期望默认）。用 ``_migrated_266``
+    标记保证只跑一次：迁移之后用户再特意改回 mp3/192 不会被反复覆盖。
+    """
     if config_path.exists():
         raw = config_path.read_text(encoding="utf-8-sig")  # utf-8-sig 自动剥离 BOM
         try:
-            return json.loads(raw)
+            cfg = json.loads(raw)
         except json.JSONDecodeError:
             return {}
+        if isinstance(cfg, dict) and not cfg.get("_migrated_266"):
+            changed = False
+            if cfg.get("audio_format", "mp3") == "mp3":
+                cfg["audio_format"] = "wav"
+                changed = True
+            if str(cfg.get("bitrate_kbps", 192)) == "192":
+                cfg["bitrate_kbps"] = 320
+                changed = True
+            cfg["_migrated_266"] = True
+            if changed:
+                try:
+                    save_config(cfg, config_path)
+                except Exception:
+                    pass
+        return cfg
+    return {}
     return {}
 
 

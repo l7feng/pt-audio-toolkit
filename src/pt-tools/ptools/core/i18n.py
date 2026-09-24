@@ -42,6 +42,11 @@ TEXTS = {
                         "自查：PT 是否启动？启动中则可能仍在加载或 PTSL 被占用，详见 docs/ptsl-boot-plan.md"),
         "pt_warn_bar_ok": "",   # 在线时黄条隐藏，无文案
 
+        # —— P4 PT 版本适配说明常驻条（v1.5.2 / B批）——
+        "pt_info_bar": ("已验证：Pro Tools 25.6.1 · PTSL v6 · py-ptsl 602.0.0 · 端口 127.0.0.1:31416 ｜ "
+                        "其他 PT 版本未经完整验证（PTSL 协议版本与命令集随版本可能不同）；"
+                        "换设备/账号不受影响（PTSL 为本机服务）"),
+
         # —— P2 导出质检 ——
         "qc_running": "质检中…",
         "qc_none": "质检：输出目录里没有本次导出的 wav。",
@@ -94,7 +99,7 @@ TEXTS = {
         "s_req_title": "扫描前提",
         "s_req_ptsl_on": "●  Pro Tools 运行中（PTSL 在线）",
         "s_req_ptsl_off": "○  Pro Tools 未运行（PTSL 离线）",
-        "s_req_line2": "请在 Pro Tools 中打开要导出的工程（如「誓言24.ptx」）。",
+        "s_req_line2": "请在 Pro Tools 中打开要导出的工程（如「Demo24.ptx」）。",
         "s_steps_title": "操作步骤",
         "s_step1": "1)  启动 Pro Tools 并打开工程",
         "s_step2": "2)  点下方「扫描并生成档案」（只读，安全）",
@@ -398,6 +403,11 @@ TEXTS = {
                         "docs/ptsl-boot-plan.md"),
         "pt_warn_bar_ok": "",
 
+        # —— P4 PT version banner (v1.5.2 / B batch) ——
+        "pt_info_bar": ("Verified: Pro Tools 25.6.1 · PTSL v6 · py-ptsl 602.0.0 · port 127.0.0.1:31416 ｜ "
+                        "Other PT versions are NOT fully verified (PTSL protocol/commands vary); "
+                        "changing machine/account is fine (PTSL is a local service)"),
+
         # —— P2 export QC ——
         "qc_running": "QC running…",
         "qc_none": "QC: no wav from this export found in the output folder.",
@@ -451,7 +461,7 @@ TEXTS = {
         "s_req_title": "Requirements",
         "s_req_ptsl_on": "●  Pro Tools running (PTSL online)",
         "s_req_ptsl_off": "○  Pro Tools not running (PTSL offline)",
-        "s_req_line2": "Open the session you want to export in Pro Tools (e.g. \"ShiYan24.ptx\").",
+        "s_req_line2": "Open the session you want to export in Pro Tools (e.g. \"Demo24.ptx\").",
         "s_steps_title": "Steps",
         "s_step1": "1)  Start Pro Tools and open the session",
         "s_step2": "2)  Click \"Scan & Save Profile\" below (read-only, safe)",

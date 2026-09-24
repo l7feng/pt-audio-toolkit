@@ -55,7 +55,46 @@ def center_on_parent(win, parent):
         pass
 
 
-class App(tk.Tk):
+# ---------------------------------------------------------------------------
+# G1（v2.6.6）：拖拽支持 —— tkinterdnd2 缺席时安全回退（无拖拽能力，不报错）
+# ---------------------------------------------------------------------------
+
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES as _DND_FILES
+    _TKDND_OK = True
+except ImportError:
+    TkinterDnD = None
+    _TKDND_OK = False
+
+
+def split_dnd_data(data):
+    """tkinterdnd2 的 drop 数据 → 路径列表（含空格路径是 {..} 花括号包裹）。"""
+    out = []
+    for tok in re.findall(r"\{[^}]*\}|\S+", data or ""):
+        out.append(tok.strip("{}"))
+    return [p for p in out if p]
+
+
+def enable_path_drop(entry, on_drop):
+    """给 Entry 注册文件夹/文件拖入；拖入后回调 on_drop(路径列表)。
+
+    tkinterdnd2 不可用（未安装/打包未带）时静默跳过，保持原有无拖拽行为。
+    """
+    if not _TKDND_OK:
+        return False
+
+    def _handle(e):
+        paths = split_dnd_data(e.data)
+        if paths:
+            on_drop(paths)
+        return e.action
+
+    entry.drop_target_register(_DND_FILES)
+    entry.dnd_bind("<<Drop>>", _handle)
+    return True
+
+
+class App(_DND_BASE if _TKDND_OK else tk.Tk):
     def __init__(self):
         super().__init__()
         # 三重保险消除 Tk 启动闪窗：
@@ -136,6 +175,12 @@ class App(tk.Tk):
         self.geometry("860x680")
         self.minsize(780, 600)
         self._build_menubar()
+        # P4（v1.5.2 / B批）：PT 版本适配说明常驻条 —— 面向开源用户的版本边界
+        # 声明（已验证版本 / 协议风险 / 换设备说明）。与 P1 离线黄条并存：
+        # 本条常驻最上，黄条在线时隐藏、离线时挂在其下。
+        self.pt_info = tk.Label(self, text=T("pt_info_bar"), fg="#555550",
+                                bg="#f2f2e0", anchor="w", justify="left",
+                                padx=10, pady=3, wraplength=820)
         # P1（v1.5.0）：PT 离线常驻黄条 —— 离线时一眼可见，不再"点了按钮才深处报错"。
         # 在线时由 _poll_ptsl pack_forget 隐藏；整窗重建（语言切换）按当时状态重挂。
         self.pt_warn = tk.Label(self, text=T("pt_warn_bar"), fg="#5a4a00",
@@ -145,6 +190,7 @@ class App(tk.Tk):
         nb = ttk.Notebook(self)
         self.nb = nb
         nb.pack(fill="both", expand=True, padx=8, pady=(4, 0))
+        self.pt_info.pack(fill="x", padx=8, pady=(6, 0), before=self.nb)
         self.scan_tab = ScanTab(nb, self)
         self.export_tab = ExportTab(nb, self)
         self.library_tab = LibraryTab(nb, self)
@@ -787,7 +833,8 @@ class ExportTab(ttk.Frame):
         row.pack(fill="x")
         ttk.Label(row, text=T("e_profile")).pack(side="left")
         self.profile_var = app.v("export_profile", app.profile_path)
-        ttk.Entry(row, textvariable=self.profile_var, width=44).pack(side="left", padx=6)
+        self.entry_profile = ttk.Entry(row, textvariable=self.profile_var, width=44)
+        self.entry_profile.pack(side="left", padx=6)
         ttk.Button(row, text=T("e_browse"),
                    command=self._browse_profile).pack(side="left")
 
@@ -1010,6 +1057,24 @@ class ExportTab(ttk.Frame):
         self.batch_btn.pack(side="left", padx=8)
         ttk.Label(btnrow, text=T("e_verify"),
                   foreground="#888").pack(side="right")
+
+        # G1（v2.6.6 / B批）：档案 json 与输出目录支持拖入
+        # （tkinterdnd2 缺席时 enable_path_drop 静默跳过，行为不变）
+        enable_path_drop(self.entry_profile, self._drop_profile)
+        enable_path_drop(self.out_entry, self._drop_out)
+
+    def _drop_profile(self, paths):
+        """G1：拖入档案 json —— 直接走既有加载链（含校验与自动应用）。"""
+        p = paths[0]
+        self.app.log("[drop] 档案：%s\n" % p)
+        self._load_profile(p)
+
+    def _drop_out(self, paths):
+        """G1：拖入输出目录（或任一路径）→ 填入输出目录并使预览失效。"""
+        p = paths[0]
+        self.out_var.set(p)
+        self.app.log("[drop] 输出目录：%s\n" % p)
+        self._invalidate_preview()
 
     # ---------------- 档案与数据 ----------------
 

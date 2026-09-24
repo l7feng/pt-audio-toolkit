@@ -10,7 +10,7 @@ from pathlib import Path
 from tkinter import ttk, messagebox
 
 import main as core
-from .base import BaseTab
+from .base import BaseTab, ScrollableFrame
 
 # ---------------------------------------------------------------------------
 # 下拉「显示名 ⇄ 内部 key」（v2.6.2 · Q9 Q11）
@@ -52,7 +52,11 @@ class ExportTab(BaseTab):
     # ───────────── 界面 ─────────────
 
     def build(self):
-        outer = self
+        # G2/J12（v2.6.6）：导出页信息最密，套可滚动容器 —— 窗口不够高时
+        # 右侧出滚动条，滚轮可滚（日志框/列表框上滚轮自动让位给它们）。
+        outer = ScrollableFrame(self)
+        outer.pack(fill="both", expand=True)
+        outer = outer.inner
 
         # ── 输入源（v2.6.3 · 五.2 合并）──
         # 旧版有**两处**输入入口：「导出配置」里的「剪映草稿目录」行 +
@@ -173,26 +177,35 @@ class ExportTab(BaseTab):
                   foreground="#888").grid(row=2, column=0, columnspan=4, sticky="w")
         self._fill_templates()
 
-        # 格式 / 码率 / 重名
-        ttk.Label(cfg_box, text="音频格式").grid(row=2, column=0, sticky="w", padx=4, pady=3)
-        self.var_format = tk.StringVar(value=self.cfg.get("audio_format", "mp3"))
+        # 格式 / 码率 / 重名 —— v2.6.6（J6）：旧版三组控件全挤在 row=2，
+        # 码率标签与格式下拉同列相贴，视觉上「码率框里出现了重名策略」。
+        # 拆成两行：格式+码率一行（各占独立列），重名策略独占下一行。
+        ttk.Label(cfg_box, text="音频格式（片段模式）").grid(
+            row=2, column=0, sticky="w", padx=4, pady=3)
+        # v2.6.6（J4）：出厂默认 mp3/192 → wav/320（用户工作流的期望默认）
+        self.var_format = tk.StringVar(value=self.cfg.get("audio_format", "wav"))
         self.cb_format = ttk.Combobox(cfg_box, textvariable=self.var_format, values=("mp3", "wav"),
                                       width=10, state="readonly")
         self.cb_format.grid(row=2, column=1, sticky="w", padx=4)
 
-        ttk.Label(cfg_box, text="码率 kbps").grid(row=2, column=1, sticky="e", padx=(24, 4))
-        self.var_bitrate = tk.StringVar(value=str(self.cfg.get("bitrate_kbps", 192)))
+        ttk.Label(cfg_box, text="码率 kbps（仅 mp3）").grid(
+            row=2, column=2, sticky="e", padx=(24, 4))
+        self.var_bitrate = tk.StringVar(value=str(self.cfg.get("bitrate_kbps", 320)))
         self.cb_bitrate = ttk.Combobox(cfg_box, textvariable=self.var_bitrate,
                                        values=("128", "192", "256", "320"), width=8,
                                        state="readonly")
-        self.cb_bitrate.grid(row=2, column=2, sticky="w", padx=4)
+        self.cb_bitrate.grid(row=2, column=3, sticky="w", padx=4)
+        # wav 下码率不适用 → 格式变化时联动置灰（统一走 _sync_mode 出口）
+        self.var_format.trace_add("write", lambda *a: self._sync_mode())
 
-        ttk.Label(cfg_box, text="重名策略").grid(row=2, column=2, sticky="e", padx=(24, 4))
+        ttk.Label(cfg_box, text="重名策略").grid(
+            row=3, column=0, sticky="w", padx=4, pady=3)
         self.var_conflict = tk.StringVar()
         # v2.6.2：旧版这里是纯英文的 rename/cover/skip
-        ttk.Combobox(cfg_box, textvariable=self.var_conflict,
-                     values=list(CONFLICT_LABEL_TO_KEY), width=20,
-                     state="readonly").grid(row=2, column=3, sticky="w", padx=4)
+        self.cb_conflict = ttk.Combobox(cfg_box, textvariable=self.var_conflict,
+                                        values=list(CONFLICT_LABEL_TO_KEY), width=20,
+                                        state="readonly")
+        self.cb_conflict.grid(row=3, column=1, columnspan=3, sticky="w", padx=4)
         self._set_conflict_display()
 
         # 开关
@@ -204,7 +217,7 @@ class ExportTab(BaseTab):
         self.var_split_video = tk.BooleanVar(
             value=bool(self.cfg.get("split_by_video", False)))
         row = ttk.Frame(cfg_box)
-        row.grid(row=3, column=0, columnspan=4, sticky="w", padx=4, pady=3)
+        row.grid(row=4, column=0, columnspan=4, sticky="w", padx=4, pady=3)
         self.chk_dedupe = ttk.Checkbutton(row, text="按内容去重", variable=self.var_dedupe)
         self.chk_dedupe.pack(side="left")
         ttk.Checkbutton(row, text="提取视频内嵌音轨",
@@ -220,14 +233,14 @@ class ExportTab(BaseTab):
                   text="分包时可用新占位符：{视频项目} {集数} {编号} {AiFX} {视频名}；"
                        "整轨命名另可用 {轨道类别}（MX/DX/SFX/AiFX 自动判定）；"
                        "视频名是纯数字或项目名超过 4 字时会弹窗请您补项目名。",
-                  foreground="#888").grid(row=5, column=0, columnspan=4, sticky="w",
+                  foreground="#888").grid(row=6, column=0, columnspan=4, sticky="w",
                                           padx=4, pady=(0, 4))
 
         # 备注
-        ttk.Label(cfg_box, text="备注文案").grid(row=4, column=0, sticky="w", padx=4, pady=3)
+        ttk.Label(cfg_box, text="备注文案").grid(row=5, column=0, sticky="w", padx=4, pady=3)
         self.var_remarks = tk.StringVar(value=self.cfg.get("remarks", ""))
         ttk.Entry(cfg_box, textvariable=self.var_remarks, width=66).grid(
-            row=4, column=1, columnspan=3, sticky="we", padx=4, pady=3)
+            row=5, column=1, columnspan=3, sticky="we", padx=4, pady=3)
         cfg_box.columnconfigure(1, weight=1)
 
         # 按钮
@@ -277,7 +290,7 @@ class ExportTab(BaseTab):
         try:
             self.cfg["bitrate_kbps"] = int(self.var_bitrate.get())
         except ValueError:
-            self.cfg["bitrate_kbps"] = 192
+            self.cfg["bitrate_kbps"] = 320
         self.cfg["conflict"] = self._read_conflict()
         self.cfg["dedupe"] = bool(self.var_dedupe.get())
         self.cfg["extract_video_tracks"] = bool(self.var_extract_video.get())
@@ -309,8 +322,8 @@ class ExportTab(BaseTab):
         #    但该控件在 v1.2.0 改多选 Listbox 时已被删除 —— 菜单点
         #    「重新载入配置 / 默认路径设置」会直接 AttributeError 崩溃。
         #    name_template 由 collect() 从勾选模板派生，此处无需也不应回填。
-        self.var_format.set(c.get("audio_format", "mp3"))
-        self.var_bitrate.set(str(c.get("bitrate_kbps", 192)))
+        self.var_format.set(c.get("audio_format", "wav"))
+        self.var_bitrate.set(str(c.get("bitrate_kbps", 320)))
         self._set_conflict_display()
         self.var_dedupe.set(bool(c.get("dedupe", True)))
         self.var_extract_video.set(bool(c.get("extract_video_tracks", True)))
@@ -479,12 +492,18 @@ class ExportTab(BaseTab):
         except Exception:
             pass
         # 片段专属项（整轨固定 WAV，码率/去重无意义）
-        clip_state = "readonly" if clip else "disabled"
-        for w in (self.cb_format, self.cb_bitrate):
-            try:
-                w.configure(state=clip_state)
-            except Exception:
-                pass
+        # v2.6.6（J4）：码率仅 mp3 有意义 —— wav 下也置灰，避免「WAV+320」的困惑
+        try:
+            self.cb_format.configure(state="readonly" if clip else "disabled")
+        except Exception:
+            pass
+        try:
+            if not clip or self.var_format.get() == "wav":
+                self.cb_bitrate.configure(state="disabled")
+            else:
+                self.cb_bitrate.configure(state="readonly")
+        except Exception:
+            pass
         try:
             self.chk_dedupe.configure(state="normal" if clip else "disabled")
         except Exception:

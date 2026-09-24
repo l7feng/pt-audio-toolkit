@@ -14,7 +14,7 @@ APP_NAME = "rename-unify"
 # 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），显示时补 v（见 title()）。
 # v1.5.0（2026-09-24）：R1 执行前审计 json（rename_audit_*.json）+ 按审计跨会话回滚
 #   + R3 规则集导出/导入。
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 
 
 def app_dir():
