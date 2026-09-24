@@ -3,11 +3,13 @@
 剪映工程工具包 — 图形界面（三标签页）
 =====================================
 
-一个 exe，三件事，三页配置彼此完全独立：
+一个 exe，两件事，页配置彼此完全独立：
 
   ① 导出音频     剪映草稿 → 切片导出（不需要 Pro Tools）
   ② 导入多轨     .ptx（需 PT 在线）/ 交付包 json（离线）→ 写剪映草稿
-  ③ 生成交付包   json 路径相对化 + 音频随包（只做数据，给剪辑用）
+
+  v2.7.0（J8）：③「生成交付包」页退役 —— 交付包改由 pt-tools 扫描建档页
+  一步直出（扫描 + 打包一气呵成）；本工具保留**离线导入**消费能力。
 
 用法：
   python gui.py          # 源码模式
@@ -29,7 +31,6 @@ from tkinter import ttk, messagebox
 import main as core
 from tabs.export_tab import ExportTab
 from tabs.import_tab import ImportTab
-from tabs.delivery_tab import DeliveryTab
 from tabs.paths_dialog import PathsDialog
 from core.host import StatusProbe
 from core import menus as menu_actions
@@ -598,7 +599,7 @@ class JianYingToolkitApp:
 
         ``Accent.TButton`` 此前被三处 tab 引用但**从未定义** → ttk 静默回落到
         默认样式（不报错，只是「主按钮」和普通按钮长得一样）。这里补上，
-        让「开始导出 / 导入到剪映草稿 / 生成交付包 / 保存」这几个主按钮真正突出。
+        让「开始导出 / 导入到剪映草稿 / 保存」这几个主按钮真正突出。
         """
         try:
             st = ttk.Style(self.root)
@@ -629,7 +630,7 @@ class JianYingToolkitApp:
         nb.pack(fill="both", expand=True, padx=8, pady=(6, 8))
         self.notebook = nb
 
-        for cls in (ExportTab, ImportTab, DeliveryTab):
+        for cls in (ExportTab, ImportTab):   # v2.7.0（J8）：③交付包页退役
             tab = cls(nb, self)
             nb.add(tab, text=tab.title)
             self._tabs.append(tab)
@@ -794,7 +795,7 @@ class JianYingToolkitApp:
         if b is None:
             return ""
         mapping = {
-            "btn_run": ("▶ 开始导出", "生成交付包"),
+            "btn_run": "▶ 开始导出",
             "btn_import": "② 导入到剪映草稿",
             "btn_parse": "① 解析 PT 工程",
             "btn_preview": "预演（不写入）",

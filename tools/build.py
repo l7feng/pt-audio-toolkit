@@ -125,7 +125,7 @@ def post_pt_tools_skills(out_root):
     dst_root = out_root / "pt-tools" / "_internal" / "skills"
     src_root = REPO / "src" / "pt-tools" / "skills"
     copied = []
-    for sk in ("pt-scanner", "pt-exporter", "pt-cleaner"):
+    for sk in ("pt-scanner", "pt-exporter", "pt-cleaner", "pt-clips"):
         s = src_root / sk / "scripts"
         if not s.is_dir():
             continue

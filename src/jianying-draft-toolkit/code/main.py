@@ -44,7 +44,7 @@ from typing import List, Optional, Tuple
 #        → v2.6.3 出厂默认路径收口到 Jianying-Backup（out/log/data/tmp/deliver/草稿库）
 #          + 导出页两个输入源合并为一块（五.2）+ 导入页草稿下拉跟随配置的草稿库
 #          + 修 apply_config 引用已删控件 var_template 的崩溃（09-24）
-APP_VERSION = "2.7.2"
+APP_VERSION = "2.8.0"
 
 
 def app_build_date() -> str:
@@ -686,6 +686,56 @@ def parse_draft_tracks(draft_dir: Path, json_path: Path,
     return tracks, resolve_timeline_length_us(data, tracks)
 
 
+def _us_to_srt(us: int) -> str:
+    """微秒 → SRT 时码 ``HH:MM:SS,mmm``。"""
+    ms = max(0, int(us)) // 1000
+    h, ms = divmod(ms, 3600000)
+    m, ms = divmod(ms, 60000)
+    s, ms = divmod(ms, 1000)
+    return "%02d:%02d:%02d,%03d" % (h, m, s, ms)
+
+
+def export_subtitles(json_path: Path, out_file: Path,
+                     win: tuple = None) -> int:
+    """v2.7.0（J10b）：从草稿文本轨导出字幕 .srt（内容勾选之一，不依赖 ffmpeg）。
+
+    数据：``materials.texts``（id → content）+ ``tracks[type=text]`` 的
+    ``target_timerange``（时间线位置，微秒）。``win=(start_us, end_us)`` 时
+    只保留窗口内的字幕，并把时间码平移到窗口起点（分包按集对齐用）。
+    返回写入的字幕条数。
+    """
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    texts_map = {m.get("id"): (m.get("content") or "")
+                 for m in data.get("materials", {}).get("texts", [])}
+    cues = []
+    for track in data.get("tracks", []):
+        if track.get("type") != "text":
+            continue
+        for seg in track.get("segments", []) or []:
+            t_start, t_dur = _range_us(seg.get("target_timerange"))
+            if t_dur <= 0:
+                continue
+            content = texts_map.get(seg.get("material_id", ""), "").strip()
+            if not content:
+                continue
+            cues.append((t_start, t_start + t_dur, content))
+    if win is not None:
+        ws, we = win
+        shifted = []
+        for s, e, c in sorted(cues):
+            if e <= ws or s >= we:
+                continue
+            shifted.append((max(0, s - ws), min(we, e) - ws, c))
+        cues = shifted
+    cues.sort(key=lambda x: (x[0], x[1]))
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_file, "w", encoding="utf-8") as f:
+        for i, (s, e, c) in enumerate(cues, start=1):
+            f.write("%d\n%s --> %s\n%s\n\n" % (i, _us_to_srt(s), _us_to_srt(e), c))
+    return len(cues)
+
+
 def resolve_timeline_length_us(data: dict, tracks: List[AudioTrack]) -> int:
     """时间线总长（微秒）—— **跟随视频轨**最后一个片段的结束点。
 
@@ -1320,7 +1370,16 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
         infos = chunk_video_infos(chunks, answers)
         used = set()
         for ch, info in zip(chunks, infos):
-            folder = sanitize_filename(info.label or ch.material_name)
+            # v2.7.0（J10a）：分包文件夹命名模板化 —— 默认 {视频名} 保持现状，
+            # 可用 {视频项目} {集数} {编号} {AiFX} {视频名}（如 {视频项目}{集数}
+            # → 法老6，即「根据视频信息/集数打包文件夹」）。渲染失败回退原名。
+            fields = info.as_fields()
+            tpl_split = (cfg.get("split_folder_template") or "{视频名}").strip()
+            try:
+                folder_name = tpl_split.format(**fields)
+            except (KeyError, IndexError, ValueError):
+                folder_name = fields.get("视频名") or ch.material_name
+            folder = sanitize_filename(folder_name or ch.material_name)
             if folder in used:                       # 同集多个片段 → 加序号区分
                 i = 2
                 while f"{folder}-{i}" in used:
@@ -1387,6 +1446,22 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
                     logging.error(f"[ERROR] {draft_dir.name}/{folder} AAF: {e}",
                                   exc_info=True)
                     stats["failed"] += 1
+            # v2.7.0（J10b）：按集导出字幕（文本轨 → srt，时间码按集窗平移）
+            if cfg.get("export_subtitles"):
+                try:
+                    sub_dir = output_root / folder / "字幕"
+                    sub_file = sub_dir / f"{folder}.srt"
+                    n = export_subtitles(
+                        decrypted, sub_file,
+                        win=(ch.tl_start_us, ch.tl_start_us + ch.tl_dur_us))
+                    print(f"    ✓ 字幕: 字幕/{sub_file.name}（{n} 条）")
+                    logging.info(f"[OK] {draft_dir.name}/{folder} 字幕 {n} 条")
+                    stats["success"] += 1
+                except Exception as e:
+                    print(f"    ✗ 字幕导出异常: {e}")
+                    logging.error(f"[ERROR] {draft_dir.name}/{folder} 字幕: {e}",
+                                  exc_info=True)
+                    stats["failed"] += 1
         return
 
     for t in tracks:
@@ -1429,6 +1504,19 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
         except Exception as e:
             print(f"  ✗ AAF 导出异常: {e}")
             logging.error(f"[ERROR] {draft_dir.name} AAF: {e}", exc_info=True)
+            stats["failed"] += 1
+
+    # v2.7.0（J10b）：整轨模式字幕导出（全时间线，无窗口平移）
+    if cfg.get("export_subtitles"):
+        try:
+            sub_file = output_root / draft_dir.name / "字幕" / f"{draft_dir.name}.srt"
+            n = export_subtitles(decrypted, sub_file)
+            print(f"  ✓ 字幕: 字幕/{sub_file.name}（{n} 条）")
+            logging.info(f"[OK] {draft_dir.name} 字幕 {n} 条")
+            stats["success"] += 1
+        except Exception as e:
+            print(f"  ✗ 字幕导出异常: {e}")
+            logging.error(f"[ERROR] {draft_dir.name} 字幕: {e}", exc_info=True)
             stats["failed"] += 1
 
 
@@ -1668,6 +1756,8 @@ def apply_cli_overrides(cfg: dict, args: list) -> dict:
             cfg["export_aaf"] = True; del args[i]
         elif a == "--aaf-embed":
             cfg["export_aaf"] = True; cfg["aaf_media_mode"] = "embed"; del args[i]
+        elif a == "--subtitles":
+            cfg["export_subtitles"] = True; del args[i]
         elif a == "--output-dir" and i + 1 < len(args):
             cfg["output_dir"] = args[i + 1]; del args[i:i + 2]
         elif a == "--format" and i + 1 < len(args):

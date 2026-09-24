@@ -25,8 +25,8 @@ CASES = [
     ("jianying/gui",            JY, "import gui"),
     ("jianying/import_audio",   JY, "import import_audio"),
     ("jianying/pt_clip_scan",   JY, "import pt_clip_scan"),
-    ("jianying/make_delivery",  JY, "import make_delivery_package"),
-    ("jianying/tabs.*",         JY, "import tabs.base, tabs.export_tab, tabs.import_tab, tabs.delivery_tab, tabs.paths_dialog"),
+    # ("jianying/make_delivery",  JY, "import make_delivery_package"),  # v2.7.0 J8 退役（核心入 pt-tools skills/pt-clips）
+    ("jianying/tabs.*",         JY, "import tabs.base, tabs.export_tab, tabs.import_tab, tabs.paths_dialog"),
 ]
 
 for name, cwd, code in CASES:

@@ -50,6 +50,9 @@ SCRIPTS = {
     "pt-scanner": "pt_scan.py",
     "pt-exporter": "pt_export.py",
     "pt-cleaner": "pt_clean.py",
+    # P1（v2.7.0）：交付包一步直出（PTSL 扫描 + 打包总控；脚本与剪映工具 code/
+    # 下三件套同源，同步要求见脚本头注释）
+    "pt-clips": "pt-clips.py",
 }
 
 SOURCE_TYPES = ["bus", "output", "physicalout"]  # ExportMix 路径制三类（扫描摘要仍用）
@@ -98,7 +101,7 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 # v1.5.0（2026-09-24）：① W4 配置/日志迁 exe 旁（旧 %APPDATA% 首次运行自动复制）
 #   ② P1 PT 离线常驻黄条 ③ P2 导出后自动质检 wav ④ P3 档案库页 ⑤ P4 导出历史
 #   ⑥ W8 --batch CLI（jobs.json 夜间批量）⑦ 批量对话框可保存 jobs.json。
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.6.0"
 
 
 def build_date():

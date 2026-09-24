@@ -47,6 +47,21 @@ TEXTS = {
                         "其他 PT 版本未经完整验证（PTSL 协议版本与命令集随版本可能不同）；"
                         "换设备/账号不受影响（PTSL 为本机服务）"),
 
+        # —— P1 交付包一步直出（v1.5.3 / C批）——
+        "tab_deliv_note": "",
+        "d_what": ("扫描当前 PT 工程 → pt-clips.json + audio/ 素材，产出「解压即用」交付包"
+                   "（剪辑机器不需要 Pro Tools，也不需要任何原始工程路径）。仅数据包："
+                   "导入工具 exe 与使用说明已退役，剪辑侧用剪映工具「导入多轨 → "
+                   "交付包 json（完全离线）」导入。"),
+        "d_pkg_out": "包输出目录:",
+        "d_run": "生成交付包",
+        "d_running": "生成中…",
+        "d_note": "需要 PT 在线；素材缺失会逐条列出，不会静默出包。",
+        "d_need_ptsl": "生成交付包需要 Pro Tools 正在运行（PTSL 在线）。",
+        "d_missing_out": "请先填写交付包输出目录。",
+        "d_done": "✓ 交付包生成完成：%s\\<工程名>-导入包\\（剪辑侧用剪映工具离线导入）",
+        "d_fail": "✗ 交付包生成失败（详情见上方日志）。",
+
         # —— P2 导出质检 ——
         "qc_running": "质检中…",
         "qc_none": "质检：输出目录里没有本次导出的 wav。",
@@ -407,6 +422,21 @@ TEXTS = {
         "pt_info_bar": ("Verified: Pro Tools 25.6.1 · PTSL v6 · py-ptsl 602.0.0 · port 127.0.0.1:31416 ｜ "
                         "Other PT versions are NOT fully verified (PTSL protocol/commands vary); "
                         "changing machine/account is fine (PTSL is a local service)"),
+
+        # —— P1 delivery package one-shot (v1.5.3 / C batch) ——
+        "d_what": ("Scan the current PT session → pt-clips.json + audio/ materials, "
+                   "producing a ready-to-use delivery package (the editing machine needs "
+                   "neither Pro Tools nor any original session path). Data-only: the importer "
+                   "exe and manual are retired; import via JianYing tool → Import tab → "
+                   "delivery-package json (fully offline)."),
+        "d_pkg_out": "Package output:",
+        "d_run": "Build delivery package",
+        "d_running": "Building…",
+        "d_note": "Requires PT online; missing materials are listed item by item — never a silent package.",
+        "d_need_ptsl": "Building the delivery package requires Pro Tools running (PTSL online).",
+        "d_missing_out": "Set the package output folder first.",
+        "d_done": "✓ Delivery package ready: %s\\<session>-导入包\\ (import offline via the JianYing tool)",
+        "d_fail": "✗ Delivery package failed (see log above).",
 
         # —— P2 export QC ——
         "qc_running": "QC running…",

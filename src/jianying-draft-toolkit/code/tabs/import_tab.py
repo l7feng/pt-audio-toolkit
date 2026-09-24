@@ -152,7 +152,8 @@ class ImportTab(BaseTab):
                 text=("⚠️ 解析 .ptx 必须由**正在运行的 Pro Tools** 提供数据"
                       "（PTSL 是客户端不是文件解析器），因此这一步无法离线。"
                       "解析成功后即与 PT 无关，可关闭 PT。\n"
-                      "如果需要给剪辑/其他机器导入，请用「③ 生成交付包」。"))
+                      "需要给剪辑/其他机器导入时，请用 pt-tools「扫描建档 → 生成交付包」"
+                      "（v2.7.0 起③页退役，交付包在那边一步直出）。"))
         else:
             self.lbl_src_hint.configure(
                 text=("✓ 完全离线：直接选交付包里的 pt-clips.json，音频从同级的 audio/ 目录读取。"

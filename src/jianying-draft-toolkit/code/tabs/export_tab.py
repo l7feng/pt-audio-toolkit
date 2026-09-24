@@ -35,12 +35,27 @@ CONFLICT_MODES = {
 CONFLICT_LABEL_TO_KEY = {v: k for k, v in CONFLICT_MODES.items()}
 
 
+def normalize_template_entry(e):
+    """J1（v2.7.0）：模板条目归一 —— str → {"name": …, "template": …}。
+
+    名字缺省取模板串前 12 字符；dict 缺 name 时同样补。名字只用于显示，
+    渲染与兼容字段（name_template）始终用 template 串。
+    """
+    if isinstance(e, dict):
+        tpl = str(e.get("template", "")).strip()
+        name = str(e.get("name", "")).strip() or tpl[:12] or "模板"
+        return {"name": name, "template": tpl}
+    tpl = str(e).strip()
+    return {"name": tpl[:12] or "模板", "template": tpl}
+
+
 class ExportTab(BaseTab):
     title = "① 导出音频"
     config_keys = (
         "input_dir", "output_dir", "name_template", "audio_format", "bitrate_kbps",
         "conflict", "dedupe", "extract_video_tracks", "skip_existing", "remarks",
-        "export_mode", "track_name_template", "track_spec", "export_aaf", "aaf_media_mode",
+        "export_mode", "track_name_template", "track_spec", "export_aaf",
+        "aaf_media_mode", "export_subtitles", "split_folder_template",
         "split_by_video", "video_project_answers",
     )
 
@@ -172,6 +187,8 @@ class ExportTab(BaseTab):
         ttk.Entry(row_nt, textvariable=self.var_new_tpl, width=42).pack(side="left", padx=(0, 4))
         ttk.Button(row_nt, text="添加模板", command=self._add_template).pack(side="left", padx=2)
         ttk.Button(row_nt, text="删除选中", command=self._remove_template).pack(side="left", padx=2)
+        # v2.7.0（J1）：模板可命名 —— 三栏管理弹窗（模板名/内容/样例）
+        ttk.Button(row_nt, text="管理…", command=self._manage_templates).pack(side="left", padx=2)
         ttk.Label(nt_frame,
                   text="Ctrl/Shift 多选；勾选的模板会各生成一份输出（多模板时按「模板N」分目录）",
                   foreground="#888").grid(row=2, column=0, columnspan=4, sticky="w")
@@ -229,6 +246,18 @@ class ExportTab(BaseTab):
             row, text="按视频分包（一个视频片段一个文件夹）",
             variable=self.var_split_video)
         self.chk_split.pack(side="left", padx=16)
+        # v2.7.0（J10b）：内容勾选 —— 字幕（文本轨 → .srt）
+        self.var_subtitles = tk.BooleanVar(
+            value=bool(self.cfg.get("export_subtitles", False)))
+        self.chk_subtitles = ttk.Checkbutton(
+            row, text="导出字幕（.srt，文本轨）",
+            variable=self.var_subtitles)
+        self.chk_subtitles.pack(side="left", padx=16)
+        # v2.7.0（J10a）：分包文件夹命名模板（默认 {视频名} 保持现状）
+        self.var_split_tpl = tk.StringVar(
+            value=self.cfg.get("split_folder_template", "{视频名}"))
+        ttk.Label(row, text="分包夹名:").pack(side="left", padx=(16, 2))
+        ttk.Entry(row, textvariable=self.var_split_tpl, width=16).pack(side="left")
         ttk.Label(cfg_box,
                   text="分包时可用新占位符：{视频项目} {集数} {编号} {AiFX} {视频名}；"
                        "整轨命名另可用 {轨道类别}（MX/DX/SFX/AiFX 自动判定）；"
@@ -281,9 +310,10 @@ class ExportTab(BaseTab):
         self.cfg["output_dir"] = self.var_output_dir.get().strip()
         sel_idx = list(self.lb_templates.curselection())
         lib = self.cfg["name_templates"]
-        active = [lib[i] for i in sel_idx if 0 <= i < len(lib)]
+        # v2.7.0（J1）：模板条目已 dict 化，active/兼容字段仍存**模板串**
+        active = [lib[i]["template"] for i in sel_idx if 0 <= i < len(lib)]
         if not active:
-            active = [lib[0]] if lib else [core.DEFAULT_CLIPS_TEMPLATE]
+            active = [lib[0]["template"]] if lib else [core.DEFAULT_CLIPS_TEMPLATE]
         self.cfg["name_templates_active"] = active
         self.cfg["name_template"] = active[0]   # 兼容旧字段 / CLI
         self.cfg["audio_format"] = self.var_format.get()
@@ -309,6 +339,9 @@ class ExportTab(BaseTab):
         # 分包只在整轨模式下有意义（片段模式本来就是按片段出的）
         self.cfg["split_by_video"] = bool(self.var_split_video.get()) and \
             "tracks" in self._mode_set()
+        self.cfg["split_folder_template"] = self.var_split_tpl.get().strip() or "{视频名}"
+        # v2.7.0（J10b）：字幕导出（内容勾选之一）
+        self.cfg["export_subtitles"] = bool(self.var_subtitles.get())
 
     def apply_config(self):
         """把 self.cfg 的值刷回控件（菜单「重新载入配置」「默认路径」后调用）。
@@ -340,6 +373,8 @@ class ExportTab(BaseTab):
         self.var_aaf.set(bool(c.get("export_aaf", False)))
         self._set_aaf_display()
         self.var_split_video.set(bool(c.get("split_by_video", False)))
+        self.var_subtitles.set(bool(c.get("export_subtitles", False)))
+        self.var_split_tpl.set(c.get("split_folder_template", "{视频名}"))
         self._set_spec_display()
         self._set_aaf_display()
         self._sync_mode()
@@ -348,39 +383,53 @@ class ExportTab(BaseTab):
 
     def _seed_templates(self):
         """向后兼容 + 初始化模板库：旧配置只有单 ``name_template`` 时，补出
-        ``name_templates`` / ``name_templates_active``。"""
-        if not self.cfg.get("name_templates"):
-            presets = list(core.NAMING_PRESETS)
+        ``name_templates`` / ``name_templates_active``。
+
+        v2.7.0（J1）：模板条目升级为 ``{"name": 模板名, "template": 模板串}``——
+        旧版字符串条目自动迁移（名字 = 模板串前 12 字符）；
+        ``name_templates_active`` 仍存**模板串**（渲染逻辑与 CLI 兼容零改动）。
+        """
+        lib = self.cfg.get("name_templates")
+        if not lib:
+            presets = [normalize_template_entry(p) for p in core.NAMING_PRESETS]
             legacy = self.cfg.get("name_template") or core.DEFAULT_CLIPS_TEMPLATE
-            if legacy and legacy not in presets:
-                presets.insert(0, legacy)
+            if legacy and legacy not in [p["template"] for p in presets]:
+                presets.insert(0, normalize_template_entry(legacy))
             self.cfg["name_templates"] = presets
+        else:
+            self.cfg["name_templates"] = [normalize_template_entry(e) for e in lib]
         if not self.cfg.get("name_templates_active"):
             legacy = self.cfg.get("name_template") or (
-                self.cfg["name_templates"][0] if self.cfg["name_templates"]
+                self.cfg["name_templates"][0]["template"] if self.cfg["name_templates"]
                 else core.DEFAULT_CLIPS_TEMPLATE)
-            active = [legacy] if legacy in self.cfg["name_templates"] else \
-                [self.cfg["name_templates"][0]]
+            tpls = [p["template"] for p in self.cfg["name_templates"]]
+            active = [legacy] if legacy in tpls else \
+                ([self.cfg["name_templates"][0]["template"]]
+                 if self.cfg["name_templates"] else [])
             self.cfg["name_templates_active"] = active
 
     def _fill_templates(self):
-        """把模板库渲染进 Listbox，并选中 active 项。"""
+        """把模板库渲染进 Listbox（「模板名 ｜ 内容」），并选中 active 项。"""
         self.lb_templates.delete(0, "end")
-        for tpl in self.cfg["name_templates"]:
-            self.lb_templates.insert("end", tpl)
-        active = set(self.cfg.get("name_templates_active", []))
-        for i, tpl in enumerate(self.cfg["name_templates"]):
-            if tpl in active:
+        for e in self.cfg["name_templates"]:
+            self.lb_templates.insert("end", "%s ｜ %s" % (e["name"], e["template"]))
+        # active 恒为模板串集合；脏数据（如 dict）防御性过滤
+        active = {x for x in self.cfg.get("name_templates_active", [])
+                  if isinstance(x, str)}
+        for i, e in enumerate(self.cfg["name_templates"]):
+            if e["template"] in active:
                 self.lb_templates.selection_set(i)
 
     def _add_template(self):
         new = self.var_new_tpl.get().strip()
         if not new:
             return
-        if new not in self.cfg["name_templates"]:
-            self.cfg["name_templates"].append(new)
-        if new not in self.cfg["name_templates_active"]:
-            self.cfg["name_templates_active"].append(new)
+        tpls = [e["template"] for e in self.cfg["name_templates"]]
+        if new not in tpls:
+            self.cfg["name_templates"].append(
+                {"name": new[:12] or "模板", "template": new})
+        if new not in self.cfg.get("name_templates_active", []):
+            self.cfg.setdefault("name_templates_active", []).append(new)
         self.var_new_tpl.set("")
         self._fill_templates()
 
@@ -390,14 +439,138 @@ class ExportTab(BaseTab):
             return
         for i in sorted(idxs, reverse=True):
             if 0 <= i < len(self.cfg["name_templates"]):
-                removed = self.cfg["name_templates"].pop(i)
-                if removed in self.cfg["name_templates_active"]:
+                removed = self.cfg["name_templates"].pop(i)["template"]
+                if removed in self.cfg.get("name_templates_active", []):
                     self.cfg["name_templates_active"].remove(removed)
         if not self.cfg["name_templates"]:
-            self.cfg["name_templates"] = [core.DEFAULT_CLIPS_TEMPLATE]
-        if not self.cfg["name_templates_active"]:
-            self.cfg["name_templates_active"] = [self.cfg["name_templates"][0]]
+            self.cfg["name_templates"] = [
+                {"name": "默认模板", "template": core.DEFAULT_CLIPS_TEMPLATE}]
+        if not self.cfg.get("name_templates_active"):
+            self.cfg["name_templates_active"] = [
+                self.cfg["name_templates"][0]["template"]]
         self._fill_templates()
+
+    def _manage_templates(self):
+        """J1（v2.7.0）：命名模板管理弹窗 —— 「模板名 / 模板内容 / 样例」三栏。
+
+        勾选（哪些模板参与导出）仍在主窗口 Listbox 维护；这里只管库内容。
+        """
+        win = tk.Toplevel(self)
+        win.title("命名模板管理")
+        win.transient(self.winfo_toplevel())
+        win.geometry("760x430")
+        win.grab_set()
+        ttk.Label(win, text=("左侧选择模板 → 编辑名称与内容（样例实时预览）。"
+                             "勾选哪些模板参与导出，请在主窗口的模板列表里选。"),
+                  foreground="#888").pack(anchor="w", padx=10, pady=(8, 4))
+        body = ttk.Frame(win)
+        body.pack(fill="both", expand=True, padx=10)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        lb = tk.Listbox(body, exportselection=0, width=30)
+        lb.grid(row=0, column=0, sticky="ns")
+
+        ttk.Label(body, text="模板名").grid(row=0, column=1, sticky="w")
+        var_name = tk.StringVar()
+        ttk.Entry(body, textvariable=var_name).grid(
+            row=1, column=1, sticky="we", padx=(8, 10))
+        ttk.Label(body, text="模板内容").grid(row=2, column=1, sticky="w", pady=(6, 0))
+        txt = tk.Text(body, height=3)
+        txt.grid(row=3, column=1, sticky="we", padx=(8, 10))
+        ttk.Label(body, text="样例（{字段} 按示例值展开）").grid(
+            row=4, column=1, sticky="w", pady=(8, 0))
+        var_sample = tk.StringVar()
+        ttk.Label(body, textvariable=var_sample, foreground="#2a7",
+                  wraplength=520, justify="left").grid(row=5, column=1, sticky="w")
+
+        SAMPLES = {"{项目名}": "测试", "{集数}": "6", "{轨道类别}": "DX",
+                   "{序号:02d}": "01", "{序号:03d}": "001", "{素材类型}": "audio",
+                   "{原始名}": "AI配音_01", "{时长}s": "42.5s", "{编号}": "01",
+                   "{视频项目}": "测试", "{AiFX}": "AiFX", "{视频名}": "测试06",
+                   "{类型}": "audio"}
+        state = {"old": None}          # 当前编辑条目的旧模板串（active 同步用）
+
+        def refresh_sample(*_a):
+            s = txt.get("1.0", "end").strip()
+            for k, v in SAMPLES.items():
+                s = s.replace(k, v)
+            var_sample.set(s)
+
+        def reload_lb(keep=None):
+            lb.delete(0, "end")
+            for e in self.cfg["name_templates"]:
+                lb.insert("end", "%s ｜ %s" % (e["name"], e["template"]))
+            if keep is not None and 0 <= keep < lb.size():
+                lb.selection_set(keep)
+                load_sel()
+
+        def load_sel(*_a):
+            sel = lb.curselection()
+            if not sel:
+                return
+            e = self.cfg["name_templates"][sel[0]]
+            var_name.set(e["name"])
+            txt.delete("1.0", "end")
+            txt.insert("1.0", e["template"])
+            state["old"] = e["template"]
+            refresh_sample()
+
+        def save_cur():
+            sel = lb.curselection()
+            if not sel:
+                messagebox.showinfo("未选择", "请先在左侧选择一个模板。", parent=win)
+                return
+            name = var_name.get().strip()
+            t = txt.get("1.0", "end").strip()
+            if not name or not t:
+                messagebox.showwarning("内容缺失", "模板名与内容都不能为空。", parent=win)
+                return
+            i = sel[0]
+            self.cfg["name_templates"][i] = {"name": name, "template": t}
+            act = self.cfg.get("name_templates_active", [])
+            old = state["old"]
+            if old in act and old != t:
+                act[act.index(old)] = t
+            if self.cfg.get("name_template") == old:
+                self.cfg["name_template"] = t
+            state["old"] = t
+            self._fill_templates()
+            reload_lb(i)
+
+        def new_tpl():
+            e = {"name": "新模板", "template": core.DEFAULT_CLIPS_TEMPLATE}
+            self.cfg["name_templates"].append(e)
+            reload_lb(len(self.cfg["name_templates"]) - 1)
+
+        def del_tpl():
+            sel = lb.curselection()
+            if not sel:
+                messagebox.showinfo("未选择", "请先在左侧选择要删除的模板。", parent=win)
+                return
+            if len(self.cfg["name_templates"]) <= 1:
+                messagebox.showwarning("至少保留一个", "模板库至少要有一个模板。", parent=win)
+                return
+            i = sel[0]
+            removed = self.cfg["name_templates"].pop(i)["template"]
+            act = self.cfg.get("name_templates_active", [])
+            if removed in act:
+                act.remove(removed)
+            if self.cfg.get("name_template") == removed:
+                self.cfg["name_template"] = self.cfg["name_templates"][0]["template"]
+            self._fill_templates()
+            reload_lb(max(0, i - 1))
+
+        btns = ttk.Frame(win)
+        btns.pack(fill="x", padx=10, pady=(6, 10))
+        ttk.Button(btns, text="保存当前", command=save_cur).pack(side="left")
+        ttk.Button(btns, text="新建", command=new_tpl).pack(side="left", padx=6)
+        ttk.Button(btns, text="删除", command=del_tpl).pack(side="left")
+        ttk.Button(btns, text="关闭", command=win.destroy).pack(side="right")
+
+        reload_lb(0)
+        lb.bind("<<ListboxSelect>>", load_sel)
+        txt.bind("<KeyRelease>", refresh_sample)
 
     # ───────────── 规格 / AAF 下拉的「值 ↔ 显示」转换 ─────────────
 

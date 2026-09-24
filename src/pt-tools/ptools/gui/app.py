@@ -678,6 +678,27 @@ class ScanTab(ttk.Frame):
                                    command=self.do_scan)
         self.scan_btn.pack(side="left", padx=6)
 
+        # —— P1（v2.7.0 / C批）：生成交付包（扫描 + 打包一步完成）——
+        deliv = ttk.LabelFrame(self, text="  " + T("d_run") + "（PT → 剪辑机，一步到位）  ",
+                               padding=8)
+        deliv.pack(fill="x", pady=(0, 8))
+        ttk.Label(deliv, text=T("d_what"), wraplength=760,
+                  justify="left", foreground="#555").pack(anchor="w")
+        drow = ttk.Frame(deliv)
+        drow.pack(fill="x", pady=(4, 2))
+        ttk.Label(drow, text=T("d_pkg_out")).pack(side="left")
+        self.deliv_var = app.v("delivery_out",
+                               (os.path.join(app.cfg["last_out_dir"], "deliver")
+                                if app.cfg.get("last_out_dir") else ""))
+        ttk.Entry(drow, textvariable=self.deliv_var, width=44).pack(side="left", padx=6)
+        ttk.Button(drow, text=T("s_browse"), width=10,
+                   command=self._browse_deliv).pack(side="left")
+        drow2 = ttk.Frame(deliv)
+        drow2.pack(fill="x", pady=(0, 2))
+        self.deliv_btn = ttk.Button(drow2, text=T("d_run"), command=self.do_delivery)
+        self.deliv_btn.pack(side="left")
+        ttk.Label(drow2, text=T("d_note"), foreground="#888").pack(side="left", padx=8)
+
         # —— 扫描摘要 ——
         summ = ttk.LabelFrame(self, text="  " + T("s_summary") + "  ", padding=6)
         summ.pack(fill="both", expand=True)
@@ -728,13 +749,61 @@ class ScanTab(ttk.Frame):
                self.app.resolver.script("pt-scanner"),
                "--out", out, "--name", name]
         self.busy = True
+        self._mode = "scan"
         self.refresh_buttons()
+        self.app.start_worker(cmd)
+
+    def _browse_deliv(self):
+        chosen = filedialog.askdirectory(title=T("choose_outdir_title"),
+                                         initialdir=self.deliv_var.get() or None)
+        if chosen:
+            self.deliv_var.set(chosen)
+
+    def do_delivery(self):
+        """P1（v2.7.0 / C批）：交付包一步直出 —— 调 pt-clips 技能（扫描+打包）。"""
+        if self.busy:
+            return
+        if not self.app.ptsl_on:
+            messagebox.showerror(T("msg_invalid"), T("d_need_ptsl"))
+            return
+        pkg_dir = self.deliv_var.get().strip()
+        if not pkg_dir:
+            messagebox.showerror(T("msg_invalid"), T("d_missing_out"))
+            return
+        try:
+            os.makedirs(pkg_dir, exist_ok=True)
+        except OSError as exc:
+            messagebox.showerror(T("msg_invalid"), str(exc))
+            return
+        json_dir = os.path.join(pkg_dir, "_json")
+        cmd = [self.app.resolver.venv_python,
+               self.app.resolver.script("pt-clips"),
+               "--json-dir", json_dir, "--pkg-dir", pkg_dir]
+        self.busy = True
+        self._mode = "delivery"
+        self.refresh_buttons()
+        try:
+            self.deliv_btn.configure(state="disabled", text=T("d_running"))
+        except Exception:
+            pass
         self.app.start_worker(cmd)
 
     def on_worker_done(self, returncode):
         if not self.busy:
             return
         self.busy = False
+        self.refresh_buttons()
+        # P1：交付包与扫描共用 worker 通道，按 _mode 分流收尾
+        if getattr(self, "_mode", "scan") == "delivery":
+            try:
+                self.deliv_btn.configure(state="normal", text=T("d_run"))
+            except Exception:
+                pass
+            if returncode == 0:
+                self.app.log(T("d_done") % self.deliv_var.get().strip() + "\n")
+            else:
+                self.app.log(T("d_fail") + "\n")
+            return
         if returncode == 0:
             out = self.out_var.get().strip()
             path = os.path.join(out, self.name_var.get().strip())

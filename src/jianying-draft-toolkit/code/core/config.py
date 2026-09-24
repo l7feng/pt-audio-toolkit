@@ -37,14 +37,16 @@ DEFAULT_SPEC_KEY = "keep"
 # 片段命名默认模板（兼容旧配置 / CLI 回退）
 DEFAULT_CLIPS_TEMPLATE = "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s"
 
-# 命名模板预设库（「多选命名模板」的候选，用户可在界面增删）
+# 命名模板预设库（「多选命名模板」的候选，用户可在界面增删）。
+# v2.7.0（J1）：条目升级为 {"name": 模板名, "template": 模板串}——模板可命名；
+# 旧版字符串条目在加载时自动迁移（名字=模板串前 12 字符）。
 NAMING_PRESETS = [
-    "{项目名} EP{集数} {轨道类别} {序号:02d}",
-    "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
-    "{原始名}",
-    "{素材类型}_{序号:03d}_{原始名}",
-    "{项目名}_{序号:03d}_{原始名}",
-    "{项目名}_{素材类型}_{序号:03d}_{原始名}",
+    {"name": "标准 EP 模板", "template": "{项目名} EP{集数} {轨道类别} {序号:02d}"},
+    {"name": "完整信息", "template": "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s"},
+    {"name": "仅原始名", "template": "{原始名}"},
+    {"name": "类型_序号_原名", "template": "{素材类型}_{序号:03d}_{原始名}"},
+    {"name": "项目_序号_原名", "template": "{项目名}_{序号:03d}_{原始名}"},
+    {"name": "项目_类型_序号_原名", "template": "{项目名}_{素材类型}_{序号:03d}_{原始名}"},
 ]
 
 
@@ -83,7 +85,7 @@ DEFAULT_CONFIG = {
     "name_template": "{项目名}_{素材类型}_{序号:03d}_{原始名}_{时长}s",
     # ── 命名模板多选（2026-09-22 新增）──
     "name_templates": NAMING_PRESETS,                 # 命名模板库（候选清单，可增删）
-    "name_templates_active": [NAMING_PRESETS[0]],     # 当前勾选的模板（多选 → 各生成一份）
+    "name_templates_active": [NAMING_PRESETS[0]["template"]],  # 当前勾选（存模板串）
     "audio_format": "wav",
     "bitrate_kbps": 320,
     "conflict": "rename",
@@ -97,6 +99,9 @@ DEFAULT_CONFIG = {
     "track_spec": DEFAULT_SPEC_KEY,
     "export_aaf": False,
     "aaf_media_mode": "media",                   # media=AAF+Media 文件夹 | embed=单文件内嵌
+    # ── v2.7.0（J10a/J10b）──
+    "split_folder_template": "{视频名}",          # 分包文件夹命名模板（{视频项目}{集数}{编号}{AiFX}{视频名}）
+    "export_subtitles": False,                   # 导出字幕（.srt，文本轨）
     # ── 日志 / 运行数据目录（v2.6.0：与产物分离，可配置）──
     # 留空 = 回落输出目录根（兼容旧习惯）
     "log_dir": "D:/My-Temporary/Jianying-Backup/Tools/log",   # 导出日志落点

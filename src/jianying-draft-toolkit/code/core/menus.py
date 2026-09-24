@@ -101,7 +101,7 @@ def default_paths() -> dict:
         "data_dir": ("运行数据目录", "processed_drafts.txt（断点续跑）/ tmp 临时文件的落点；留空 = 输出目录根"),
         "temp_dir": ("临时目录", "出厂默认 = Tools/tmp；留空 = 数据目录/tmp"),
         "import_draft_dir": ("② 导入多轨的默认目标草稿", "可选；留空 = 每次在下拉里选（下拉列表来自上方草稿目录）"),
-        "import_pkg_out": ("③ 生成交付包的输出目录", "PTSL 解析结果 json 的落点；交付包在此下建 <工程名>-导入包/"),
+        "import_pkg_out": ("PT 解析结果（pt-clips.json）的落点目录", "导入页「解析 PT 工程」的 json 落在这里；交付包本体由 pt-tools 扫描建档页直出（v2.7.0 起③页退役）"),
     }
     return {k: (labels[k][0], labels[k][1], str(cur.get(k, "") or ""))
             for k in PATH_KEYS}
@@ -317,15 +317,15 @@ def human_size(num_bytes: float) -> str:
 # ──────────────────── ④ 帮助：关于信息 ────────────────────
 
 def about_lines(version: str, build_date: str) -> list:
-    """「关于」对话框正文（版本 / 构建日期 / 配置文件 / 三页职责）。"""
+    """「关于」对话框正文（版本 / 构建日期 / 配置文件 / 页职责）。"""
     return [
         f"剪映工程工具包  v{version}",
         f"构建日期：{build_date}",
         "",
-        "一个 exe，三件独立的事：",
+        "一个 exe，两件独立的事：",
         "  ① 导出音频    剪映草稿 → 切片/整轨导出（不需要 Pro Tools）",
         "  ② 导入多轨    .ptx（需 PT 在线）/ 交付包 json（离线）→ 写剪映草稿",
-        "  ③ 生成交付包  json 路径相对化 + 音频随包（只做数据）",
+        "  （v2.7.0 起③生成交付包退役 → pt-tools 扫描建档页一步直出）",
         "",
         f"配置文件：{config_file()}",
         f"程序目录：{app_dir()}",
@@ -337,5 +337,4 @@ def about_lines(version: str, build_date: str) -> list:
         "前置条件速查：",
         "  解析 .ptx  需要 PT 在线（剪映开否无关）",
         "  导入草稿   需要剪映关闭（PT 开否无关）",
-        "  生成交付包 无任何要求",
     ]
