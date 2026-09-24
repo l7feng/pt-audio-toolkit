@@ -40,7 +40,7 @@ from tkinter import ttk, filedialog, scrolledtext, messagebox
 # v1.0.1（2026-09-24 · GUI 美化）：单页平铺 grid 重排为 6 区块 LabelFrame
 #   （路径 / 本批内容 / 命名规则 / 命名信息 / 选项 / 预览 / 日志），主按钮
 #   「建立文件夹」固定最右；控件与逻辑不变，纯布局调整。
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 
 def build_date():
@@ -57,6 +57,38 @@ def build_date():
         return _dt.datetime.fromtimestamp(src.stat().st_mtime).strftime("%Y-%m-%d")
     except Exception:
         return "未知"
+
+
+def app_dir():
+    """可写目录：frozen 取 exe 旁，源码模式取本文件目录（日志落点）。"""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def setup_logging():
+    """初始化滚动日志到 app_dir()/pt-project-folder-builder.log（W2 骨架）。
+
+    返回 logger；失败静默返回 None（日志绝不影响主流程）。
+    """
+    try:
+        import logging
+        from logging.handlers import RotatingFileHandler
+        os.makedirs(app_dir(), exist_ok=True)
+        path = os.path.join(app_dir(), "pt-project-folder-builder.log")
+        logger = logging.getLogger("pt-project-folder-builder")
+        if not logger.handlers:
+            handler = RotatingFileHandler(path, maxBytes=1_000_000,
+                                          backupCount=3, encoding="utf-8")
+            handler.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s"))
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            logger.info("=== pt-project-folder-builder v%s (%s) 启动 ===",
+                        APP_VERSION, build_date())
+        return logger
+    except Exception:
+        return None
 
 # ---------------------------------------------------------------------------
 # 命名：规则与信息（与 GUI 解耦，便于无界面测试）
@@ -546,6 +578,10 @@ class App(tk.Tk):
                         failed += 1
                         self._log("失败: %s -> %s" % (path, e))
                 self._log("=== 完成: 新建 %d / 跳过 %d / 失败 %d ===" % (created, skipped, failed))
+                _log = setup_logging()
+                if _log is not None:
+                    _log.info("建立完成 %s：新建 %d / 跳过 %d / 失败 %d",
+                              project_root, created, skipped, failed)
                 if failed == 0:
                     try:
                         os.startfile(project_root)
@@ -557,9 +593,15 @@ class App(tk.Tk):
 
 
 def main():
+    _log = setup_logging()
+    if _log is not None:
+        _log.info("GUI 启动 v%s (%s)", APP_VERSION, build_date())
     try:
         App().mainloop()
     except Exception:
+        tb = traceback.format_exc()
+        if _log is not None:
+            _log.error("启动异常：\n%s", tb)
         traceback.print_exc()
         messagebox.showerror("启动失败", traceback.format_exc())
 

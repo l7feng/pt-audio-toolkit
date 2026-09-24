@@ -18,6 +18,7 @@ CLI 参数行为不变。
 """
 
 import json
+import os
 import queue
 import sys
 import tkinter as tk
@@ -52,6 +53,69 @@ def make_root() -> tk.Tk:
         except Exception:
             pass
     return tk.Tk()
+
+
+# ───────────── Toast 通知（W7 · ctypes 直调 Shell_NotifyIcon，零第三方依赖）────────────
+
+def toast(root, title, message, timeout_ms=6000):
+    """任务完成弹 Windows 通知（托盘气泡）。失败静默吞掉，不影响主流程。"""
+    if os.name != "nt" or root is None:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        NIM_ADD = 0x00000000
+        NIM_DELETE = 0x00000002
+        NIF_ICON = 0x00000002
+        NIF_INFO = 0x00000010
+        NIIF_INFO = 0x00000001
+        IDI_INFORMATION = 32516
+
+        class NOTIFYICONDATAW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("hWnd", wintypes.HWND),
+                ("uID", wintypes.UINT),
+                ("uFlags", wintypes.UINT),
+                ("uCallbackMessage", wintypes.UINT),
+                ("hIcon", wintypes.HICON),
+                ("szTip", wintypes.WCHAR * 128),
+                ("dwState", wintypes.DWORD),
+                ("dwStateMask", wintypes.DWORD),
+                ("szInfo", wintypes.WCHAR * 256),
+                ("uVersion", wintypes.UINT),
+                ("szInfoTitle", wintypes.WCHAR * 64),
+                ("dwInfoFlags", wintypes.DWORD),
+                ("guidItem", ctypes.c_byte * 16),
+                ("hBalloonIcon", wintypes.HICON),
+            ]
+
+        user32 = ctypes.windll.user32
+        user32.Shell_NotifyIconW.argtypes = [
+            wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+        user32.Shell_NotifyIconW.restype = wintypes.BOOL
+        user32.LoadIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+        user32.LoadIconW.restype = wintypes.HICON
+
+        nid = NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+        nid.hWnd = int(root.winfo_id())
+        nid.uID = 1
+        nid.uFlags = NIF_INFO | NIF_ICON
+        nid.hIcon = user32.LoadIconW(None, IDI_INFORMATION)
+        nid.dwInfoFlags = NIIF_INFO
+        nid.szInfoTitle = (title or "")[:63]
+        nid.szInfo = (message or "")[:255]
+        user32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+        try:
+            root.after(timeout_ms + 1000,
+                       lambda: user32.Shell_NotifyIconW(NIM_DELETE,
+                                                        ctypes.byref(nid)))
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 
 def parse_drop_paths(data: str) -> list:
@@ -91,6 +155,10 @@ class JianYingToolkitApp:
 
         self.msg_queue = queue.Queue()
         self._tabs = []
+        self.logger = core.setup_logging()
+        if self.logger is not None:
+            self.logger.info("GUI 启动 v%s (%s)", core.APP_VERSION,
+                             core.app_build_date())
 
         # ⚠️ 顺序有讲究：_probe 必须在 _build_ui 之前建好 ——
         # 各标签页构造时会调 refresh_states()，而它读的是 self.app._probe 的缓存。
@@ -100,6 +168,9 @@ class JianYingToolkitApp:
         self._build_menu()          # 必须在 _build_ui 之前：菜单挂在 root 上
         self._build_ui()
         self._setup_dnd()
+        # v2.6.4（W3）：注册关闭协议 —— 点窗口 X 与菜单「退出」走同一道关卡，
+        # 有任务在跑时先确认再退出，避免 ffmpeg / jy-draftc 子进程残留。
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_queue)
         self._refresh_status()
 
@@ -341,6 +412,13 @@ class JianYingToolkitApp:
                                               core.app_build_date())))
 
     def _menu_quit(self):
+        self._on_close()
+
+    def _on_close(self):
+        """关闭主窗（点 X / 菜单退出）——有活任务先确认再退出。
+        对齐 pt-tools v1.3.0 的关闭协议；随后 destroy 并强制退出，
+        跳过 atexit 的 subprocess 等待，保证进程一定退出。
+        """
         if self._any_running():
             if not messagebox.askyesno(
                     "有任务在跑",
@@ -351,6 +429,7 @@ class JianYingToolkitApp:
             self.root.destroy()
         except Exception:
             pass
+        os._exit(0)
 
     # ───────────── 菜单辅助 ─────────────
 
@@ -537,6 +616,10 @@ class JianYingToolkitApp:
                     tab.finish(on_done, err,
                                self._busy_button(tab),
                                self._idle_text(tab))
+                    # W7：长任务跑完弹通知（成功才弹；失败靠日志，避免骚扰）
+                    if err is None and getattr(tab, "title", None):
+                        toast(self.root, "剪映工程工具包",
+                              f"{tab.title} 完成")
                 else:
                     tab = self._current_tab()
                     if tab is not None and tab._log is not None:

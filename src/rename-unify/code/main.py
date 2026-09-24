@@ -120,6 +120,7 @@ class App(tk.Tk):
         self.cfg = CFG.load_config()
         self.items = []          # 当前计划
         self.stats = {}
+        self._last_stats_sig = None   # R2：统计行只在扫描结果变化时输出一次
         self.last_log = ""
         self.busy = False
         # 手动分类：{normcase(src): {"ep":..., "target":..., "info":...}}
@@ -841,6 +842,41 @@ class App(tk.Tk):
         self.items, self.stats = items, stats
         self._fill_plan(items)
         self._update_plan_state()
+        self._log_scan_stats()
+
+    # ---- R2：识别率统计行 ----
+    def _log_scan_stats(self):
+        """跑完输出统计行（X 文件 / 已合规 / 失败 / 清单）；
+        失败比例 ≥10% 时提示「识别规则可能需要补」。同为结果不变不重复刷。"""
+        s = self.stats
+        if not s or s.get("total", 0) == 0:
+            return
+        sig = tuple(sorted(s.items()))
+        if sig == self._last_stats_sig:
+            return
+        self._last_stats_sig = sig
+        total = s["total"]
+        bad = [i for i in self.items if i.status in ("error", "conflict")]
+        line = "统计：共 %d 个文件 · 待改名 %d · 已合规 %d" % (
+            total, s["rename"], s["skip"])
+        if s.get("excluded"):
+            line += " · 按目标排除 %d" % s["excluded"]
+        if s["error"]:
+            line += " · 识别失败 %d" % s["error"]
+        if s["conflict"]:
+            line += " · 冲突 %d" % s["conflict"]
+        self._log(line)
+        if bad:
+            self._log("失败/冲突清单（前 20 条）：")
+            for i in bad[:20]:
+                self._log("  · %s（%s）" % (os.path.basename(i.src),
+                                            (i.note or i.status).strip()))
+        if total and len(bad) * 10 >= total:
+            self._log("⚠ 失败比例 ≥10%%（%d/%d），识别规则可能需要补"
+                      "（页1 规则库 / 页2 模板与归位）。" % (len(bad), total))
+        _log = CFG.setup_logging()
+        if _log is not None:
+            _log.info("扫描统计: %s | 失败数=%d", line, len(bad))
 
     def _apply_manual(self, items):
         """把手动分类的覆盖应用回计划，并重算这些项的冲突状态。"""
@@ -1051,6 +1087,9 @@ class App(tk.Tk):
         def worker():
             try:
                 done, failed, _ = CORE.apply_plan(self.items, write_log=False)
+                _log = CFG.setup_logging()
+                if _log is not None:
+                    _log.info("执行重命名：成功 %d / 失败 %d", len(done), len(failed))
                 self._log("完成: 成功 %d / 失败 %d" % (len(done), len(failed)))
                 for src, dst, err in failed:
                     self._log("  失败: %s -> %s (%s)" % (os.path.basename(src),
@@ -1202,6 +1241,9 @@ class App(tk.Tk):
                 "已存在的原文件不会被覆盖（该条跳过）。是否继续？" % p):
             return
         done, failed = CORE.undo_from_log(p)
+        _log = CFG.setup_logging()
+        if _log is not None:
+            _log.info("撤销（%s）：成功 %d / 失败 %d", p, len(done), len(failed))
         self._log("=== 撤销完成: 成功 %d / 失败 %d ===" % (len(done), len(failed)))
         for a, b, err in failed:
             self._log("  失败: %s (%s)" % (os.path.basename(a), err))
@@ -1233,11 +1275,16 @@ class App(tk.Tk):
 
 def main():
     _safe_io()
+    _log = CFG.setup_logging()
+    if _log is not None:
+        _log.info("GUI 启动 v%s (%s)", CFG.APP_VERSION, CFG.build_date())
     try:
         App().mainloop()
     except Exception:
         _safe_io()
         tb = traceback.format_exc()
+        if _log is not None:
+            _log.error("启动异常：\n%s", tb)
         try:
             messagebox.showerror("启动失败", tb)
         except Exception:

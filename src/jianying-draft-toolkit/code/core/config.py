@@ -18,7 +18,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
@@ -139,6 +141,29 @@ CONFIG_FIELDS = {
 
 
 # ──────────────────── 读写 ────────────────────
+
+def setup_logging() -> Optional[logging.Logger]:
+    """初始化工具级滚动日志到配置目录 ``jianying-toolkit.log``（W2 骨架）。
+
+    与「导出日志」分开：导出日志记每次任务明细，工具日志记生命周期/异常，
+    供 D2 的「导出诊断包」一键打包。失败静默返回 None（日志不影响主流程）。
+    """
+    try:
+        root = CONFIG_PATH.parent
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / "jianying-toolkit.log"
+        logger = logging.getLogger("jianying-toolkit")
+        if not logger.handlers:
+            handler = RotatingFileHandler(str(path), maxBytes=1_000_000,
+                                          backupCount=3, encoding="utf-8")
+            handler.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s"))
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+        return logger
+    except Exception:
+        return None
+
 
 def config_path() -> Path:
     """返回配置文件路径，并在首次运行时把历史 code/config.json 迁移过来。"""

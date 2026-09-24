@@ -5,12 +5,15 @@
    配置/日志/回溯日志绝不能写代码目录 —— 一律落 exe 旁（APP_DIR）。
 """
 import json
+import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
 
 APP_NAME = "rename-unify"
 # 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），显示时补 v（见 title()）。
-APP_VERSION = "1.3.0"
+# v1.4.0（2026-09-24）：R2 识别率统计行 + 滚动日志接入（补记 v1.3.1 Demo 无集数工程）。
+APP_VERSION = "1.4.0"
 
 
 def app_dir():
@@ -132,3 +135,27 @@ def build_date():
 
 def title():
     return "统一命名工具 v%s (%s)" % (APP_VERSION, build_date())
+
+
+def setup_logging():
+    """初始化滚动日志到 app_dir()/rename-unify.log（W2 骨架）。
+
+    配置/日志/回溯日志一律落 exe 旁（APP_DIR），不写代码目录。
+    返回 logger；失败静默返回 None（日志绝不影响主流程）。
+    """
+    try:
+        os.makedirs(app_dir(), exist_ok=True)
+        path = os.path.join(app_dir(), "rename-unify.log")
+        logger = logging.getLogger("rename-unify")
+        if not logger.handlers:
+            handler = RotatingFileHandler(path, maxBytes=1_000_000,
+                                          backupCount=3, encoding="utf-8")
+            handler.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s"))
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            logger.info("=== rename-unify v%s (%s) 启动 ===",
+                        APP_VERSION, build_date())
+        return logger
+    except Exception:
+        return None

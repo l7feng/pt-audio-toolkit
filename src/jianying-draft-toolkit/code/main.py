@@ -44,7 +44,7 @@ from typing import List, Optional, Tuple
 #        → v2.6.3 出厂默认路径收口到 Jianying-Backup（out/log/data/tmp/deliver/草稿库）
 #          + 导出页两个输入源合并为一块（五.2）+ 导入页草稿下拉跟随配置的草稿库
 #          + 修 apply_config 引用已删控件 var_template 的崩溃（09-24）
-APP_VERSION = "2.6.3"
+APP_VERSION = "2.6.4"
 
 
 def app_build_date() -> str:
@@ -95,6 +95,7 @@ from core.config import (              # noqa: E402
     DEFAULT_TRACK_TEMPLATE, DEFAULT_SPEC_KEY,
     DEFAULT_CLIPS_TEMPLATE, NAMING_PRESETS,
     config_path, load_config, save_config, ask, parse_bool, init_config,
+    setup_logging,
 )
 
 # 视频名解析（v2.5.0）：从视频素材名提取 项目/集数/编号/AiFX

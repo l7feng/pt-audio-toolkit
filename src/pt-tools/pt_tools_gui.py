@@ -88,6 +88,72 @@ TC_RE = re.compile(r"^\d{2}:\d{2}:\d{2}:\d{2}$")
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # ---------------------------------------------------------------------------
+# Windows 托盘气泡通知（W7 · ctypes 直调 Shell_NotifyIcon，零第三方依赖）
+# ---------------------------------------------------------------------------
+
+def toast(root, title, message, timeout_ms=6000):
+    """任务完成弹 Windows 通知（托盘气泡）。任何失败都静默吞掉，
+    通知绝不影响主流程。非 Windows / 无 root 直接返回。
+    """
+    if os.name != "nt" or root is None:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        NIM_ADD = 0x00000000
+        NIM_DELETE = 0x00000002
+        NIF_ICON = 0x00000002
+        NIF_INFO = 0x00000010
+        NIIF_INFO = 0x00000001
+        IDI_INFORMATION = 32516
+
+        class NOTIFYICONDATAW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("hWnd", wintypes.HWND),
+                ("uID", wintypes.UINT),
+                ("uFlags", wintypes.UINT),
+                ("uCallbackMessage", wintypes.UINT),
+                ("hIcon", wintypes.HICON),
+                ("szTip", wintypes.WCHAR * 128),
+                ("dwState", wintypes.DWORD),
+                ("dwStateMask", wintypes.DWORD),
+                ("szInfo", wintypes.WCHAR * 256),
+                ("uVersion", wintypes.UINT),
+                ("szInfoTitle", wintypes.WCHAR * 64),
+                ("dwInfoFlags", wintypes.DWORD),
+                ("guidItem", ctypes.c_byte * 16),
+                ("hBalloonIcon", wintypes.HICON),
+            ]
+
+        user32 = ctypes.windll.user32
+        user32.Shell_NotifyIconW.argtypes = [
+            wintypes.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+        user32.Shell_NotifyIconW.restype = wintypes.BOOL
+        user32.LoadIconW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR]
+        user32.LoadIconW.restype = wintypes.HICON
+
+        nid = NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
+        nid.hWnd = int(root.winfo_id())
+        nid.uID = 1
+        nid.uFlags = NIF_INFO | NIF_ICON
+        nid.hIcon = user32.LoadIconW(None, IDI_INFORMATION)
+        nid.dwInfoFlags = NIIF_INFO
+        nid.szInfoTitle = (title or "")[:63]
+        nid.szInfo = (message or "")[:255]
+        user32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+        try:
+            root.after(timeout_ms + 1000,
+                       lambda: user32.Shell_NotifyIconW(NIM_DELETE,
+                                                        ctypes.byref(nid)))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------------------
 # 版本与构建日期
 # ---------------------------------------------------------------------------
 # 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），标题/关于里写 vX.Y.Z (YYYY-MM-DD)。
@@ -98,7 +164,9 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 #   last_out_dir=out 目录，_migrate_cfg 2→3 只补缺不覆盖）② 档案平铺存放，
 #   扫描完自动改名 <工程名>-pt-profile.json ③「指定文件」模式预填档案里的
 #   .ptx 路径、浏览框默认开其父级 ④ 输出/建档目录不存在时现建。
-APP_VERSION = "1.4.0"
+# v1.4.1（2026-09-24）：① 任务完成弹 Windows 托盘通知（W7）② 接入滚动日志
+#   %APPDATA%\pt-tools\pt-tools.log（W2 骨架，D2 并入诊断包）。
+APP_VERSION = "1.4.1"
 
 
 def build_date():
@@ -301,6 +369,9 @@ TEXTS = {
         "cmd_done": "— 命令结束，退出码 %d —\n",
         "err_cmd_start": "[error] 无法启动命令：%s\n",
         "err_cmd_stop": "[error] 第 %d 条命令失败，剩余 %d 条已跳过。\n",
+        "toast_title": "pt-tools",
+        "toast_done": "任务已完成（退出码 %d）",
+        "toast_aborted": "任务已中止",
 
         # —— v1.3.0 卡死专项（Q12）：中止 / 看门狗 / 关窗 ——
         "log_abort": "■ 中止",
@@ -607,6 +678,9 @@ TEXTS = {
         "cmd_done": "— Command finished, exit code %d —\n",
         "err_cmd_start": "[error] Cannot start command: %s\n",
         "err_cmd_stop": "[error] Command %d failed — remaining %d skipped.\n",
+        "toast_title": "pt-tools",
+        "toast_done": "Task finished (exit code %d)",
+        "toast_aborted": "Task aborted",
 
         # v1.3.0 freeze fix (Q12): abort / watchdog / close
         "log_abort": "■ Abort",
@@ -1327,6 +1401,35 @@ def parse_video_duration_output(text):
 
 
 # ---------------------------------------------------------------------------
+# 日志（W2 骨架 · 滚轮文件落配置目录，失败静默）
+# ---------------------------------------------------------------------------
+
+def setup_logging():
+    """初始化独立滚动日志到 %APPDATA%\\pt-tools\\pt-tools.log。
+
+    返回 logger（失败返回 None，日志绝不影响主流程）。
+    W2 完整版（D2）会把日志并入「导出诊断包」一键打包上报。
+    """
+    try:
+        import logging
+        from logging.handlers import RotatingFileHandler
+        os.makedirs(APP_DIR, exist_ok=True)
+        path = os.path.join(APP_DIR, "pt-tools.log")
+        logger = logging.getLogger("pt-tools")
+        if not logger.handlers:
+            handler = RotatingFileHandler(path, maxBytes=1_000_000,
+                                          backupCount=3, encoding="utf-8")
+            handler.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(message)s"))
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            logger.info("=== pt-tools v%s (%s) 启动 ===", APP_VERSION, build_date())
+        return logger
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # 主窗口
 # ---------------------------------------------------------------------------
 
@@ -1353,6 +1456,11 @@ class App(tk.Tk):
 
         self.cfg = load_config()
         set_lang(self.cfg.get("lang", LANG_ZH))
+        self.logger = setup_logging()
+        if self.logger is not None:
+            self.logger.info("语言=%s 技能目录=%s",
+                             self.cfg.get("lang"),
+                             self.cfg.get("skills_root") or "(探测中)")
         self.resolver, _ok, _msg = PathResolver.detect(self.cfg)
         self.profile_path = self.cfg.get("last_profile", "")
         self.profile_data = None
@@ -1651,10 +1759,15 @@ class App(tk.Tk):
         self.scan_tab.on_worker_done(returncode)
         self.export_tab.on_worker_done(returncode)
         self._refresh_gating()
+        if self.logger is not None:
+            self.logger.info("命令队列结束，退出码=%s", returncode)
         if returncode == -1:
             self.log(T("cmd_aborted"))
+            toast(self, T("toast_title"), T("toast_aborted"))
         else:
             self.log(T("cmd_done") % returncode)
+            # W7：长任务跑完弹通知，人切去干别的也能被叫回来
+            toast(self, T("toast_title"), T("toast_done") % returncode)
 
     def start_worker(self, cmds):
         """启动后台命令队列。cmds 可为单条命令（list[str]）或命令列表。"""
@@ -1662,6 +1775,11 @@ class App(tk.Tk):
             cmds = [cmds]
         for cmd in cmds:
             self.log("> %s\n" % " ".join('"%s"' % c if " " in c else c for c in cmd))
+        if self.logger is not None:
+            self.logger.info(
+                "启动命令队列（%d 条）：%s",
+                len(cmds),
+                " | ".join(" ".join(c) for c in cmds))
         self.workers = [x for x in self.workers if x.is_alive()]   # 只留活着的
         w = CmdWorker(cmds, self.out_queue)
         self.workers.append(w)

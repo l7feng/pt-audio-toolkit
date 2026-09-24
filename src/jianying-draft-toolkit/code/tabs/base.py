@@ -155,6 +155,10 @@ class BaseTab(ttk.Frame):
             return
         self.running = True
         self.log("\n" + "─" * 46 + "\n")
+        _log = core.setup_logging()
+        if _log is not None:
+            _log.info("任务开始：%s（%s）",
+                      self.title, getattr(fn, "__name__", str(fn)[:80]))
 
         def worker():
             old_out, old_err = sys.stdout, sys.stderr
@@ -176,6 +180,10 @@ class BaseTab(ttk.Frame):
     def finish(self, on_done, err, btn, idle_text):
         """工作线程结束后由主线程调用（框架自动接好）。"""
         self.running = False
+        _log = core.setup_logging()
+        if _log is not None:
+            _log.info("任务结束：%s —— %s", self.title,
+                      ("成功" if err is None else "失败：%s" % err))
         if btn is not None:
             try:
                 btn.configure(state="normal", text=idle_text)
