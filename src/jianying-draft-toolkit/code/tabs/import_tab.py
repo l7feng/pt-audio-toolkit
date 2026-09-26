@@ -28,7 +28,7 @@ from pathlib import Path
 from tkinter import ttk, messagebox
 
 import main as core
-from .base import BaseTab, default_draft_root, list_drafts
+from .base import BaseTab, ScrollableFrame, default_draft_root, list_drafts
 
 SRC_PT = "pt"
 SRC_JSON = "json"
@@ -41,12 +41,17 @@ class ImportTab(BaseTab):
     def __init__(self, parent, app):
         super().__init__(parent, app)
         self._drafts = []
+        self._json_batch = None      # J10（v2.9.2）：多选 json 时的路径列表
         self.build()
 
     # ───────────── 界面 ─────────────
 
     def build(self):
-        outer = self
+        # G2/J12（D2 · 2026-09-27）：导入页信息也密，补齐滚动容器
+        # （写法与 export_tab 一致；窗口不够高时右侧出滚动条）。
+        outer = ScrollableFrame(self)
+        outer.pack(fill="both", expand=True)
+        outer = outer.inner
 
         # ── 数据源 ──
         src_box = ttk.LabelFrame(outer, text="数据源", padding=8)
@@ -193,9 +198,14 @@ class ImportTab(BaseTab):
             self.lbl_pt_state.configure(text="")
             self.btn_parse.configure(state="disabled")
 
-        # json 状态
+        # json 状态（J10：批量多选时显示批概要，单文件路径才做文件级检查）
         jp = Path(self.var_json.get().strip()) if self.var_json.get().strip() else None
-        if jp and jp.is_file():
+        if self._json_batch:
+            ok_n = sum(1 for b in self._json_batch if b.is_file())
+            self.lbl_json_state.configure(
+                text=f"✓ 批量 {len(self._json_batch)} 个 json（{ok_n} 个在位）",
+                foreground="#2e7d32" if ok_n == len(self._json_batch) else "#ef6c00")
+        elif jp and jp.is_file():
             try:
                 doc, n_wav, is_pkg = self._json_summary(jp)
                 n_track = len(doc.get("tracks", []))
@@ -235,9 +245,12 @@ class ImportTab(BaseTab):
             self.lbl_draft_state.configure(text="", foreground="#888")
             ready = False
 
+        if self._json_batch:
+            ready = bool(self._json_batch)      # 批量：目标草稿在每个工程的对话框里选
         state = "normal" if ready else "disabled"
         self.btn_import.configure(state=state)
-        self.btn_preview.configure(state="normal" if jp and jp.is_file() else "disabled")
+        self.btn_preview.configure(
+            state="normal" if (self._json_batch or (jp and jp.is_file())) else "disabled")
 
     def _json_summary(self, jp: Path):
         """读 pt-clips.json 概要：``(doc, wav_count, is_delivery_package)``。
@@ -313,12 +326,22 @@ class ImportTab(BaseTab):
             self.refresh_states()
 
     def _pick_json(self):
-        p = self.ask_file("选择 pt-clips.json（交付包里的那份）",
-                          initial=self.var_json.get(),
-                          filetypes=[("PT 解析结果", "*.json"), ("所有文件", "*.*")])
-        if p:
-            self.var_json.set(p)
-            self.refresh_states()
+        # J10（v2.9.2）：支持多选 —— 一次勾选多个交付包 json 批量导入。
+        # 多选时 var_json 只显示占位文案，真实列表在 self._json_batch。
+        from tkinter import filedialog
+        ps = filedialog.askopenfilenames(
+            title="选择 pt-clips.json（可按住 Ctrl 多选批量导入）",
+            initialdir=self.var_json.get() or None,
+            filetypes=[("PT 解析结果", "*.json"), ("所有文件", "*.*")])
+        if not ps:
+            return
+        if len(ps) == 1:
+            self._json_batch = None
+            self.var_json.set(ps[0])
+        else:
+            self._json_batch = [Path(x) for x in ps]
+            self.var_json.set(f"（已选 {len(ps)} 个 json，批量导入）")
+        self.refresh_states()
 
     def _pick_draft_dir(self):
         p = self.ask_dir("选择剪映草稿文件夹", initial=self.var_draft_dir.get())
@@ -416,11 +439,27 @@ class ImportTab(BaseTab):
     def preview(self):
         if self.running:
             return
+        ex = self._exclude_args()
+        if self._json_batch:
+            paths = list(self._json_batch)
+            if not all(x.is_file() for x in paths):
+                messagebox.showwarning("缺少数据源", "批量列表里有 json 已不在位，请重新选择。")
+                return
+
+            def job():
+                import import_audio
+                for k, x in enumerate(paths, 1):
+                    rows = import_audio.parse_pt_clips(x, ex)
+                    print(f"\n=== [{k}/{len(paths)}] {x.name} ===")
+                    _print_rows_digest(rows)
+                print("\n（预演不写任何文件）")
+
+            self.run_async(job, btn=self.btn_preview, busy_text="预演中…")
+            return
         jp = Path(self.var_json.get().strip())
         if not jp.is_file():
             messagebox.showwarning("缺少数据源", "请先选择 pt-clips.json。")
             return
-        ex = self._exclude_args()
 
         def job():
             import import_audio
@@ -451,6 +490,8 @@ class ImportTab(BaseTab):
     def do_import(self):
         if self.running:
             return
+        if self._json_batch:
+            return self._do_import_batch()
         jp = Path(self.var_json.get().strip())
         draft = Path(self.var_draft_dir.get().strip())
         if not jp.is_file():
@@ -499,6 +540,184 @@ class ImportTab(BaseTab):
             self.refresh_states()
 
         self.run_async(job, on_done=done, btn=self.btn_import, busy_text="写入中…")
+
+    # ───────────── ②' 批量导入（J10，v2.9.2）─────────────
+
+    def _do_import_batch(self):
+        """多工程横向导入：逐个弹「轨道勾选 + 目标草稿」对话框收集计划，
+        全部确认后统一执行（中途取消不产生半成品）。"""
+        paths = [x for x in self._json_batch if x.is_file()]
+        if not paths:
+            messagebox.showwarning("缺少数据源", "批量列表里的 json 都不在位，请重新选择。")
+            return
+        ex = self._exclude_args()
+        draft_names = [d.name for d in self._drafts]
+        cur_draft = self.var_draft_dir.get().strip()
+        plan = []
+        for x in paths:
+            dlg = _BatchPickDialog(self, x, draft_names, cur_draft)
+            self.wait_window(dlg)
+            if dlg.result is None:
+                self.log("\n（批量导入已取消，未写入任何草稿）\n")
+                return
+            if dlg.result == "skip":
+                self.log(f"· 批量：跳过 {x.name}\n")
+                continue
+            plan.append((x, dlg.result[0], dlg.result[1]))
+        if not plan:
+            self.log("\n（批量：没有要导入的工程）\n")
+            return
+        # 统一校验：目标草稿在位 + 剪映此刻没在跑（realtime，最后一次拦截）
+        for x, dft, _only in plan:
+            if not dft.is_dir():
+                messagebox.showerror("目标不存在", f"{x.name}\n目标草稿不存在：\n{dft}")
+                return
+            blockers, _w = self._jy_state(dft, realtime=True)
+            if blockers:
+                messagebox.showerror(
+                    "剪映正在运行",
+                    f"{x.name} → {dft.name}\n\n" + "\n".join(blockers)
+                    + "\n\n批量导入已中止，未写入任何草稿。")
+                return
+        self.save_config(quiet=True)
+
+        def job():
+            import sys
+            import import_audio
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+            ok, fail = 0, []
+            for k, (x, dft, only) in enumerate(plan, 1):
+                print(f"\n════ [{k}/{len(plan)}] {x.name} → {dft.name} ════")
+                argv = ["import_audio.py", "--pt-clips", str(x), str(dft)]
+                if ex:
+                    argv += ["--exclude", ",".join(ex)]
+                if only:
+                    argv += ["--only", ",".join(only)]
+                old = sys.argv
+                sys.argv = argv
+                try:
+                    import_audio.main()
+                    ok += 1
+                except SystemExit as e:
+                    fail.append(f"{x.name}（exit {e.code}）")
+                except BaseException as e:
+                    fail.append(f"{x.name}（{e}）")
+                finally:
+                    sys.argv = old
+            print(f"\n════ 批量导入结束：成功 {ok} / {len(plan)}")
+            if fail:
+                print("失败：\n  " + "\n  ".join(fail))
+
+        def done(err):
+            if err is None:
+                self.log("\n✓ 批量导入流程结束（各工程结果见上方日志）。\n")
+            else:
+                self.log(f"\n✗ 批量导入失败: {err}\n")
+            self.refresh_states()
+
+        self.run_async(job, on_done=done, btn=self.btn_import, busy_text="批量写入中…")
+
+
+class _BatchPickDialog(tk.Toplevel):
+    """J10 批量导入：单个工程的「轨道勾选 + 目标草稿」对话框。
+
+    result：None=取消全部；"skip"=跳过此工程；(draft_path, only_tuple)=确认。
+    """
+
+    def __init__(self, master, jp: Path, draft_names, cur_draft: str):
+        super().__init__(master)
+        self.title(f"勾选轨道 · {jp.name}")
+        self.result = None
+        self.transient(master)
+        self.grab_set()
+        self.resizable(False, True)
+        frm = ttk.Frame(self, padding=12)
+        frm.pack(fill="both", expand=True)
+        try:
+            import import_audio
+            names = import_audio.list_track_names(jp)
+        except Exception:
+            names = []
+        if not names:
+            names = []
+            self._no_names = True
+        else:
+            self._no_names = False
+
+        ttk.Label(frm, text=f"工程：{jp.parent.name} / {jp.name}",
+                  foreground="#555").pack(anchor="w", pady=(0, 6))
+
+        box = ttk.LabelFrame(frm, text="要导入的轨道（默认全选；日志框等自身可滚控件让位）",
+                             padding=8)
+        box.pack(fill="both", expand=True)
+        self._tvars = []
+        if names:
+            inner = ttk.Frame(box)
+            inner.pack(fill="both", expand=True)
+            half = (len(names) + 1) // 2
+            for i, n in enumerate(names):
+                v = tk.BooleanVar(value=True)
+                ttk.Checkbutton(inner, text=n, variable=v).grid(
+                    row=i % half, column=i // half, sticky="w", padx=6, pady=1)
+                self._tvars.append((n, v))
+            ctl = ttk.Frame(box)
+            ctl.pack(fill="x", pady=(6, 0))
+            ttk.Button(ctl, text="全选", width=6,
+                       command=lambda: [v.set(True) for _n, v in self._tvars]).pack(side="left")
+            ttk.Button(ctl, text="全不选", width=6,
+                       command=lambda: [v.set(False) for _n, v in self._tvars]).pack(side="left", padx=6)
+            ttk.Label(ctl, text=f"共 {len(names)} 条音频轨", foreground="#888").pack(side="left", padx=8)
+        else:
+            ttk.Label(box, text="（轨名解析失败——确认后将导入全部轨道）",
+                      foreground="#ef6c00").pack(anchor="w")
+
+        dbox = ttk.LabelFrame(frm, text="目标草稿（每个工程各选一个）", padding=8)
+        dbox.pack(fill="x", pady=(8, 0))
+        self.var_draft = tk.StringVar(value=cur_draft)
+        ttk.Combobox(dbox, textvariable=self.var_draft, values=draft_names,
+                     width=46).grid(row=0, column=0, sticky="we", padx=4)
+        dbox.columnconfigure(0, weight=1)
+
+        btns = ttk.Frame(frm)
+        btns.pack(fill="x", pady=(10, 0))
+        ttk.Button(btns, text="取消全部", command=self._cancel).pack(side="right", padx=4)
+        ttk.Button(btns, text="跳过此工程", command=self._skip).pack(side="right", padx=4)
+        b = ttk.Button(btns, text="导入此工程 ✓", command=self._ok, style="Accent.TButton")
+        b.pack(side="right", padx=4)
+        self.bind("<Return>", lambda _e: self._ok())
+        self.bind("<Escape>", lambda _e: self._cancel())
+
+    def _ok(self):
+        if self._no_names:
+            self.result = (Path(self.var_draft.get().strip()), ())
+        else:
+            only = tuple(n for n, v in self._tvars if v.get())
+            self.result = (Path(self.var_draft.get().strip()), only)
+        self.destroy()
+
+    def _skip(self):
+        self.result = "skip"
+        self.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.destroy()
+
+
+def _print_rows_digest(rows):
+    """批量预演：打印一个 json 的行摘要（与单选 preview 同口径）。"""
+    if not rows:
+        print("  （无可用片段）")
+        return
+    by_track = {}
+    for r in rows:
+        by_track.setdefault(r["_pt_track"], []).append(r)
+    for tname, items in by_track.items():
+        print(f"  轨 {tname:<26} 片段 {len(items):>3} 个")
+    print(f"  合计：{len(by_track)} 条轨 / {len(rows)} 个片段")
 
 
 class _PTArgs:

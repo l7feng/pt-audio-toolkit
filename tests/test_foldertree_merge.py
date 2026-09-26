@@ -198,11 +198,13 @@ def _():
         "foldertree 是纯逻辑层，不得 import tkinter"
     m = open(os.path.join(RENAME_CODE, "main.py"), encoding="utf-8").read()
     assert "import foldertree as FT" in m
-    assert "self.tab_folder = ttk.Frame(nb)" in m
+    # D2（G2/J12 · 2026-09-27）之后 tab 容器是 ScrollableFrame，构建挂 .inner
+    assert "self.tab_folder = ScrollableFrame(nb, padding=0)" in m
+    assert "f = self.tab_folder.inner" in m
     assert 'nb.add(self.tab_folder' in m
     assert "工程文件夹" in m
     assert "项目根（1/" not in m, "F5：「项目根」单选按钮不应存在"
-    return "分层干净 + 页签已接线 + 旧选项已删"
+    return "分层干净 + 页签已接线（D2 滚动容器形态）+ 旧选项已删"
 
 
 if __name__ == "__main__":

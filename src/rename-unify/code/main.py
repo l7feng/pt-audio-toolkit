@@ -38,6 +38,8 @@ import traceback
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
+from scrollable import ScrollableFrame  # G2/J12：页内可滚动容器（同源副本，改一处同步三处）
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config as CFG
@@ -215,11 +217,13 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         nb.pack(fill="both", expand=True, padx=8, pady=8)
         self.nb = nb
 
-        self.tab_rule = ttk.Frame(nb)
-        self.tab_target = ttk.Frame(nb)
-        self.tab_run = ttk.Frame(nb)
-        self.tab_undo = ttk.Frame(nb)
-        self.tab_folder = ttk.Frame(nb)          # v1.7.0：合并进来的工程文件夹建树
+        # G2/J12（D2 · 2026-09-27）：五页统一套可滚动容器（padding=0，各页
+        # 自带布局边距）；构建函数里的 f = self.tab_x 已改为取 .inner。
+        self.tab_rule = ScrollableFrame(nb, padding=0)
+        self.tab_target = ScrollableFrame(nb, padding=0)
+        self.tab_run = ScrollableFrame(nb, padding=0)
+        self.tab_undo = ScrollableFrame(nb, padding=0)
+        self.tab_folder = ScrollableFrame(nb, padding=0)   # v1.7.0：合并进来的工程文件夹建树
         nb.add(self.tab_rule, text="  1 · 项目信息与模板  ")
         nb.add(self.tab_target, text="  2 · 目标与归位  ")
         nb.add(self.tab_run, text="  3 · 预览与执行  ")
@@ -242,7 +246,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
     # ============ 页1：项目信息与模板 ============
     def _build_rule_tab(self):
-        f = self.tab_rule
+        f = self.tab_rule.inner
         pad = {"padx": 6, "pady": 3}
 
         # ---- 字段值 ----
@@ -419,7 +423,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         第 4 集才补 STEM。用「启用 + 限定集数」表达这种差异，比改模板或事后
         挪文件都安全（未启用的目标在计划阶段就标「按目标排除」，不动盘）。
         """
-        f = self.tab_target
+        f = self.tab_target.inner
         f.columnconfigure(0, weight=1)
         f.rowconfigure(0, weight=3)
         f.rowconfigure(1, weight=2)
@@ -688,7 +692,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
     # ============ 页3：预览与执行 ============
     def _build_run_tab(self):
-        f = self.tab_run
+        f = self.tab_run.inner
 
         top = ttk.LabelFrame(f, text="目标范围")
         top.pack(fill="x", padx=10, pady=(10, 6))
@@ -791,7 +795,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
           · F6：保留「从上次项目提取」（目录推断，与页1 字段链同源）；
           · G1：模板/输出路径框支持文件夹拖入（tkinterdnd2 缺席时安全回退）。
         """
-        f = self.tab_folder
+        f = self.tab_folder.inner
         ft = self.cfg.get("foldertree") or {}
         pad = {"padx": 6, "pady": 3}
         self.ft = {}
@@ -1034,7 +1038,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _build_undo_tab(self):
-        f = self.tab_undo
+        f = self.tab_undo.inner
         top = ttk.LabelFrame(f, text="回溯日志（每次执行自动生成 rename_log_*.csv）")
         top.pack(fill="x", padx=10, pady=(10, 6))
         top.columnconfigure(1, weight=1)

@@ -71,36 +71,39 @@ class ScrollableFrame(ttk.Frame):
         self.inner.bind("<Configure>", lambda _e: self.canvas.configure(
             scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", self._on_canvas_configure)
-        # 滚轮绑定在 all 上（覆盖嵌套子控件），滚动时按鼠标位置智能让位
-        self.canvas.bind_all("<MouseWheel>", self._on_wheel)
-        self.bind("<Destroy>", self._on_destroy)
+        # 滚轮绑定（2026-09-27 修正）：bind_all 加 add="+"，多个实例（多个
+        # 页签）共存互不覆盖 —— 旧版无 add，后建的页会顶掉先建的页，导致
+        # 「切页签后滚轮失效」。实际只滚"鼠标所在子树"对应的页（_on_wheel）。
+        self.canvas.bind_all("<MouseWheel>", self._on_wheel, add="+")
 
     def _on_canvas_configure(self, e):
         # inner 宽度跟随 canvas —— 保证 LabelFrame 等 stretch 控件不截断
         self.canvas.itemconfigure(self._win, width=e.width)
 
     def _on_wheel(self, e):
-        # 鼠标落在自身可滚的控件上时不代滚（Text/Listbox/Treeview/Combobox）
+        # 鼠标下的控件不在本容器子树内 → 不是本页的事，跳过
+        # （切到别的页签 / 弹窗上 / 已销毁实例，全都自然短路）
         try:
             w = self.winfo_containing(e.x_root, e.y_root)
         except Exception:
-            w = None
-        while w is not None:
-            if isinstance(w, (tk.Text, tk.Listbox, tk.Toplevel, ttk.Treeview)):
+            return
+        inside = False
+        x = w
+        while x is not None:
+            if x is self.canvas:
+                inside = True
+                break
+            x = getattr(x, "master", None)
+        if not inside:
+            return
+        # 鼠标落在自身可滚的控件上时让位（Text/Listbox/Treeview/Combobox）
+        x = w
+        while x is not None and x is not self.canvas:
+            if isinstance(x, (tk.Text, tk.Listbox, tk.Toplevel, ttk.Treeview, ttk.Combobox)):
                 return
-            if isinstance(w, ttk.Combobox):
-                return
-            w = getattr(w, "master", None)
+            x = getattr(x, "master", None)
         try:
             self.canvas.yview_scroll(int(-e.delta / 120), "units")
-        except Exception:
-            pass
-
-    def _on_destroy(self, _e):
-        # 只在本容器销毁时解绑全局滚轮，避免影响其他页/窗口
-        try:
-            if str(self) == str(_e.widget):
-                self.canvas.unbind_all("<MouseWheel>")
         except Exception:
             pass
 

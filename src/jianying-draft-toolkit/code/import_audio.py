@@ -326,8 +326,13 @@ def resolve_audio_dir(json_path: Path, doc: dict, override: Path | None = None) 
     return None
 
 
+# 纯 Aux/VCA 等非音频内容轨（--keep-aux 之外的默认跳过口径，
+# list_track_names 勾选对话框同用此表；type 编号来自 PTSL GetTrackList）
+NON_AUDIO_TYPES = {3, 5, 12, 14, 15}  # Aux / Vca / Master / BasicFolder / RoutingFolder
+
 def parse_pt_clips(json_path: Path, exclude: tuple = (),
-                   verbose: bool = True, audio_dir: Path | None = None) -> list[dict]:
+                   verbose: bool = True, audio_dir: Path | None = None,
+                   only: tuple = ()) -> list[dict]:
     """把 pt-clips.json 转成统一的行列表（一行为一个 clip）。
 
     PT 导出中每个 clip 按声道（L/R）分行，这里按「时间码 + 名称去声道后缀」合并为单行。
@@ -336,6 +341,10 @@ def parse_pt_clips(json_path: Path, exclude: tuple = (),
 
     `audio_dir` 非空时覆盖素材目录 —— 这是「离线/跨设备」的关键：剪辑机器上
     没有 PT 原始路径，只要把音频放在 json 同级的 audio/ 目录即可正常工作。
+
+    `only`（J10 多工程勾选，v2.9.2）非空时**只保留** `_pt_track` 在其中的行
+    （精确轨名匹配，不是关键词排除）；被过滤的轨不做任何处理 —— 与 exclude
+    同一口径：上次已导入、这次未勾选的轨**不会被清除**。
     """
     d = json.loads(json_path.read_text(encoding="utf-8"))
     session = d.get("session", {})
@@ -369,8 +378,7 @@ def parse_pt_clips(json_path: Path, exclude: tuple = (),
 
     # PT 权威轨道顺序（GetTrackList 的 index）与格式（1=Mono / 2=Stereo）
     meta_by_name = {m["name"]: m for m in (d.get("track_meta") or [])}
-    # 纯 Aux/VCA 等非音频内容轨（用于 --keep-aux 之外的默认跳过）
-    NON_AUDIO_TYPES = {3, 5, 12, 14, 15}  # Aux / Vca / Master / BasicFolder / RoutingFolder
+    # 纯 Aux/VCA 等非音频内容轨（口径见模块级 NON_AUDIO_TYPES）
 
     def resolve_file(clip_name: str):
         """片段名 -> 素材文件 Path。优先用映射表，再按常见规则回退。"""
@@ -524,7 +532,36 @@ def parse_pt_clips(json_path: Path, exclude: tuple = (),
         if f:
             row["_fade_in_ms"] = f.get("in", 0)
             row["_fade_out_ms"] = f.get("out", 0)
+    if only:
+        only_set = {o.strip() for o in only if o and o.strip()}
+        dropped = [r for r in rows if r.get("_pt_track") not in only_set]
+        if dropped and verbose:
+            print(f"[info] 勾选导入：只保留 {len(only_set)} 条轨，"
+                  f"已跳过 {len(dropped)} 个片段")
+        rows = [r for r in rows if r.get("_pt_track") in only_set]
     return rows
+
+
+def list_track_names(json_path: Path) -> list[str]:
+    """列出交付包 json 里可导入的音频轨名（J10 勾选对话框数据源）。
+
+    口径：按 json["tracks"] 的轨名（导入实际会产生这些轨道），再用
+    track_meta 的 type 对照 NON_AUDIO_TYPES 剔除 Aux/VCA/Folder 类
+    （track_meta 缺失的旧 json 不剔除）。顺序保持 json 内轨序。
+    """
+    d = json.loads(Path(json_path).read_text(encoding="utf-8"))
+    meta_type = {m.get("name"): int(m.get("type") or 0)
+                 for m in (d.get("track_meta") or [])}
+    names = []
+    for t in d.get("tracks", []):
+        n = t.get("name")
+        if not n:
+            continue
+        ty = meta_type.get(n)
+        if ty is not None and ty in NON_AUDIO_TYPES:
+            continue
+        names.append(n)
+    return names
 
 
 def _collect_fades(d: dict, fps: int, start_tc: str) -> dict:
@@ -1115,6 +1152,7 @@ def main():
     ap.add_argument("--audio-dir", type=Path,
                     help="素材目录覆盖（交付包场景：json 同级 audio/ 会自动识别，一般无需指定）")
     ap.add_argument("--exclude", default="", help="排除轨道关键词（逗号分隔；默认排除辅助轨）")
+    ap.add_argument("--only", default="", help="只导入这些轨道（精确轨名，逗号分隔；J10 批量勾选用；默认空=全部）")
     ap.add_argument("--keep-aux", action="store_true", help="保留辅助轨（不默认排除 VCA/Verb/Dly/BUS）")
     ap.add_argument("--draftc", type=Path, default=DEFAULT_DRAFTC, help="jy-draftc 路径")
     ap.add_argument("--dry-run", action="store_true", help="只解析打印不写入")
@@ -1167,7 +1205,8 @@ def main():
         ex = [s.strip().lower() for s in args.exclude.split(",") if s.strip()]
         if not ex and not args.keep_aux:
             ex = list(DEFAULT_EXCLUDE)
-        rows = parse_pt_clips(args.pt_clips, tuple(ex), audio_dir=args.audio_dir)
+        only = tuple(x for x in (x.strip() for x in args.only.split(",")) if x)
+        rows = parse_pt_clips(args.pt_clips, tuple(ex), audio_dir=args.audio_dir, only=only)
         print(f"[info] 数据源: PT 解析结果 {args.pt_clips.name}  片段 {len(rows)} 个"
               f"{'  (排除: ' + ','.join(ex) + ')' if ex else ''}")
     else:

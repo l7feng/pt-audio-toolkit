@@ -26,6 +26,7 @@ from ptools.core.naming import (
 )
 from ptools.core.notify import toast
 from ptools.core.paths import PathResolver
+from ptools.gui.scrollable import ScrollableFrame
 from ptools.core.settings import (
     APP_DIR, BIT_DEPTHS, CREATE_NO_WINDOW, DEFAULT_EXPORT_FORMAT,
     DEFAULT_FALLBACK_DURATION, DEFAULT_VIDEO_MARGIN, EXPORT_MODES,
@@ -199,14 +200,19 @@ class App(_DND_BASE):
         self.nb = nb
         nb.pack(fill="both", expand=True, padx=8, pady=(4, 0))
         self.pt_info.pack(fill="x", padx=8, pady=(6, 0), before=self.nb)
-        self.scan_tab = ScanTab(nb, self)
-        self.export_tab = ExportTab(nb, self)
-        self.library_tab = LibraryTab(nb, self)
-        self.clean_tab = CleanTab(nb, self)
-        nb.add(self.scan_tab, text=T("tab_scan"))
-        nb.add(self.export_tab, text=T("tab_export"))
-        nb.add(self.library_tab, text=T("tab_library"))
-        nb.add(self.clean_tab, text=T("tab_clean"))
+        # G2/J12（D2 · 2026-09-27）：四页统一套可滚动容器 —— 信息密页窗口
+        # 不够高时右侧出滚动条；tab 对象引用不变（set_ptsl 等照旧直调）。
+        def _scroll_tab(cls, text):
+            wrap = ScrollableFrame(nb, padding=0)
+            tab = cls(wrap.inner, self)
+            tab.pack(fill="both", expand=True)
+            nb.add(wrap, text=text)
+            return tab
+
+        self.scan_tab = _scroll_tab(ScanTab, T("tab_scan"))
+        self.export_tab = _scroll_tab(ExportTab, T("tab_export"))
+        self.library_tab = _scroll_tab(LibraryTab, T("tab_library"))
+        self.clean_tab = _scroll_tab(CleanTab, T("tab_clean"))
         self._build_log()
         self._build_statusbar()
         if not self.ptsl_on:
