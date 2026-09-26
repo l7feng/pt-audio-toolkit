@@ -42,6 +42,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config as CFG
 import core_rules as CORE
+# v1.7.0（D 档合并 F7+R2）：原 pt-project-folder-builder 的建树逻辑，
+# 纯逻辑层（零 tkinter），GUI 只收集参数后调用。
+import foldertree as FT
 
 
 # ---------------------------------------------------------------------------
@@ -216,15 +219,18 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.tab_target = ttk.Frame(nb)
         self.tab_run = ttk.Frame(nb)
         self.tab_undo = ttk.Frame(nb)
+        self.tab_folder = ttk.Frame(nb)          # v1.7.0：合并进来的工程文件夹建树
         nb.add(self.tab_rule, text="  1 · 项目信息与模板  ")
         nb.add(self.tab_target, text="  2 · 目标与归位  ")
         nb.add(self.tab_run, text="  3 · 预览与执行  ")
         nb.add(self.tab_undo, text="  4 · 回溯与撤销  ")
+        nb.add(self.tab_folder, text="  5 · 工程文件夹  ")
 
         self._build_rule_tab()
         self._build_target_tab()
         self._build_run_tab()
         self._build_undo_tab()
+        self._build_folder_tab()
 
         # 状态栏
         bar = ttk.Frame(self)
@@ -775,6 +781,258 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.txt_log.pack(fill="both", expand=True, side="left", padx=6, pady=4)
 
     # ============ 页4：回溯与撤销 ============
+    # ============ 页5：工程文件夹（v1.7.0 · D 档合并 F7+R2 / 甲案）============
+    def _build_folder_tab(self):
+        """原 pt-project-folder-builder 整体迁入 rename-unify 第 5 页签。
+
+        合并要点（Q4 判定「三套命名字段链同构」）：
+          · 项目名默认取**页1 的「片名」**，两处不再各填一遍（一条字段捕获链）；
+          · F5：「项目根」选项**已删除**，集数固定建在 Project 子目录下；
+          · F6：保留「从上次项目提取」（目录推断，与页1 字段链同源）；
+          · G1：模板/输出路径框支持文件夹拖入（tkinterdnd2 缺席时安全回退）。
+        """
+        f = self.tab_folder
+        ft = self.cfg.get("foldertree") or {}
+        pad = {"padx": 6, "pady": 3}
+        self.ft = {}
+
+        def sv(key, default=""):
+            var = tk.StringVar(value=str(ft.get(key, default)))
+            self.ft[key] = var
+            return var
+
+        # ---- ① 路径 ----
+        path_f = ttk.LabelFrame(f, text=" 路径 ")
+        path_f.pack(fill="x", padx=10, pady=(10, 6))
+        path_f.columnconfigure(1, weight=1)
+        ttk.Label(path_f, text="模板路径").grid(row=0, column=0, sticky="w", **pad)
+        e_tpl = ttk.Entry(path_f, textvariable=sv("template_root"))
+        e_tpl.grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(path_f, text="浏览", width=8,
+                   command=self._ft_pick_template).grid(row=0, column=2)
+        ttk.Label(path_f, text="输出路径").grid(row=1, column=0, sticky="w", **pad)
+        e_out = ttk.Entry(path_f, textvariable=sv("output_root"))
+        e_out.grid(row=1, column=1, sticky="ew", padx=6)
+        ttk.Button(path_f, text="浏览", width=8,
+                   command=self._ft_pick_output).grid(row=1, column=2)
+        # G1（拖拽）：与页3 目标目录框同一套实现，缺席时静默回退
+        enable_path_drop(e_tpl, lambda ps: self._ft_drop("template_root", ps))
+        enable_path_drop(e_out, lambda ps: self._ft_drop("output_root", ps))
+
+        # ---- ② 本批内容 ----
+        batch_f = ttk.LabelFrame(f, text=" 本批内容 ")
+        batch_f.pack(fill="x", padx=10, pady=(0, 6))
+        batch_f.columnconfigure(1, weight=1)
+        ttk.Label(batch_f, text="项目名称").grid(row=0, column=0, sticky="w", **pad)
+        # 默认取页1「片名」（字段链收敛）；页1 没填才用 foldertree 自带值
+        _nm = (self.cfg.get("fields", {}).get("片名", "") or ft.get("name", "测试"))
+        e_name = ttk.Entry(batch_f, textvariable=sv("name", _nm))
+        e_name.grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(batch_f, text="从上次项目提取", width=14,
+                   command=self._ft_infer).grid(row=0, column=2, padx=(6, 0))
+        ttk.Label(batch_f, text="集数").grid(row=1, column=0, sticky="nw", **pad)
+        ttk.Entry(batch_f, textvariable=sv("eps", "1-10")).grid(
+            row=1, column=1, columnspan=2, sticky="ew", padx=6)
+        ttk.Label(batch_f, text="支持 逗号分隔 + 连字符区间，如 1-10, 23, 38",
+                  foreground="#888").grid(row=2, column=1, columnspan=2, sticky="w", padx=6)
+
+        # ---- ③ 命名信息 ----
+        info_f = ttk.LabelFrame(f, text=" 命名信息 ")
+        info_f.pack(fill="x", padx=10, pady=(0, 6))
+        for i, (key, label) in enumerate(
+                (("seq", "序号"), ("level", "等级"), ("date", "日期"), ("user", "用户"))):
+            ttk.Label(info_f, text=label).grid(row=0, column=i * 2, sticky="w", **pad)
+            default = datetime.datetime.now().strftime("%Y%m%d") if key == "date" else ""
+            ttk.Entry(info_f, width=12,
+                      textvariable=sv(key, default)).grid(row=0, column=i * 2 + 1, padx=4)
+        ttk.Label(info_f, text="集数命名").grid(row=1, column=0, sticky="w", **pad)
+        cb = ttk.Combobox(info_f, width=22, state="readonly",
+                          values=[m[0] for m in FT.EP_NAMING_MODES])
+        cb.set(str(ft.get("ep_naming", "name_num")))
+        cb.grid(row=1, column=1, columnspan=3, sticky="w", padx=4)
+        cb.bind("<<ComboboxSelected>>", lambda _e: self._ft_refresh())
+        self.ft_ep_naming = cb
+
+        # ---- ④ 选项 ----
+        opt_f = ttk.LabelFrame(f, text=" 选项 ")
+        opt_f.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Label(opt_f, text="模板 ptx").grid(row=0, column=0, sticky="w", **pad)
+        self.ft_ptx = tk.StringVar(value=str(ft.get("ptx_mode", "原样复制")))
+        ptx_row = ttk.Frame(opt_f)
+        ptx_row.grid(row=0, column=1, sticky="w", padx=4)
+        for label, val in FT.PTX_MODES:
+            ttk.Radiobutton(ptx_row, text=label, variable=self.ft_ptx, value=val,
+                            command=self._ft_refresh).pack(side="left", padx=6)
+        self.ft_skip = tk.BooleanVar(value=bool(ft.get("skip_existing", True)))
+        ttk.Checkbutton(opt_f, text="已存在项跳过", variable=self.ft_skip
+                        ).grid(row=1, column=1, sticky="w", padx=4)
+        ttk.Label(opt_f, text="集数位置：Project 子目录（F5 已删「项目根」选项）",
+                  foreground="#888").grid(row=2, column=1, sticky="w", padx=4, pady=(2, 0))
+
+        # ---- ⑤ 预览 ----
+        prev_f = ttk.LabelFrame(f, text=" 预览 ")
+        prev_f.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        self.ft_example = tk.StringVar(value="示例: ")
+        ttk.Label(prev_f, textvariable=self.ft_example).pack(anchor="w", padx=6, pady=(4, 2))
+        self.ft_prev = tk.Text(prev_f, height=10, wrap="none")
+        self.ft_prev.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        self.ft_prev.configure(state="disabled")
+
+        # ---- ⑥ 按钮 ----
+        btn = ttk.Frame(f)
+        btn.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Button(btn, text="刷新预览", command=self._ft_refresh).pack(side="left")
+        ttk.Button(btn, text="建立工程文件夹",
+                   command=self._ft_build).pack(side="left", padx=8)
+        ttk.Label(btn, text="日志写在「3 · 预览与执行」页",
+                  foreground="#888").pack(side="right")
+
+        self._ft_refresh()
+
+    # ---- 页5 辅助 ----
+    def _ft_collect(self):
+        """页5 字段 -> 配置 dict（保存时调用）。"""
+        try:
+            eps_mode = self.ft_ep_naming.get()
+        except Exception:
+            eps_mode = "name_num"
+        return {
+            "template_root": self.ft["template_root"].get().strip(),
+            "output_root": self.ft["output_root"].get().strip(),
+            "name": self.ft["name"].get().strip(),
+            "level": self.ft["level"].get().strip(),
+            "user": self.ft["user"].get().strip(),
+            "eps": self.ft["eps"].get().strip(),
+            "ep_naming": eps_mode,
+            "ptx_mode": self.ft_ptx.get(),
+            "skip_existing": bool(self.ft_skip.get()),
+        }
+
+    def _ft_set_prev(self, text):
+        self.ft_prev.configure(state="normal")
+        self.ft_prev.delete("1.0", "end")
+        self.ft_prev.insert("1.0", text)
+        self.ft_prev.configure(state="disabled")
+
+    def _ft_drop(self, key, paths):
+        """G1：拖入文件夹 -> 填入路径框（只取第一个，且必须是目录）。"""
+        if not paths:
+            return
+        p = paths[0]
+        self.ft[key].set(p)
+        if key == "output_root":
+            self.ft["seq"].set(str(FT.detect_next_seq(p)))
+        self._ft_refresh()
+
+    def _ft_pick_template(self):
+        p = filedialog.askdirectory(initialdir=self.ft["template_root"].get())
+        if p:
+            self.ft["template_root"].set(p)
+            self._ft_refresh()
+
+    def _ft_pick_output(self):
+        p = filedialog.askdirectory(initialdir=self.ft["output_root"].get())
+        if p:
+            self.ft["output_root"].set(p)
+            # 换输出目录时按新目录自动顺延序号（可手动覆盖）
+            self.ft["seq"].set(str(FT.detect_next_seq(p)))
+            self._ft_refresh()
+
+    def _ft_infer(self):
+        """F6：从输出根下「序号最大」的项目根提取 项目名/等级（不动日期与用户）。"""
+        info = FT.infer_fields_from_output(self.ft["output_root"].get().strip())
+        if not info:
+            messagebox.showwarning("无法提取", "输出路径下没有可识别的项目根文件夹")
+            return
+        self.ft["name"].set(info.get("name", ""))
+        self.ft["level"].set(info.get("level", ""))
+        self._ft_refresh()
+        self._log("页5 · 已从项目根提取：项目名=%s 等级=%s"
+                  % (info.get("name", ""), info.get("level", "")))
+
+    def _ft_plan(self):
+        """收集当前表单 -> (eps, errs, project_root, steps, warns, ep_names)。"""
+        g = lambda k: self.ft[k].get().strip()
+        eps, errs = FT.parse_episodes(g("eps"))
+        project_root, steps, warns, ep_names = FT.plan_creation(
+            eps, g("name"), g("seq"), g("level"), g("date"), g("user"),
+            g("output_root"), g("template_root"),
+            ptx_mode=self.ft_ptx.get(), ep_naming=self.ft_ep_naming.get())
+        return eps, errs, project_root, steps, warns, ep_names
+
+    def _ft_refresh(self):
+        try:
+            eps, errs, project_root, steps, warns, ep_names = self._ft_plan()
+        except Exception as e:
+            self._ft_set_prev("[规划出错] %s" % e)
+            return
+        self.ft_example.set("示例: %s" % os.path.basename(project_root))
+        lines = []
+        if not self.ft["name"].get().strip():
+            lines.append("⚠ 项目名称为空 —— 集名/ptx 将只有集数。"
+                         "可点「从上次项目提取」自动填入。")
+        lines.append("项目根: %s" % project_root)
+        for e in errs:
+            lines.append("⚠ 集数解析: %s" % e)
+        for w in warns:
+            lines.append("⚠ %s" % w)
+        if not eps:
+            lines.append("(无有效集数，仅建立分类目录)")
+        lines.append("")
+        lines.append(FT.plan_tree_text(project_root, steps, ep_names))
+        self._ft_set_prev("\n".join(lines))
+
+    def _ft_build(self):
+        try:
+            eps, errs, project_root, steps, warns, ep_names = self._ft_plan()
+        except Exception as e:
+            messagebox.showerror("规划失败", str(e))
+            return
+        if not steps:
+            messagebox.showwarning("无可建立项", "请检查集数/模板路径")
+            return
+        # 建立前预检：问题一次列全，不等边建边炸
+        problems = FT.precheck_build(self.ft["template_root"].get().strip(),
+                                     self.ft["output_root"].get().strip(),
+                                     project_root, self.ft_ptx.get())
+        if problems and not messagebox.askokcancel(
+                "预检发现 %d 个问题" % len(problems),
+                "\n".join("· " + p for p in problems) + "\n\n仍要继续建立吗？"):
+            return
+        if not messagebox.askokcancel(
+                "确认建立",
+                "将在以下位置建立 %d 个目录/文件：\n%s\n\n是否继续？"
+                % (len(steps), project_root)):
+            return
+
+        src_ptx = (FT.locate_template_ptx(self.ft["template_root"].get().strip())
+                   if self.ft_ptx.get() != "none" else None)
+        skip = bool(self.ft_skip.get())
+        self._log("=== 页5 · 开始建立: %s ===" % project_root)
+        for w in warns:
+            self._log("⚠ %s" % w)
+        if errs:
+            self._log("⚠ 集数解析: %s" % "; ".join(errs))
+
+        def worker():
+            try:
+                created, skipped, failed = FT.apply_plan(
+                    project_root, steps, src_ptx=src_ptx, skip_existing=skip,
+                    log=lambda m: self.after(0, self._log, m))
+                self.after(0, self._log,
+                           "=== 页5 · 完成: 新建 %d / 跳过 %d / 失败 %d ==="
+                           % (created, skipped, failed))
+                if failed == 0:
+                    try:
+                        os.startfile(project_root)
+                    except Exception:
+                        pass
+                self.after(0, self._ft_refresh)
+            except Exception:
+                self.after(0, self._log, traceback.format_exc())
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _build_undo_tab(self):
         f = self.tab_undo
         top = ttk.LabelFrame(f, text="回溯日志（每次执行自动生成 rename_log_*.csv）")
@@ -1508,6 +1766,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         cfg["rules"] = [list(r) for r in self.rules]
         cfg["templates"] = [dict(t) for t in self.templates]
         cfg["targets"] = [dict(t) for t in self.targets]
+        cfg["foldertree"] = self._ft_collect()
         try:
             cfg["window"] = self.geometry().split("+")[0]
         except Exception:

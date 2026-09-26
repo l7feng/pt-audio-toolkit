@@ -14,7 +14,9 @@ APP_NAME = "rename-unify"
 # 四工具统一口径：版本号 X.Y.Z（不带 v 前缀），显示时补 v（见 title()）。
 # v1.5.0（2026-09-24）：R1 执行前审计 json（rename_audit_*.json）+ 按审计跨会话回滚
 #   + R3 规则集导出/导入。
-APP_VERSION = "1.6.0"
+# v1.7.0（2026-09-27）：D 档 F7+R2 合并（甲案）——原 pt-project-folder-builder
+#   作为第 5 页签「工程文件夹」并入，逻辑在 foldertree.py（纯逻辑、零 tkinter）。
+APP_VERSION = "1.7.0"
 
 
 def app_dir():
@@ -57,6 +59,20 @@ DEFAULTS = {
     #    （core.migrate_enabled_types），新配置不再写这个键。
     "enabled_types": [],
     "window": "1180x760",
+    # v1.7.0（D 档合并）：工程文件夹建树（原 pt-project-folder-builder）。
+    # ⚠️ F5：「项目根」选项已删除 —— 集数文件夹固定建在 Project 子目录下，
+    #    故这里**没有** placement 键（旧配置的该键会被忽略）。
+    "foldertree": {
+        "template_root": r"D:\DAW-Project\00文件夹模板",
+        "output_root": r"D:\DAW-Project",
+        "name": "测试",
+        "level": "D",
+        "user": "7F",
+        "eps": "1-10",
+        "ep_naming": "name_num",
+        "ptx_mode": "原样复制",
+        "skip_existing": True,
+    },
 }
 
 
@@ -84,6 +100,13 @@ def load_config():
         f["用户"] = str(raw_fields["档位"])
     f.pop("档位", None)
     out["fields"] = f
+    # foldertree 逐键合并（v1.7.0）：用户配置缺键时补默认，避免 KeyError；
+    # 只接受 DEFAULTS 里已有的键，脏键静默丢弃。
+    raw_ft = cfg.get("foldertree") if isinstance(cfg.get("foldertree"), dict) else {}
+    ft = dict(DEFAULTS["foldertree"])
+    if raw_ft:
+        ft.update({k: v for k, v in raw_ft.items() if k in DEFAULTS["foldertree"]})
+    out["foldertree"] = ft
     # enabled_types 逐项清洗，容忍手改配置写坏结构
     out["enabled_types"] = _clean_enabled_types(cfg.get("enabled_types"))
     return out
