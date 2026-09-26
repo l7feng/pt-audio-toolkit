@@ -45,13 +45,21 @@ def read_wav_header(path):
             data_size = None
             byte_rate = 0
             block_align = 0
-            while True:
-                head = fh.read(8)
-                if len(head) < 8:
-                    break
-                cid, csz = _CHUNK_FMT.unpack(head)
-                if csz > 0x7FFFFFFF:          # 异常块大小，按剩余文件裁
-                    csz = max(0, size - fh.tell())
+            pos = 12                          # RIFF 头已读完，从首个块开始走
+            hops = 0
+            while pos + 8 <= size:
+                hops += 1
+                if hops > 4096:               # 畸形文件防御：块数不可能这么多
+                    raise WavHeaderError("块数量异常，疑似损坏文件")
+                fh.seek(pos)
+                cid, csz = _CHUNK_FMT.unpack(fh.read(8))
+                if csz > 0x7FFFFFFF:          # 流式写入未回填，按剩余文件裁
+                    csz = max(0, size - (pos + 8))
+                # 关键：下一块起点 = 本块起点 + 8 字节块头 + 块体（奇数补 1 字节）。
+                # 这里必须用绝对位置重算，不能 fh.seek(csz)——那是把块长当绝对
+                # 偏移，跳回文件中部；PT 产物在 data 之后还有 regn/umid/DGDA
+                # 元数据块，撞上零长块就会在两个偏移间无限循环（质检线程挂死）。
+                nxt = pos + 8 + csz + (csz & 1)
                 if cid == b"fmt ":
                     body = fh.read(csz)
                     if len(body) < 16:
@@ -71,9 +79,8 @@ def read_wav_header(path):
                     data_size = csz
                     if channels is not None:
                         break        # fmt 在前 data 在后（常规布局），可停
-                    fh.seek(csz + (csz & 1))   # 极少见：data 在 fmt 前，跳过继续
-                else:
-                    fh.seek(csz + (csz & 1))   # 奇数块补 1 字节 padding
+                    # 极少见：data 在 fmt 前 —— 落到下面 pos = nxt 继续找 fmt
+                pos = nxt
             if channels is None:
                 raise WavHeaderError("缺少 fmt 块")
             if data_size is None:
