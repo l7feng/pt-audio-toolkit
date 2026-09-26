@@ -35,6 +35,15 @@ import tempfile
 import traceback
 from pathlib import Path
 
+# 报告器必须能打印任意文本：控制台默认 GBK，遇到 ✅/→ 之类字符会在
+# **打印失败明细时**抛 UnicodeEncodeError，把真正的 FAIL/ERROR 顶掉
+# （2026-09-26 实测：core_logic 的真实断言错被这条盖住，报告直接中断）。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ── 结果分级常量 ──────────────────────────────────────────────
 PASS, SKIP, FAIL, ERROR = "PASS", "SKIP", "FAIL", "ERROR"
 RESULTS = []          # [(name, status, detail)]

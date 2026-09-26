@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
@@ -31,7 +32,10 @@ class SeparationTab(BaseTab):
         super().__init__(parent, app)
         self.demucs_ok = False
         self.demucs_py = None
+        self.demucs_cmd = None          # 实际执行命令（[python, -m, demucs] 或 [demucs.exe]）
         self.build()
+        # ⚠️ 必须在后台线程检测：import demucs 会拉起 torch（GB 级），
+        # 同步检测会阻塞 GUI 主线程 → mainloop 迟迟不跑 → 窗口不弹出。
         self._check_demucs()
 
     # ───────────── 界面 ─────────────
@@ -104,37 +108,61 @@ class SeparationTab(BaseTab):
     # ───────────── demucs 检测 ─────────────
 
     def _check_demucs(self):
-        """检测 demucs 命令是否可用。"""
-        # 优先用 pt-build-env 的 python（开发/打包环境）
-        candidates = [
-            r"D:\My-Temporary\pt-build-env\Scripts\python.exe",
-            sys.executable,
-        ]
-        found = None
-        for py in candidates:
-            if not Path(py).is_file():
-                continue
-            try:
-                r = subprocess.run(
-                    [py, "-c", "import demucs; print(demucs.__version__)"],
-                    capture_output=True, text=True, timeout=10)
-                if r.returncode == 0:
-                    found = py
-                    ver = r.stdout.strip()
+        """后台线程检测 demucs 是否可用，避免阻塞 GUI 启动。
+
+        检测策略（轻量、不拉起 torch、不重新启动本程序）：
+          ① PATH 上的 ``demucs`` 命令（console_scripts 入口，最优先）；
+          ② 非冻结环境下，用当前 python ``-m demucs`` 探一下（仅开发/源码模式）。
+             冻结（--windowed exe）下**绝不**用 ``sys.executable`` 去 ``import demucs``——
+             那等于把整个 GUI 程序当子进程重跑一遍，会卡死启动。
+        结果回主线程刷新标签与按钮。
+        """
+        def job():
+            found_py = None
+            found_cmd = None
+            ver = ""
+            # ① PATH 上的 demucs 命令
+            exe = shutil.which("demucs")
+            if exe:
+                found_py = exe
+                found_cmd = [exe]
+            # ② 非冻结环境：当前 python 能否 import demucs（不拉 torch 进 GUI 进程检测太重，
+            #    但源码模式用户本地常装了 demucs，给一条兜底）
+            if found_cmd is None and not getattr(sys, "frozen", False):
+                try:
+                    r = subprocess.run(
+                        [sys.executable, "-c",
+                         "import demucs; print(getattr(demucs, '__version__', ''))"],
+                        capture_output=True, text=True, timeout=20)
+                    if r.returncode == 0:
+                        found_py = sys.executable
+                        found_cmd = [sys.executable, "-m", "demucs"]
+                        ver = (r.stdout or "").strip()
+                except Exception:
+                    pass
+
+            def apply():
+                if found_cmd:
                     self.demucs_ok = True
-                    self.demucs_py = py
-                    self.env_label.configure(
-                        text=f"✓ Demucs {ver} 就绪", foreground="#4a4")
+                    self.demucs_py = found_py
+                    self.demucs_cmd = found_cmd
+                    text = "✓ Demucs 就绪" + (f" {ver}" if ver else "")
+                    self.env_label.configure(text=text, foreground="#4a4")
                     self.btn_run.configure(state="normal")
-                    return
+                else:
+                    self.demucs_ok = False
+                    self.demucs_py = None
+                    self.demucs_cmd = None
+                    self.env_label.configure(
+                        text="✗ Demucs 未安装——请运行 pip install demucs",
+                        foreground="#c44")
+                    self.btn_run.configure(state="disabled")
+            try:
+                self.app.root.after(0, apply)
             except Exception:
-                continue
-        self.demucs_ok = False
-        self.demucs_py = None
-        self.env_label.configure(
-            text="✗ Demucs 未安装——请运行 pip install demucs",
-            foreground="#c44")
-        self.btn_run.configure(state="disabled")
+                pass
+
+        threading.Thread(target=job, daemon=True).start()
 
     # ───────────── 执行 ─────────────
 
@@ -190,7 +218,7 @@ class SeparationTab(BaseTab):
 
         for i, f in enumerate(files, 1):
             print(f"\n[{i}/{len(files)}] {Path(f).name}")
-            cmd = [self.demucs_py, "-m", "demucs", "-o", out]
+            cmd = list(self.demucs_cmd) + ["-o", out]
             if two_stems:
                 cmd.append(two_stems)
             cmd.append(f)

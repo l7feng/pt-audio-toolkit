@@ -7,6 +7,8 @@
 
 | 仓库版本 | 日期 | 工具版本（pt-tools / folder-builder / jianying / rename-unify） | 要点 |
 |---|---|---|---|
+| **2.9.0** | 2026-09-26 | **1.6.1** / 1.2.0 / **2.9.1** / 1.6.0 | 🔴 修 pt-tools 双击即崩（`_DND_BASE` 未定义，已发布三个版本的 exe 全中）· J11 人声分离页签落地（Demucs 两轨/四轨，模型外置）· 剪映启动崩溃回溯钩子 · verify_exe 增加崩溃框判据 |
+| **2.8.0** | 2026-09-26 | 1.6.0 / 1.2.0 / **2.9.0** / 1.6.0 | J11 人声分离页签（分离逻辑部分）· 剪映 `sys.excepthook` 崩溃回溯钩子 · 遗留项脱敏（`pt_batch_export.py` fallback 项目名、`env/video_duration.py` 硬编码路径改参数） |
 | **2.7.0** | 2026-09-25 | **1.6.0** / 1.2.0 / **2.8.0** / 1.6.0 | 方案 C 功能包：P1 交付包一步直出（扫描建档页）· J8/J9 剪映③交付包页退役（导入工具/说明退役） · J1 命名模板可命名（三栏管理弹窗） · J10a 分包夹名模板化 · J10b 字幕导出 srt |
 | **2.6.6** | 2026-09-25 | **1.5.2** / 1.2.0 / **2.7.2** / **1.6.0** | 方案 B 体验包：G2 导出页滚动容器 · G1 拖拽推广 · J6 格式/码率/重名拆行 · J4 出厂默认 wav/320+一次性迁移+码率联动置灰 · P4 PT 版本适配常驻条 · R1 窗口可缩到 880×560 · F3 出厂提示去个人项目名 |
 | **2.6.5** | 2026-09-25 | **1.5.1** / **1.2.0** / **2.7.1** / 1.5.0 | 方案 A 快修包：F2 按钮区永远可见 · F6 从根文件夹提取项目名 · F3 默认名「测试」 · J2 AAF 门控文案解释 · J7 零片段结构化诊断 · P2 格式文案重写 + 六弹窗居中 |
@@ -24,6 +26,73 @@
 > ⚠️ 登记断档说明：**1.5.0 → 2.6.1 期间仓库版本直接沿用 jianying 的工具版本号带飞**，
 > 本表未逐条登记（可从 `git log` 回溯：`68b890c feat(v1.5.0)`、`3f40f29 v2.6.1`）。
 > 自 **2.6.2** 起恢复逐版登记，历史不补写、不臆造。
+
+---
+
+## 2.9.0 — 2026-09-26
+
+**🔴 本版本含一个「已发布 exe 双击即崩」的修复，升级前请重装本版本。**
+
+### pt-tools 1.6.0 → 1.6.1（P0 崩溃修复）
+
+- **症状**：`pt-tools.exe` 双击无窗口，弹出 PyInstaller 错误框
+  `Unhandled exception in script`（进程仍在）。
+- **根因**：`ptools/gui/app.py` 的拖拽基类守卫写成了
+  `class App(_DND_BASE if _TKDND_OK else tk.Tk)`，而 `_DND_BASE` **从未被赋值**
+  ——try 分支只置了 `_TKDND_OK = True`。于是**只要机器上存在 tkinterdnd2**
+  （含全部已发布 exe，PyInstaller 会把它打进 `_internal/`），模块 import 期
+  就抛 `NameError`；tkinterdnd2 缺席时反而因三目短路不报错，属「装依赖才崩」的隐蔽型。
+- **影响面**：`v2.6.6-20260925` / `v2.7.0-20260925` / `v2.8.0-20260926`
+  三个版本的 pt-tools exe 全部不可用（B 批 G1 引入，回归测试当时被环境掩盖）。
+- **修复**：try/except 之后统一 `_DND_BASE = TkinterDnD.Tk if _TKDND_OK else tk.Tk`，
+  两条路径都有值；`class App(_DND_BASE)`。
+- **为什么测试没抓到**：`tools/verify_exe.py` 的真启动判据是
+  「进程存活 + 枚举顶层窗口 + 无 `tk` 残留空窗」——崩溃框**本身就是窗口**，
+  进程也**确实存活**，于是判 OK。现补 `CRASH_TITLES` 判据
+  （`Unhandled exception in script` / `Failed to execute script` / `Python error`）
+  命中即 FAIL。
+
+### jianying-draft-toolkit 2.9.0 → 2.9.1
+
+- **J11 人声分离页签**：Demucs 命令行调模型，`vocals`（两轨，推荐）/ `all`（四轨）
+  两种模式；文件或整目录输入，产物落输出目录。
+  **torch 不打进 exe**（~2.5GB），运行时检测，不可用则按钮置灰并提示 `pip install demucs`。
+- **启动阻塞修复**：`_check_demucs()` 改后台线程执行。
+  原实现在 `__init__` 里同步探测，冻结 exe 环境下会拉起 GB 级 import，
+  阻塞 GUI 主线程 → 窗口迟迟不弹。
+- **冻结环境守卫**：`sys.frozen` 时**绝不**用 `sys.executable` 去 `import demucs`
+  ——那等于把整个 GUI 程序当子进程重跑一遍。
+- **崩溃回溯钩子**：`main()` 装 `sys.excepthook = _dump_crash`，
+  未捕获异常写 `jianying_crash.log`（exe 旁 + `%TEMP%` 双写）。
+  `--windowed` 下 stderr 被丢弃、PyInstaller 崩框不带 traceback，此前只能解包反汇编。
+- 清理：移除排障期临时埋点（原会往 `D:\My-Temporary\jy_trace.txt` 追加）。
+
+### 测试与工具链
+
+- 新增 `tests/test_j11_separation.py`（**11/11**）：命令拼装、目录收集、空目录早退、
+  非零返回码不中断、后台线程不变量、冻结守卫、崩溃钩子双写。
+- `tests/_common.py`：`sys.stdout/stderr` 改 UTF-8 + `errors="replace"`。
+  此前控制台 GBK 遇到 `✅` 会在**打印失败明细时**抛 `UnicodeEncodeError`，
+  把真正的 FAIL 顶掉、报告中断（`test_core_logic.py` 一度直接崩在报告环节）。
+- `tools/verify_exe.py`：崩溃框判据（见上）；`tools/build.py` 同样加编码护栏。
+
+### 验证
+
+- 全量 12 套：14 导入（13 PASS / 1 SKIP，无 ptsl）+ core 30 + wiring 5 + modes 25
+  + videoname 12 + round06 9 + round_a 11 + round_b 10 + round_c 12 + **j11 11**
+  + GUI 冒烟（见发布记录）。
+- `verify_exe`：四 exe 真启动全过、零 tk 残留空窗。
+
+---
+
+## 2.8.0 — 2026-09-26
+
+- **J11 人声分离页签**（分离逻辑部分，后续版本补非阻塞与守卫）。
+- 剪映 `sys.excepthook` 崩溃回溯钩子。
+- 遗留项脱敏：`pt_batch_export.py` 的 fallback 项目名 `誓言{id}` → `job-{id}`；
+  `env/video_duration.py` 硬编码个人路径改命令行参数。
+- ⚠️ 本版本**不可用**：pt-tools exe 因 `_DND_BASE` 未定义一启动就崩，
+  请直接升到 2.9.0。
 
 ---
 

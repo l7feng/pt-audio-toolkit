@@ -23,6 +23,13 @@ import time
 from ctypes import wintypes
 from pathlib import Path
 
+# 控制台默认 GBK，打印 ⚠/✅ 之类字符会 UnicodeEncodeError 把核验中断
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 APPS = ["pt-tools", "pt-project-folder-builder", "jianying-draft-toolkit", "rename-unify"]
 EXE_ROOT = Path(os.environ.get("PT_EXE_ROOT", r"D:\Ai-Files\Agent-Preset\exe"))
 
@@ -48,6 +55,20 @@ OPTIONAL_CHECKS = [
 
 user32 = ctypes.windll.user32
 EnumProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+# PyInstaller / pythonw 启动失败时弹出的错误框标题（判定「程序没起来」的硬证据）
+CRASH_TITLES = (
+    "unhandled exception in script",
+    "failed to execute script",
+    "python error",
+    "fatal python error",
+)
+
+
+def _is_crash_box(title):
+    """窗口标题是否是启动崩溃框（而非工具主窗）。"""
+    t = (title or "").strip().lower()
+    return any(t.startswith(p) or p in t for p in CRASH_TITLES)
 
 
 def windows_of_pid(pid):
@@ -150,14 +171,25 @@ def main():
         time.sleep(0.6)
         wins = windows_of_pid(proc.pid)
         residual = [w for w in wins if w[0].strip().lower() in ("tk", "")]
-        if not alive or residual:
+        # ⚠️ 崩溃框必须判 FAIL，不能只看「进程存活 + 有窗口」。
+        # 2026-09-26 实测教训：pt-tools 因 `_DND_BASE` 未定义（NameError）在
+        # import 期就崩，PyInstaller 弹「Unhandled exception in script」框，
+        # 进程**仍存活**、**确有顶层窗口** → 旧版判据全绿，把一个「双击即崩」
+        # 的缺陷放行了三个版本（v2.6.6 / v2.7.0 / v2.8.0）。
+        crash = [w for w in wins if _is_crash_box(w[0])]
+        if not alive or residual or crash:
             ok_all = False
-        print("[%s] %-28s 进程存活=%s  顶层窗口=%d"
-              % ("OK" if (alive and not residual) else "WARN", a, alive, len(wins)))
+        good = alive and not residual and not crash
+        print("[%s] %-28s 进程存活=%s  顶层窗口=%d%s"
+              % ("OK" if good else "WARN", a, alive, len(wins),
+                 "  ⚠崩溃框=%d" % len(crash) if crash else ""))
         for t, c, vis in wins:
             print("        · title=%-34r class=%-14s visible=%s" % (t, c, vis))
         if residual:
             print("      ⚠ 疑似残留空窗（历史坑）：%s" % residual)
+        if crash:
+            print("      ✗ 崩溃框（程序没起来，只是弹了错误框）：%s"
+                  % [w[0] for w in crash])
         try:
             proc.terminate()
             proc.wait(timeout=8)

@@ -66,6 +66,14 @@ except ImportError:
     TkinterDnD = None
     _TKDND_OK = False
 
+# 根窗口基类：tkinterdnd2 在场用它的 Tk（否则 drop_target_register 不存在），
+# 缺席回落普通 tk.Tk —— **两条路径都必须给 _DND_BASE 赋值**。
+# 曾经的 bug：只在 try 分支置 _TKDND_OK，_DND_BASE 从未定义，于是
+# `class App(_DND_BASE if _TKDND_OK else tk.Tk)` 在「装了 tkinterdnd2」的机器上
+# （含全部已发布 exe —— tkinterdnd2 被打进 _internal）抛 NameError，
+# pt-tools 双击即崩「Unhandled exception in script」。
+_DND_BASE = TkinterDnD.Tk if _TKDND_OK else tk.Tk
+
 
 def split_dnd_data(data):
     """tkinterdnd2 的 drop 数据 → 路径列表（含空格路径是 {..} 花括号包裹）。"""
@@ -94,7 +102,7 @@ def enable_path_drop(entry, on_drop):
     return True
 
 
-class App(_DND_BASE if _TKDND_OK else tk.Tk):
+class App(_DND_BASE):
     def __init__(self):
         super().__init__()
         # 三重保险消除 Tk 启动闪窗：

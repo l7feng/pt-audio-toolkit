@@ -39,6 +39,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+# 控制台默认 GBK，打印 ⚠/✅ 之类字符会 UnicodeEncodeError 把构建中断
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 REPO = Path(__file__).resolve().parent.parent
 
 # 每个工具：入口 / PyInstaller --name / 额外参数 / 后置动作

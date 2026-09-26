@@ -819,14 +819,42 @@ def _button_name(tab, btn) -> str:
     return ""
 
 
+def _dump_crash(exc_type, exc_val, exc_tb):
+    """把未捕获异常写进文件（--windowed 下 stderr 被丢弃，否则看不到回溯）。
+
+    排障用：启动崩框只报「Failed to execute script」、不带 traceback，
+    这里把完整回溯落到 exe 旁 + TEMP 两份，方便一键取回定位根因。
+    """
+    try:
+        import traceback as _tb
+        from datetime import datetime as _dt
+        text = "==== %s ====\n" % _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        text += "".join(_tb.format_exception(exc_type, exc_val, exc_tb))
+        for d in (str(Path(sys.executable).resolve().parent),
+                  os.environ.get("TEMP") or os.environ.get("TMP") or "/tmp"):
+            try:
+                p = Path(d) / "jianying_crash.log"
+                with open(p, "a", encoding="utf-8") as fh:
+                    fh.write(text)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def main():
+    sys.excepthook = _dump_crash
     try:
         core._safe_io()          # --windowed 打包时 stdout/stderr 可能为 None
     except Exception:
         pass
-    root = make_root()
-    JianYingToolkitApp(root)
-    root.mainloop()
+    try:
+        root = make_root()
+        JianYingToolkitApp(root)
+        root.mainloop()
+    except Exception:
+        _dump_crash(*sys.exc_info())
+        raise
 
 
 if __name__ == "__main__":
