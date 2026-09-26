@@ -31,6 +31,7 @@ from tkinter import ttk, messagebox
 import main as core
 from tabs.export_tab import ExportTab
 from tabs.import_tab import ImportTab
+from tabs.separation_tab import SeparationTab
 from tabs.paths_dialog import PathsDialog
 from core.host import StatusProbe
 from core import menus as menu_actions
@@ -630,7 +631,7 @@ class JianYingToolkitApp:
         nb.pack(fill="both", expand=True, padx=8, pady=(6, 8))
         self.notebook = nb
 
-        for cls in (ExportTab, ImportTab):   # v2.7.0（J8）：③交付包页退役
+        for cls in (ExportTab, ImportTab, SeparationTab):   # v2.8.0（J11）：人声分离页
             tab = cls(nb, self)
             nb.add(tab, text=tab.title)
             self._tabs.append(tab)
