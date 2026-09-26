@@ -37,8 +37,11 @@ def mp4_duration(path):
             f.seek(ssize - 8, 1)
     return None
 
-for v in ["2.mp4", "3.mp4"]:
-    p = rf"D:\DAW-Project\10-誓言D_20260915_7F\Video\{v}"
-    d = mp4_duration(p)
-    m, s = divmod(int(d), 60)
-    print(f"{v}: {d:.2f}s  ({m}:{s:02d})")
+if __name__ == "__main__":
+    for p in sys.argv[1:]:
+        d = mp4_duration(p)
+        if d is None:
+            print(f"{p}: unreadable")
+        else:
+            m, s = divmod(int(d), 60)
+            print(f"{p}: {d:.2f}s  ({m}:{s:02d})")

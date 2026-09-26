@@ -33,7 +33,7 @@ jobs.json 结构见同目录示例；要点：
   defaults  采样率/位深/格式/save_on_close
   paths     venv_python / export_script / scan_script / profile_dir / out_root
   jobs[]    id / ptx / duration_sec / fps / exports[]（kind: track|bus|output|physicalout|track-all）
-  会话名期望默认 = "誓言{id}"，可用 session_name_expect 覆盖。
+  会话名期望默认为空（不核对名字，open 成功即可），可用 session_name_expect 精确匹配。
   fps 优先 job.fps，缺省回退 profile.session.timecode_rate。
 
 导出区间：一律 00:00:00:00 → round(duration_sec × fps) 帧（ffprobe 实测时长）。
@@ -338,7 +338,7 @@ def process_job(job, paths, defaults, args, ptsession, log_lines):
     ptx = job["ptx"]
     profile_path = os.path.join(paths["profile_dir"], "profile-%s.json" % jid)
     # v1.2.0：输出文件夹改用**真实工程名**（open+扫描后回填），不再写死
-    # 「誓言{id}」——工程名在扫描后才知道，此处先记占位，open 后重建。
+    # 工程名在扫描后才知道，此处先记占位，open 后重建。
     out_dir = None
     skip_flag = bool(job.get("skip_on_no_duration"))
 
@@ -392,7 +392,7 @@ def process_job(job, paths, defaults, args, ptsession, log_lines):
         except Exception:
             profile = {}
     real_name = ((profile.get("session") or {}).get("name") or "").strip()
-    out_dir = os.path.join(paths["out_root"], real_name or ("誓言%s" % jid))
+    out_dir = os.path.join(paths["out_root"], real_name or ("job-%s" % jid))
     os.makedirs(out_dir, exist_ok=True)
     step("[out] %s" % out_dir)
 
