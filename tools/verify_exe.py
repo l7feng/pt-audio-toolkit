@@ -3,7 +3,7 @@
 
 用法
 ----
-    python tools/verify_exe.py                  # 自动取出口根下最新的 pt-audio-toolkit-v*
+    python tools/verify_exe.py                  # 自动取出口根下最新的 audio-toolkit-v*
     python tools/verify_exe.py --dir <出口目录>
     python tools/verify_exe.py --no-launch      # 只核清单，不启动 GUI
 
@@ -30,7 +30,10 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-APPS = ["pt-tools", "pt-project-folder-builder", "jianying-draft-toolkit", "rename-unify"]
+# 2026-09-27（D 档合并）：folder-builder 并入 rename-unify 后退役；
+# 剧本双语拆分工具与本仓四工具同处一个出口目录，一并核验。
+APPS = ["pt-tools", "jianying-draft-toolkit", "rename-unify",
+        "剧本双语拆分工具"]
 EXE_ROOT = Path(os.environ.get("PT_EXE_ROOT", r"D:\Ai-Files\Agent-Preset\exe"))
 
 # 关键附属文件（打包后置动作的产物）—— 缺了工具仍能启动但功能不全
@@ -92,8 +95,12 @@ def windows_of_pid(pid):
 
 
 def latest_exe_dir():
-    cands = sorted([d for d in EXE_ROOT.glob("pt-audio-toolkit-v*") if d.is_dir()],
-                   key=lambda d: d.stat().st_mtime, reverse=True)
+    # 2026-09-27：出口目录改名 audio-toolkit-v<版本>-<日期>（去掉 pt- 前缀）；
+    # 新旧前缀都认，避免历史目录突然找不到。
+    cands = sorted(
+        [d for pat in ("audio-toolkit-v*", "pt-audio-toolkit-v*")
+         for d in EXE_ROOT.glob(pat) if d.is_dir()],
+        key=lambda d: d.stat().st_mtime, reverse=True)
     return cands[0] if cands else None
 
 

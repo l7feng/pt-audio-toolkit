@@ -194,14 +194,22 @@ def exe_dir(version=None, date=None):
     """定位 exe 出口目录。
 
     给定 version（如 "1.1.0"）与 date（如 "20260923"）→ 拼出
-    `pt-audio-toolkit-v<version>-<date>`；未给则取 EXE_ROOT 下最新的一个，
+    `audio-toolkit-v<version>-<date>`；未给则取 EXE_ROOT 下最新的一个，
     让核验脚本不必随版本改代码。
     """
+    # 2026-09-27：出口目录改名为 audio-toolkit-v<版本>-<日期>（去掉 pt- 前缀，
+    # 因目录里还有剪映/剧本工具）；新旧两种前缀都认，避免历史目录找不到。
     if version and date:
-        return EXE_ROOT / ("pt-audio-toolkit-v%s-%s" % (version, date))
-    cands = sorted([d for d in EXE_ROOT.glob("pt-audio-toolkit-v*") if d.is_dir()],
-                   key=lambda d: d.stat().st_mtime, reverse=True)
-    return cands[0] if cands else EXE_ROOT / "pt-audio-toolkit-vUNKNOWN"
+        for prefix in ("audio-toolkit", "pt-audio-toolkit"):
+            p = EXE_ROOT / ("%s-v%s-%s" % (prefix, version, date))
+            if p.is_dir():
+                return p
+        return EXE_ROOT / ("audio-toolkit-v%s-%s" % (version, date))
+    cands = sorted(
+        [d for pat in ("audio-toolkit-v*", "pt-audio-toolkit-v*")
+         for d in EXE_ROOT.glob(pat) if d.is_dir()],
+        key=lambda d: d.stat().st_mtime, reverse=True)
+    return cands[0] if cands else EXE_ROOT / "audio-toolkit-vUNKNOWN"
 
 
 # ── 路径：剪映草稿根 ─────────────────────────────────────────

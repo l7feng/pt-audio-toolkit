@@ -11,7 +11,7 @@
 
 输出布局（默认）
 ----------------
-    <out-root>/pt-audio-toolkit-v<版本>-<日期>/<工具名>/
+    <out-root>/audio-toolkit-v<版本>-<日期>/<工具名>/
         <工具名>.exe  +  _internal/            （通用）
         pt-tools/_internal/skills/              （内置技能脚本，开箱即用）
         jianying-draft-toolkit/tools/           （jy-draftc 解密器）
@@ -240,7 +240,9 @@ def main():
     args = ap.parse_args()
 
     version = args.version or repo_version()
-    out_root = Path(args.out_root) / ("pt-audio-toolkit-v%s-%s" % (version, args.date))
+        # 2026-09-27：出口目录曾人工改名 audio-toolkit-*（内含剪映/剧本工具，
+    # 「pt-」前缀名不副实）；这里改根因，让后续构建自动一致。
+    out_root = Path(args.out_root) / ("audio-toolkit-v%s-%s" % (version, args.date))
     work_root = Path(args.work) / "work"
     spec_dir = Path(args.work) / "spec"
 
