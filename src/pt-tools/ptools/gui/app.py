@@ -364,20 +364,96 @@ class App(_DND_BASE):
 
     # ---------------- 日志 / 状态栏 ----------------
 
+    # S8（v3.8.0）：日志区默认折叠 —— 高度还给用户，日志点标题才展开。
+    # 旧写法日志块 fill=both+expand=True 常驻，抢走主区高度，小屏上四个页签
+    # 被压得只剩横滚。现在折叠态只占一行标题，主区全归 Notebook。
+    LOG_DEFAULT_HEIGHT = 9
+
+    def _log_height(self):
+        """展开行数（config.json::log_height，缺省 9，钳在 4~40）。"""
+        try:
+            v = int(self.cfg.get("log_height") or self.LOG_DEFAULT_HEIGHT)
+        except (TypeError, ValueError):
+            v = self.LOG_DEFAULT_HEIGHT
+        return max(4, min(40, v))
+
+    def _refresh_log_toggle(self):
+        arrow = "▾" if getattr(self, "_log_open", False) else "▸"
+        txt = "%s %s（%d 条）" % (arrow, T("log_section"), getattr(self, "log_count", 0))
+        # 折叠期间来新日志 → 标题挂「● 新」，不打断当前视线
+        if not getattr(self, "_log_open", False) and getattr(self, "_log_unread", False):
+            txt += "  ● " + T("log_new")
+        self.log_toggle_var.set(txt)
+
+    def toggle_log(self, open_it=None):
+        """展开 / 收起日志区（点标题切换；open_it 显式指定时不切换）。"""
+        self._log_open = (not self._log_open) if open_it is None else bool(open_it)
+        try:
+            if self._log_open:
+                self.log_body.pack(fill="both", expand=False, pady=(2, 0))
+                self.log_text.see("end")
+            else:
+                self.log_body.pack_forget()
+        except Exception:
+            pass
+        if self._log_open:
+            self._log_unread = False
+        self.cfg["log_open"] = self._log_open
+        save_config(self.cfg)
+        self._refresh_log_toggle()
+
+    def _on_log_height(self):
+        """展开高度改动 → 立刻生效 + 记进 config.json 下次沿用。"""
+        try:
+            v = int(self.log_height_var.get())
+        except (TypeError, ValueError):
+            return
+        v = max(4, min(40, v))
+        self.log_height_var.set(v)
+        try:
+            self.log_text.configure(height=v)
+        except Exception:
+            pass
+        self.cfg["log_height"] = v
+        save_config(self.cfg)
+
     def _build_log(self):
-        frame = ttk.LabelFrame(self, text="  " + T("log_frame") + "  ", padding=(6, 4))
-        frame.pack(fill="both", expand=True, padx=8, pady=(4, 4))
-        self.log_text = tk.Text(frame, height=9, wrap="word", undo=False,
+        wrap = ttk.Frame(self)
+        wrap.pack(fill="x", padx=8, pady=(4, 4))
+        self.log_wrap = wrap
+
+        # 标题行（常驻）：点一下展开/收起
+        head = ttk.Frame(wrap)
+        head.pack(fill="x")
+        self.log_toggle_var = tk.StringVar(value="")
+        self.log_toggle = ttk.Label(head, textvariable=self.log_toggle_var,
+                                    foreground="#2a6db0", cursor="hand2")
+        self.log_toggle.pack(side="left")
+        self.log_toggle.bind("<Button-1>", lambda e: self.toggle_log())
+        ttk.Label(head, text=T("log_hint"), foreground="#888").pack(side="right")
+        ttk.Label(head, text=T("log_lines")).pack(side="right", padx=(0, 6))
+        self.log_height_var = tk.IntVar(value=self._log_height())
+        self.log_height_spin = ttk.Spinbox(head, from_=4, to=40, width=4,
+                                           textvariable=self.log_height_var,
+                                           command=self._on_log_height)
+        self.log_height_spin.pack(side="right")
+
+        # 正文（默认收起）
+        body = ttk.Frame(wrap)
+        self.log_body = body
+        self.log_text = tk.Text(body, height=self._log_height(), wrap="word", undo=False,
                                 font=("Consolas", 9))
         # P2（v1.5.0）：质检报告的着色 tag（红=异常 / 绿=通过）
         self.log_text.tag_configure("err", foreground="#c00")
         self.log_text.tag_configure("ok", foreground="#070")
-        sb = ttk.Scrollbar(frame, command=self.log_text.yview)
+        sb = ttk.Scrollbar(body, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.log_text.pack(side="left", fill="both", expand=True)
-        btn_row = ttk.Frame(self)
-        btn_row.pack(fill="x", padx=8)
+
+        # 按钮行常驻：中止按钮在折叠态也必须能点得到
+        btn_row = ttk.Frame(wrap)
+        btn_row.pack(fill="x", pady=(2, 0))
         ttk.Button(btn_row, text=T("log_clear"), command=self._clear_log,
                    width=16).pack(side="left")
         # v1.3.0 卡死专项：中止按钮 + 运行时长 / 无输出看门狗读数
@@ -388,8 +464,14 @@ class App(_DND_BASE):
         self.run_time_var = tk.StringVar(value="")
         ttk.Label(btn_row, textvariable=self.run_time_var,
                   foreground="#c00").pack(side="left", padx=(8, 0))
-        ttk.Label(btn_row, text=T("log_hint"),
-                  foreground="#888").pack(side="right")
+
+        # 初始态：默认折叠（config.json::log_open 为 true 才展开）
+        self.log_count = 0
+        self._log_unread = False
+        self._log_open = bool(self.cfg.get("log_open", False))
+        self._refresh_log_toggle()
+        if self._log_open:
+            body.pack(fill="both", expand=False, pady=(2, 0))
 
     def _build_statusbar(self):
         bar = ttk.Frame(self, padding=(8, 4))
@@ -419,6 +501,12 @@ class App(_DND_BASE):
             self.log_text.insert("end", text)
         self.log_text.see("end")
         self._trim_log()
+        # S8：计数 + 折叠态角标（不打断当前视线，只动标题行）
+        self.log_count = getattr(self, "log_count", 0) + 1
+        if not getattr(self, "_log_open", True):
+            self._log_unread = True
+        if getattr(self, "log_toggle_var", None) is not None:
+            self._refresh_log_toggle()
 
     def _trim_log(self):
         try:
@@ -431,6 +519,10 @@ class App(_DND_BASE):
     def _clear_log(self):
         if getattr(self, "log_text", None):
             self.log_text.delete("1.0", "end")
+        self.log_count = 0
+        self._log_unread = False
+        if getattr(self, "log_toggle_var", None) is not None:
+            self._refresh_log_toggle()
 
     def _export_diag_bundle(self):
         """工具 → 导出诊断包：调 worker.build_diag_bundle 打包日志+配置+版本号。
@@ -679,7 +771,10 @@ class ScanTab(ttk.Frame):
         ttk.Label(row, text=T("s_out")).pack(side="left")
         self.out_var = app.v("scan_out",
                              app.cfg.get("profile_dir") or app.cfg.get("last_out_dir", ""))
-        ttk.Entry(row, textvariable=self.out_var, width=44).pack(side="left", padx=6)
+        # S8（v3.8.0）：路径框不再写死 44 字符 —— 宽窗口撑满、窄窗口自动收窄，
+        # 不再把整页顶出横向滚动条（横向截断的源头就是这里的固定宽度）。
+        ttk.Entry(row, textvariable=self.out_var, width=1).pack(
+            side="left", fill="x", expand=True, padx=6)
         ttk.Button(row, text=T("s_browse"), command=self._browse_out,
                    width=10).pack(side="left")
 
@@ -705,7 +800,8 @@ class ScanTab(ttk.Frame):
         # 不再从 last_out_dir 派生 —— 否则交付包会随输出目录漂移（v1.4.0 之前的老毛病）。
         # 用户在界面改过就以 config 的 delivery_out 为准（app.v 优先于默认值）。
         self.deliv_var = app.v("delivery_out", DEFAULT_DELIVERY_ROOT)
-        ttk.Entry(drow, textvariable=self.deliv_var, width=44).pack(side="left", padx=6)
+        ttk.Entry(drow, textvariable=self.deliv_var, width=1).pack(
+            side="left", fill="x", expand=True, padx=6)
         ttk.Button(drow, text=T("s_browse"), width=10,
                    command=self._browse_deliv).pack(side="left")
         drow2 = ttk.Frame(deliv)
@@ -917,8 +1013,8 @@ class ExportTab(ttk.Frame):
         row.pack(fill="x")
         ttk.Label(row, text=T("e_profile")).pack(side="left")
         self.profile_var = app.v("export_profile", app.profile_path)
-        self.entry_profile = ttk.Entry(row, textvariable=self.profile_var, width=44)
-        self.entry_profile.pack(side="left", padx=6)
+        self.entry_profile = ttk.Entry(row, textvariable=self.profile_var, width=1)
+        self.entry_profile.pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(row, text=T("e_browse"),
                    command=self._browse_profile).pack(side="left")
 
@@ -964,8 +1060,8 @@ class ExportTab(ttk.Frame):
                         variable=self.sess_mode_var,
                         command=self._on_sess_mode_change).pack(side="left")
         self.session_var = app.v("session_file", "")
-        ttk.Entry(row2b, textvariable=self.session_var, width=40,
-                  state="readonly").pack(side="left", padx=4)
+        ttk.Entry(row2b, textvariable=self.session_var, width=1,
+                  state="readonly").pack(side="left", fill="x", expand=True, padx=4)
         ttk.Button(row2b, text=T("e_browse"),
                    command=self._browse_session).pack(side="left")
 

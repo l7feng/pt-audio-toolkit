@@ -151,7 +151,7 @@ class ExportTab(BaseTab):
         ttk.Label(mode_box, text="整轨命名").grid(row=3, column=0, sticky="w", padx=4, pady=3)
         self.var_track_tpl = tk.StringVar(
             value=self.cfg.get("track_name_template") or core.DEFAULT_TRACK_TEMPLATE)
-        self.entry_track_tpl = ttk.Entry(mode_box, textvariable=self.var_track_tpl, width=52)
+        self.entry_track_tpl = ttk.Entry(mode_box, textvariable=self.var_track_tpl, width=1)
         self.entry_track_tpl.grid(row=3, column=1, columnspan=3, sticky="we", padx=4, pady=3)
 
         self.var_aaf = tk.BooleanVar(value=bool(self.cfg.get("export_aaf", False)))
@@ -295,7 +295,7 @@ class ExportTab(BaseTab):
         # 备注
         ttk.Label(cfg_box, text="备注文案").grid(row=5, column=0, sticky="w", padx=4, pady=3)
         self.var_remarks = tk.StringVar(value=self.cfg.get("remarks", ""))
-        ttk.Entry(cfg_box, textvariable=self.var_remarks, width=66).grid(
+        ttk.Entry(cfg_box, textvariable=self.var_remarks, width=1).grid(
             row=5, column=1, columnspan=3, sticky="we", padx=4, pady=3)
         cfg_box.columnconfigure(1, weight=1)
 
@@ -316,10 +316,10 @@ class ExportTab(BaseTab):
                            "‣ ② 填输出目录 ‣ ③ 点开始导出。\n"
                            "本页功能完全独立，不需要 Pro Tools。\n"
                            "· 目录可填**草稿根目录**（自动向下找草稿），也可填**单个草稿文件夹**。\n"
-                        "产物按类型分组（v2.6.1）：\n"
-                        "  · <草稿名>/<集名>/01-多条WAV/ —— 整轨模式（一条轨一个 WAV，等长对齐）\n"
-                        "  · <草稿名>/<集名>/02-素材片段/ —— 片段模式\n"
-                        "  · <草稿名>/<集名>/03-AAF/ —— AAF（整轨一个 / 分包每集一个，可直接交 PT）\n"
+                        "产物按类型分组（v3.9.0 起**分类在外、项目在内**）：\n"
+                        "  · 01-多条WAV/<草稿名|集名>/ —— 整轨模式（一条轨一个 WAV，等长对齐）\n"
+                        "  · 02-素材片段/<草稿名|集名>/ —— 片段模式（多模板再往下：模板1/模板2…）\n"
+                        "  · 03-AAF/<草稿名|集名>/ —— AAF（整轨一个 / 分包每集一个，可直接交 PT）\n"
                            "日志与断点续跑记录在「默认路径设置」指定的日志/数据目录，不混在产物里。\n\n"))
 
         self._sync_mode()
@@ -550,12 +550,12 @@ class ExportTab(BaseTab):
         def save_cur():
             sel = lb.curselection()
             if not sel:
-                messagebox.showinfo("未选择", "请先在左侧选择一个模板。", parent=win)
+                self.warn("未选择", "请先在左侧选择一个模板。", parent=win)
                 return
             name = var_name.get().strip()
             t = txt.get("1.0", "end").strip()
             if not name or not t:
-                messagebox.showwarning("内容缺失", "模板名与内容都不能为空。", parent=win)
+                self.warn("内容缺失", "模板名与内容都不能为空。", parent=win)
                 return
             i = sel[0]
             self.cfg["name_templates"][i] = {"name": name, "template": t}
@@ -577,10 +577,10 @@ class ExportTab(BaseTab):
         def del_tpl():
             sel = lb.curselection()
             if not sel:
-                messagebox.showinfo("未选择", "请先在左侧选择要删除的模板。", parent=win)
+                self.warn("未选择", "请先在左侧选择要删除的模板。", parent=win)
                 return
             if len(self.cfg["name_templates"]) <= 1:
-                messagebox.showwarning("至少保留一个", "模板库至少要有一个模板。", parent=win)
+                self.warn("至少保留一个", "模板库至少要有一个模板。", parent=win)
                 return
             i = sel[0]
             removed = self.cfg["name_templates"].pop(i)["template"]
@@ -884,7 +884,7 @@ class ExportTab(BaseTab):
         try:
             Path(path).mkdir(parents=True, exist_ok=True)
         except Exception as e:
-            messagebox.showerror("无法创建", f"输出目录创建失败：{e}")
+            self.error("无法创建", f"输出目录创建失败：{e}")
             return
         self.open_in_explorer(path)
 
@@ -906,16 +906,16 @@ class ExportTab(BaseTab):
             self.collect()
         except ValueError as e:
             # v2.6.2：界面取值不合法就**明确告知**，不再悄悄按默认值跑
-            messagebox.showwarning("界面取值有误", str(e))
+            self.warn("界面取值有误", str(e))
             return
 
         if not self._mode_set():
-            messagebox.showwarning("未选择导出模式",
+            self.warn("未选择导出模式",
                                    "请至少勾选一种导出模式（整轨 / 片段）。")
             return
 
         if not self.cfg.get("output_dir"):
-            messagebox.showwarning("缺少输出目录", "请先填写「输出目录」，或点「浏览…」选择。")
+            self.warn("缺少输出目录", "请先填写「输出目录」，或点「浏览…」选择。")
             return
 
         self.save_config(quiet=True)
@@ -932,6 +932,7 @@ class ExportTab(BaseTab):
         # 现在：阶段1（后台）解析输入 + 视频名准备 → 阶段2（主线程）必要时
         # 弹项目名补录框 → 阶段3（后台）真导出。界面始终可响应。
         def phase1():
+            self.set_stage("解析输入路径")
             self._phase1_msg = None
             draft_dirs, media_files, root = [], [], None
             if self.dropped_paths:
@@ -960,7 +961,7 @@ class ExportTab(BaseTab):
                 return                      # 异常已由框架写进日志
             msg = getattr(self, "_phase1_msg", None)
             if msg:
-                messagebox.showwarning("无法识别输入", msg)
+                self.warn("无法识别输入", msg)
                 return
             # 主线程：分包缺项目名 → 弹窗补录（GUI 只能主线程碰）
             if not self._confirm_video_names(cfg):
@@ -968,6 +969,7 @@ class ExportTab(BaseTab):
                 return
 
             def job():
+                self.set_stage("执行导出（ffmpeg / AAF）")
                 stats = core.execute_export(cfg, self._export_root,
                                             draft_dirs=self._export_drafts,
                                             media_files=self._export_media)
@@ -1000,6 +1002,7 @@ class ExportTab(BaseTab):
                 self.log(f"  [warn] 扫描草稿失败：{e}\n")
         for i, d in enumerate(dirs, 1):
             try:
+                self.set_stage("解析视频名 %d/%d" % (i, len(dirs)))
                 self.log(f"  · 解析视频名（{i}/{len(dirs)}）：{d.name}\n")
                 raw = core.resolve_draft_content_file(Path(d))
                 dec = core.decrypt_draft_file(raw)
@@ -1027,6 +1030,8 @@ class ExportTab(BaseTab):
             return True
         from .videoname_dialog import ask_video_projects
 
+        self.alert_line("弹出窗口「补充视频项目信息」，填完点确定才会继续导出。"
+                     "若没看到窗口，请检查另一块屏或按 Alt+Tab 找一下。")
         got = ask_video_projects(self.winfo_toplevel(), list(pend.values()),
                                  getattr(self, "_pending_suggest", ""))
         if got is None:                      # 取消 → 中止，不带着缺项跑

@@ -239,6 +239,10 @@ TEXTS = {
 
         # —— 日志 / 状态栏 ——
         "log_frame": "日志",
+        # S8（v3.8.0）可折叠日志区标题：▸ 运行日志（12 条）  ● 新
+        "log_section": "运行日志",
+        "log_new": "新",
+        "log_lines": "行数",
         "log_clear": "清空日志",
         "log_hint": "耗时操作在后台执行，请留意底部状态。",
         "status_ptsl_on": "●  PTSL 在线（Pro Tools 运行中）",
@@ -616,6 +620,9 @@ TEXTS = {
         "c_note": "Preview / Apply enabled after PT upgrade + scan.",
 
         "log_frame": "Log",
+        "log_section": "Log",
+        "log_new": "new",
+        "log_lines": "lines",
         "log_clear": "Clear Log",
         "log_hint": "Long tasks run in the background. Watch the status bar.",
         "status_ptsl_on": "●  PTSL online (Pro Tools running)",

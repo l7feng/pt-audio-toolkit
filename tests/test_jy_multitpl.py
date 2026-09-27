@@ -50,15 +50,20 @@ def _e2e():
     stats = jymain.execute_export(cfg, DRAFT_ROOT, draft_dirs=[DRAFT])
     print("[stats]", stats)
 
-    tpl_dirs = sorted([d.name for d in out.iterdir() if d.is_dir() and d.name.startswith("模板")])
-    files1 = list((out / "模板1").rglob("*.mp3")) if (out / "模板1").is_dir() else []
-    files2 = list((out / "模板2").rglob("*.mp3")) if (out / "模板2").is_dir() else []
+    # v3.9.0（S9）：分类在外、项目在内 —— 模板子层在 02-素材片段/<项目>/ 之下
+    base = out / "02-素材片段" / DRAFT.name
+    print("[产物基目录]", base)
+    assert base.is_dir(), "项目层不在 02-素材片段 内：%s" % base
+    tpl_dirs = sorted([d.name for d in base.iterdir() if d.is_dir() and d.name.startswith("模板")])
+    files1 = list((base / "模板1").rglob("*.mp3")) if (base / "模板1").is_dir() else []
+    files2 = list((base / "模板2").rglob("*.mp3")) if (base / "模板2").is_dir() else []
     print("[模板子目录]", tpl_dirs)
     print("[模板1 文件数]", len(files1), "| [模板2 文件数]", len(files2))
     print("[样例]", [f.name for f in files1[:2]], [f.name for f in files2[:2]])
     assert tpl_dirs == ["模板1", "模板2"], tpl_dirs
     assert len(files1) > 0 and len(files2) > 0, (len(files1), len(files2))
-    return "模板1=%d 文件 / 模板2=%d 文件" % (len(files1), len(files2))
+    return "02-素材片段/%s 下 模板1=%d 文件 / 模板2=%d 文件" % (
+        DRAFT.name, len(files1), len(files2))
 
 
 C.run_case("剪映片段模式 + 多命名模板端到端（v2.4.0，真实草稿）", _e2e)

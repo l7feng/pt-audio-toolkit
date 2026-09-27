@@ -38,13 +38,17 @@ from typing import List, Optional, Tuple
 #        → v2.5.1 片段模式也按视频窗归类（music/法老6/…，时间线落点归属）（09-23）
 #        → v2.6.0 产物目录分组（01-多条WAV/02-素材片段/03-AAF）+ 分包下按集导出 AAF
 #          + 日志/运行数据独立目录（log_dir/data_dir）+ {轨道类别} 占位符（09-23）
+#        → v3.9.0（仓库版本）产物目录**再翻转**：分类在外、项目在内
+#          （01-多条WAV/<草稿名|集名>/，而不是 <草稿名>/01-多条WAV/）——
+#          原话：「out 下面是常驻的根目录，项目打包要在里面」（09-27）
 #        → v2.6.1 文件夹结构反转（<草稿名|集名>/01-多条WAV/ 而非 01-多条WAV/<草稿名>/<集名>/）
+#          ⚠️ 该反转已被 v3.9.0 再次翻转，此行仅作历史留档
 #          + 素材片段去掉 audio/music 子目录 + render_name KeyError 循环移除未知字段后重新 format
 #          + 浏览按钮选中的目录走递归草稿识别（与拖拽一致）（09-23）
 #        → v2.6.3 出厂默认路径收口到 Backup-Jianying（out/log/data/tmp/deliver/草稿库）
 #          + 导出页两个输入源合并为一块（五.2）+ 导入页草稿下拉跟随配置的草稿库
 #          + 修 apply_config 引用已删控件 var_template 的崩溃（09-24）
-APP_VERSION = "2.12.0"
+APP_VERSION = "2.13.0"
 
 
 def app_build_date() -> str:
@@ -1037,8 +1041,11 @@ def extract_track_audio(track: AudioTrack, total_us: int, output_file: Path,
             "-ar", str(sr), "-ac", str(ch),
             "-c:a", PCM_CODEC.get(bits, "pcm_s16le"), str(output_file)]
 
+    # S7（v3.7.0）：timeout 1800 → 300。旧值意味着一条轨卡住要干等 30 分钟
+    # 才报错，期间人类只能看着不动的界面（等同死机）。现在 5 分钟没跑完就
+    # 判失败、写进日志、继续下一条 —— 长轨要真跑满 5 分钟以上请改配置。
     r = subprocess.run(cmd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=1800, **subprocess_kwargs(),)
+                       encoding="utf-8", errors="replace", timeout=300, **subprocess_kwargs(),)
     if r.returncode != 0:
         log(f"  ✗ ffmpeg 整轨失败: {(r.stderr or '').strip()[-300:]}")
         return False
@@ -1300,13 +1307,14 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
                 # v2.10.0（Q1）：{素材类型} 支持手动覆盖（UCS 码）
                 base_name = render_name(template, seg, i, remarks, extra=extra,
                                         type_override=str(cfg.get("clip_type_override", "") or ""))
-                # v2.6.1 产物目录分组：<草稿名|集名>/02-素材片段/（不再按 audio/music 分子目录）
-                tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
-                    else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
-                if chunk_dir:
-                    category_dir = tpl_root / chunk_dir / "02-素材片段"
-                else:
-                    category_dir = tpl_root / draft_dir.name / "02-素材片段"
+                # S9（v3.9.0）：02-素材片段 常驻输出根，项目打包在其内部（不再按 audio/music 分子目录）
+                # S9（v3.9.0）：分类目录常驻输出根，项目打包在其内部；
+                # 多命名模板时模板子层放在项目之下（裁决⑰甲案：先找项目再挑模板）
+                base_out = Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
+                parts = [base_out, "02-素材片段", chunk_dir or draft_dir.name]
+                if multi:
+                    parts.append(f"模板{ti}")
+                category_dir = Path(*parts)
                 category_dir.mkdir(parents=True, exist_ok=True)
 
                 out_file = category_dir / f"{base_name}.{audio_format}"
@@ -1372,9 +1380,9 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
     spec_key = cfg.get("track_spec", DEFAULT_SPEC_KEY)
     template = cfg.get("track_name_template") or DEFAULT_TRACK_TEMPLATE
     remarks = cfg.get("remarks", "")
-    # v2.6.1 产物目录分组：<草稿名>/01-多条WAV/ —— 集名在上层，产物类型在下层
+    # S9（v3.9.0）：产物类型在上（常驻），项目 / 集名在下
     output_root = Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
-    out_root = output_root / draft_dir.name / "01-多条WAV"
+    out_root = output_root / "01-多条WAV" / draft_dir.name
     out_root.mkdir(parents=True, exist_ok=True)
     # 临时目录自建，不依赖调用方（execute_export 建了，但单独调用本函数时没有）
     Path(temp_dir).mkdir(parents=True, exist_ok=True)
@@ -1414,7 +1422,7 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
             if info.need_input:
                 print(f"  ⚠ 视频「{ch.material_name}」缺项目名（{info.reason}）"
                       f" → 先用原名建文件夹：{folder}")
-            out_dir = output_root / folder / "01-多条WAV"
+            out_dir = output_root / "01-多条WAV" / folder
             out_dir.mkdir(parents=True, exist_ok=True)
             proj_for_name = info.project or info.raw or draft_dir.name
             extra = info.as_fields()
@@ -1454,7 +1462,7 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
             if cfg.get("export_aaf"):
                 try:
                     from aaf_writer import write_aaf
-                    aaf_dir = output_root / folder / "03-AAF"
+                    aaf_dir = output_root / "03-AAF" / folder
                     ok, msg = write_aaf(tracks, ch.tl_dur_us, folder, aaf_dir, cfg,
                                         win_start_us=ch.tl_start_us,
                                         win_end_us=ch.tl_end_us)
@@ -1518,7 +1526,7 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
     if cfg.get("export_aaf"):
         try:
             from aaf_writer import write_aaf
-            aaf_dir = output_root / draft_dir.name / "03-AAF"
+            aaf_dir = output_root / "03-AAF" / draft_dir.name
             ok, msg = write_aaf(tracks, total_us, draft_dir.name, aaf_dir, cfg)
             if ok:
                 print(f"  ✓ AAF: {msg}")
@@ -1610,10 +1618,13 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
 
             base_name = render_name(template, seg, 1, remarks,
                                     type_override=str(cfg.get("clip_type_override", "") or ""))
-            # v2.6.1 产物目录分组：拖入文件提取的音频进「02-素材片段/」（不再分子目录）
-            tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
-                else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
-            category_dir = tpl_root / "02-素材片段"
+            # S9（v3.9.0）：02-素材片段 常驻输出根；拖入的散文件没有项目层，
+            # 多命名模板时模板子层放在分类目录之下（与裁决⑰甲案一致的思路）
+            base_out = Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
+            parts = [base_out, "02-素材片段"]
+            if multi:
+                parts.append(f"模板{ti}")
+            category_dir = Path(*parts)
             category_dir.mkdir(parents=True, exist_ok=True)
 
             out_file = category_dir / f"{base_name}.{audio_format}"

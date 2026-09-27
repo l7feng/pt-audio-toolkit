@@ -678,6 +678,21 @@ class JianYingToolkitApp:
         except Exception as e:
             messagebox.showerror("保存失败", f"配置写入失败：{e}")
 
+    def set_waiting(self, text=None):
+        """S7：状态栏显示「等待你确认…」。
+
+        弹窗躲到另一块屏时，主窗口至少得自己说明它在等什么，而不是
+        一动不动让人以为死了。传 None = 恢复常规状态显示。
+        """
+        try:
+            if text:
+                self.lbl_status.configure(text="⏸ " + text, foreground="#c86a00")
+            else:
+                self._refresh_status()
+            self.root.update_idletasks()
+        except Exception:
+            pass
+
     def _refresh_status(self):
         """触发后台探测 PT / 剪映状态（不再阻塞主线程，不再 6 秒轮询）。
 
@@ -772,11 +787,19 @@ class JianYingToolkitApp:
                 else:
                     plain.append(item)
             for _k, (tab, texts) in batched.items():
+                joined = "".join(texts)
                 tab._log.configure(state="normal")
-                tab._log.insert("end", "".join(texts))
+                tab._log.insert("end", joined)
                 tab._log.see("end")
                 tab._log.configure(state="disabled")
                 tab._trim_log()
+                # S7：界面日志同步落盘 —— 旧版只活在 Text 控件里，窗口一关
+                # 就蒸发，卡死现场永远查不到（这是「根因定不了」的直接原因）
+                try:
+                    from tabs.base import _ui_log
+                    _ui_log(joined)
+                except Exception:
+                    pass
             if plain:
                 tab = self._current_tab()
                 if tab is not None and tab._log is not None:

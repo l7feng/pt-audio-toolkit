@@ -75,7 +75,8 @@ class ImportTab(BaseTab):
         self.row_pt = ttk.Frame(src_box)
         self.var_ptx = tk.StringVar(value="")
         ttk.Label(self.row_pt, text=".ptx 工程").grid(row=0, column=0, sticky="w", padx=4, pady=3)
-        ttk.Entry(self.row_pt, textvariable=self.var_ptx, width=48).grid(
+        # S8（v3.8.0）：宽度不写死 → 窄窗自动收窄，不再把整页顶出横滚条
+        ttk.Entry(self.row_pt, textvariable=self.var_ptx, width=1).grid(
             row=0, column=1, sticky="we", padx=4, pady=3)
         ttk.Button(self.row_pt, text="浏览…", command=self._pick_ptx).grid(row=0, column=2, padx=4)
         self.lbl_pt_state = ttk.Label(self.row_pt, text="检测中…", foreground="#888")
@@ -90,7 +91,7 @@ class ImportTab(BaseTab):
         self.var_json = tk.StringVar(value=self.cfg.get("import_json", ""))
         ttk.Label(self.row_json, text="pt-clips.json").grid(
             row=0, column=0, sticky="w", padx=4, pady=3)
-        ttk.Entry(self.row_json, textvariable=self.var_json, width=48).grid(
+        ttk.Entry(self.row_json, textvariable=self.var_json, width=1).grid(
             row=0, column=1, sticky="we", padx=4, pady=3)
         ttk.Button(self.row_json, text="浏览…", command=self._pick_json).grid(row=0, column=2, padx=4)
         self.lbl_json_state = ttk.Label(self.row_json, text="", foreground="#888")
@@ -103,7 +104,7 @@ class ImportTab(BaseTab):
 
         self.var_draft_dir = tk.StringVar(value=self.cfg.get("import_draft_dir", ""))
         ttk.Label(dst_box, text="剪映草稿").grid(row=0, column=0, sticky="w", padx=4, pady=3)
-        self.cmb_draft = ttk.Combobox(dst_box, textvariable=self.var_draft_dir, width=46)
+        self.cmb_draft = ttk.Combobox(dst_box, textvariable=self.var_draft_dir, width=1)
         self.cmb_draft.grid(row=0, column=1, sticky="we", padx=4, pady=3)
         ttk.Button(dst_box, text="刷新列表", command=self.refresh_drafts).grid(row=0, column=2, padx=4)
         ttk.Button(dst_box, text="浏览…", command=self._pick_draft_dir).grid(row=0, column=3, padx=4)
@@ -401,7 +402,7 @@ class ImportTab(BaseTab):
             return
         ptx = self.var_ptx.get().strip()
         if not ptx:
-            messagebox.showwarning("缺少工程文件", "请先选择 .ptx 工程文件。")
+            self.warn("缺少工程文件", "请先选择 .ptx 工程文件。")
             return
         # 这里是**用户点按钮时**的前置校验（低频、且此刻界面可以短暂无响应）：
         # 有意用同步实时探测而不是读缓存 —— 点了「解析」就该拿到确定结论，
@@ -409,7 +410,7 @@ class ImportTab(BaseTab):
         # 高频路径（切页/选文件刷新门控）才必须用缓存，见 refresh_states。
         ok, msg = core.pro_tools_status()
         if not ok:
-            messagebox.showerror("Pro Tools 不可用", msg)
+            self.error("Pro Tools 不可用", msg)
             return
 
         out_dir = self._default_json_dir()
@@ -472,7 +473,7 @@ class ImportTab(BaseTab):
         if self._json_batch:
             paths = list(self._json_batch)
             if not all(x.is_file() for x in paths):
-                messagebox.showwarning("缺少数据源", "批量列表里有 json 已不在位，请重新选择。")
+                self.warn("缺少数据源", "批量列表里有 json 已不在位，请重新选择。")
                 return
 
             def job():
@@ -487,7 +488,7 @@ class ImportTab(BaseTab):
             return
         jp = Path(self.var_json.get().strip())
         if not jp.is_file():
-            messagebox.showwarning("缺少数据源", "请先选择 pt-clips.json。")
+            self.warn("缺少数据源", "请先选择 pt-clips.json。")
             return
 
         def job():
@@ -524,17 +525,17 @@ class ImportTab(BaseTab):
         jp = Path(self.var_json.get().strip())
         draft = Path(self.var_draft_dir.get().strip())
         if not jp.is_file():
-            messagebox.showwarning("缺少数据源", "请先选择 pt-clips.json。")
+            self.warn("缺少数据源", "请先选择 pt-clips.json。")
             return
         # v2.10.0（Q6）：硬拦截档案文件 —— 旧版喂进 pt-profile 会「0 片段导入
         # 成功」，日志显示任务成功、草稿却毫无变化，用户无从判断错在哪。
         try:
             doc = json.loads(jp.read_text(encoding="utf-8"))
         except Exception as e:
-            messagebox.showerror("数据源不可读", f"{jp.name}\n{e}")
+            self.error("数据源不可读", f"{jp.name}\n{e}")
             return
         if self._json_kind(doc) != "pt-clips":
-            messagebox.showerror(
+            self.error(
                 "选错文件：这不是片段清单",
                 f"「{jp.name}」是 PT 扫描档案（pt-profile），只记录轨道清单、"
                 "没有任何片段，导入它什么都写不进草稿。\n\n"
@@ -543,13 +544,13 @@ class ImportTab(BaseTab):
                 "· 或本页选「Pro Tools 工程」点「① 解析 PT 工程」直接生成。")
             return
         if not draft.is_dir():
-            messagebox.showwarning("缺少目标", "请选择要写入的剪映草稿文件夹。")
+            self.warn("缺少目标", "请选择要写入的剪映草稿文件夹。")
             return
         # 最后一次拦截：用实时结果，不吃缓存（statusbar 的门控可以吃缓存，
         # 但真正落盘前必须确认剪映此刻确实没在跑）
         blockers, _warns = self._jy_state(draft, realtime=True)
         if blockers:
-            messagebox.showerror(
+            self.error(
                 "剪映正在运行",
                 "导入前必须【完全退出剪映】（含托盘图标与后台进程）。\n\n"
                 "原因：剪映内存里持有草稿副本，退出时会用旧内容覆盖磁盘写入 —— "
@@ -593,7 +594,7 @@ class ImportTab(BaseTab):
         全部确认后统一执行（中途取消不产生半成品）。"""
         paths = [x for x in self._json_batch if x.is_file()]
         if not paths:
-            messagebox.showwarning("缺少数据源", "批量列表里的 json 都不在位，请重新选择。")
+            self.warn("缺少数据源", "批量列表里的 json 都不在位，请重新选择。")
             return
         ex = self._exclude_args()
         draft_names = [d.name for d in self._drafts]
@@ -615,11 +616,11 @@ class ImportTab(BaseTab):
         # 统一校验：目标草稿在位 + 剪映此刻没在跑（realtime，最后一次拦截）
         for x, dft, _only in plan:
             if not dft.is_dir():
-                messagebox.showerror("目标不存在", f"{x.name}\n目标草稿不存在：\n{dft}")
+                self.error("目标不存在", f"{x.name}\n目标草稿不存在：\n{dft}")
                 return
             blockers, _w = self._jy_state(dft, realtime=True)
             if blockers:
-                messagebox.showerror(
+                self.error(
                     "剪映正在运行",
                     f"{x.name} → {dft.name}\n\n" + "\n".join(blockers)
                     + "\n\n批量导入已中止，未写入任何草稿。")

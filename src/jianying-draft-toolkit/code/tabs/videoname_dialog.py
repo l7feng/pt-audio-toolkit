@@ -35,9 +35,17 @@ def ask_video_projects(parent, infos, suggest: Optional[str] = None,
     win = tk.Toplevel(parent)
     win.title(title)
     win.transient(parent)
-    win.grab_set()
     win.resizable(True, True)
-    win.geometry("760x420")
+    # S7（v3.7.0）：居中于父窗口并强制冒头 —— 双屏下不再躲到另一块屏。
+    # 旧版只给尺寸（`geometry("760x420")`）不给位置，弹窗开在哪全凭系统
+    # 默认；而 `grab_set()` 会把主窗口锁死 → 人类看到的就是「点完导出
+    # 程序卡死了」。这是三保险的第一道（另两道：日志提醒 + 状态栏等待态）。
+    try:
+        from .base import center_on_parent
+        center_on_parent(win, parent, 760, 420)
+    except Exception:
+        win.geometry("760x420")
+    win.grab_set()
 
     result: Dict[str, str] = {}
     answered = {"ok": False}

@@ -81,6 +81,10 @@ def subprocess_kwargs(**extra) -> dict:
     kw: dict = {}
     if _CREATE_NO_WINDOW:
         kw["creationflags"] = _CREATE_NO_WINDOW
+    # S7（v3.7.0）：stdin 一律指到空设备。子进程（ffmpeg / jy-draftc）如果
+    # 尝试读标准输入会一直阻塞，而 `--windowed` 打包的 exe 根本没有可用
+    # stdin 可继承 —— 这是「没有任何报错但就是不动」的一类成因。
+    kw.setdefault("stdin", subprocess.DEVNULL)
     kw.update(extra)
     return kw
 

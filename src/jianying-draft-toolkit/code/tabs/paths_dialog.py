@@ -59,7 +59,7 @@ class PathsDialog(tk.Toplevel):
             self.vars[key] = var
             ttk.Label(body, text=label).grid(row=r, column=0, sticky="w",
                                              padx=(0, 8), pady=5)
-            ttk.Entry(body, textvariable=var, width=52).grid(
+            ttk.Entry(body, textvariable=var, width=1).grid(
                 row=r, column=1, sticky="we", pady=5)
             ttk.Button(body, text="浏览…",
                        command=lambda v=var, k=key: self._pick(v, k)).grid(

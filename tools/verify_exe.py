@@ -30,22 +30,27 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-# 出口布局（2026-09-27 人类裁决①甲，与 tools/build.py 的 TARGETS/FAMILIES 同源）：
-#   <root>/音频工具箱-v<仓库版本>-<日期>/      ← PT 工具箱 + 剪映工具包
-#   <root>/统一命名工具-v<该工具版本>-<日期>/   ← 通用工具（独立家族）
-#   <root>/剧本双语拆分工具-v.../              ← 独立仓库 script-splitter 自建自检
-# 下面这份 (工具键, 中文展示名, 家族) 是 build.py TARGETS 的副本，改动必须两处同步。
-# ⚠️ rename-unify 现在**不在**「音频工具箱」目录里 —— 核验必须按家族分别定位，
-#    沿用「一个 --dir 管全部」的旧写法会把它误判成 MISS。
+# 出口布局（2026-09-27 人类裁决②，与 tools/build.py 的 TARGETS 同源）：
+#   <root>/pt-tools-v<工具版本>-<日期>/                 ← Pro Tools工具箱.exe
+#   <root>/jianying-draft-toolkit-v<工具版本>-<日期>/   ← 剪映工程工具包.exe
+#   <root>/rename-unify-v<工具版本>-<日期>/             ← 统一命名工具.exe
+#   <root>/script-splitter-v.../                       ← 独立仓库自建自检
+#
+# ⚠️ 2026-09-27 深夜修正：**一工具一目录，exe 直接躺在目录根下**。
+#    上一版核验脚本还按「音频工具箱-v* 大目录里再套中文子目录」找，
+#    而实际产物从 v3.6.0 起就已经是扁平的 per-tool 目录 → 三个工具全被判 MISS
+#    （脚本比产物落后一代，属于"核验自身失真"，比不核验更危险）。
+#    第三列 = 目录定位键（不是"家族"），各工具自己一套目录通配。
 APPS = [
-    ("pt-tools", "Pro Tools工具箱", "audio"),
-    ("jianying-draft-toolkit", "剪映工程工具包", "audio"),
-    ("rename-unify", "统一命名工具", "solo"),
+    ("pt-tools", "Pro Tools工具箱", "pt-tools"),
+    ("jianying-draft-toolkit", "剪映工程工具包", "jianying"),
+    ("rename-unify", "统一命名工具", "rename-unify"),
 ]
-# 家族 → 出口目录通配（含历史 ASCII 前缀，保证旧目录仍可核验）
+# 定位键 → 出口目录通配（含历史 ASCII 命名，保证旧目录仍可核验）
 FAMILY_GLOBS = {
-    "audio": ("音频工具箱-v*", "audio-toolkit-v*", "pt-audio-toolkit-v*"),
-    "solo": ("统一命名工具-v*",),
+    "pt-tools": ("pt-tools-v*",),
+    "jianying": ("jianying-draft-toolkit-v*", "jianying-toolkit-v*", "jianying-v*"),
+    "rename-unify": ("rename-unify-v*", "统一命名工具-v*"),
 }
 EXE_ROOT = Path(os.environ.get("PT_EXE_ROOT", r"D:\Ai-Files\Agent-Preset\exe"))
 
@@ -53,13 +58,13 @@ EXE_ROOT = Path(os.environ.get("PT_EXE_ROOT", r"D:\Ai-Files\Agent-Preset\exe"))
 # 元组：(说明, 所属工具的中文目录名, 相对路径, 家族)
 CHECKS = [
     ("pt-tools 内置技能 pt-scanner",
-     "Pro Tools工具箱", "_internal/skills/pt-scanner/scripts/pt_scan.py", "audio"),
+     "Pro Tools工具箱", "_internal/skills/pt-scanner/scripts/pt_scan.py", "pt-tools"),
     ("pt-tools 内置技能 pt-exporter",
-     "Pro Tools工具箱", "_internal/skills/pt-exporter/scripts/pt_export.py", "audio"),
+     "Pro Tools工具箱", "_internal/skills/pt-exporter/scripts/pt_export.py", "pt-tools"),
     ("pt-tools 内置技能 pt-cleaner",
-     "Pro Tools工具箱", "_internal/skills/pt-cleaner/scripts/pt_clean.py", "audio"),
+     "Pro Tools工具箱", "_internal/skills/pt-cleaner/scripts/pt_clean.py", "pt-tools"),
     ("jianying 解密器 jy-draftc.exe",
-     "剪映工程工具包", "tools/jy-draftc/jy-draftc-amd64-windows/jy-draftc.exe", "audio"),
+     "剪映工程工具包", "tools/jy-draftc/jy-draftc-amd64-windows/jy-draftc.exe", "jianying"),
 ]
 
 # 可选附属项：缺了不影响判定，只打 INFO。
@@ -67,7 +72,7 @@ CHECKS = [
 # 见 Q10），该依赖已不再需要；保留检查只为观察是否仍被打包进去。
 OPTIONAL_CHECKS = [
     ("jianying 拖拽依赖 tkinterdnd2（v2.6.2 起已不需要）",
-     "剪映工程工具包", "_internal/tkinterdnd2", "audio"),
+     "剪映工程工具包", "_internal/tkinterdnd2", "jianying"),
 ]
 
 user32 = ctypes.windll.user32
@@ -109,26 +114,41 @@ def windows_of_pid(pid):
 
 
 def latest_exe_dir():
-    # 2026-09-27（裁决①甲）：出口目录改中文并按家族分家 —— PT/剪映在
-    # 「音频工具箱-v<版本>-<日期>」，通用工具另立目录。旧的 ASCII 前缀也认，
-    # 避免历史目录突然找不到。
+    """最新一个 pt-tools 出口目录（历史脚本的入口，保留兼容）。"""
     cands = sorted(
-        [d for pat in FAMILY_GLOBS["audio"]
+        [d for pat in FAMILY_GLOBS["pt-tools"]
          for d in EXE_ROOT.glob(pat) if d.is_dir()],
         key=lambda d: d.stat().st_mtime, reverse=True)
     return cands[0] if cands else None
 
 
-def family_roots(forced_audio=None):
-    """定位各家族的出口目录：{家族: 目录 或 None}。"""
+def family_roots(forced=None):
+    """定位各工具的出口目录：{定位键: 目录 或 None}。
+
+    `--dir` 只覆盖**它自己匹配得上的那一个工具**（目录名对上 FAMILY_GLOBS
+    里的通配）；对不上就打 WARN 而不是静默套用 —— 否则又会出现"看起来核验
+    过了、其实核的是别的目录"。
+    """
+    import fnmatch
     out = {}
     for fam, pats in FAMILY_GLOBS.items():
-        if fam == "audio" and forced_audio:
-            out[fam] = Path(forced_audio)
-            continue
         cands = sorted([d for pat in pats for d in EXE_ROOT.glob(pat) if d.is_dir()],
                        key=lambda d: d.stat().st_mtime, reverse=True)
         out[fam] = cands[0] if cands else None
+    if forced:
+        p = Path(forced)
+        if not p.is_dir():
+            print("[WARN] --dir 不是目录，忽略：%s" % forced)
+            return out
+        hit = None
+        for fam, pats in FAMILY_GLOBS.items():
+            if any(fnmatch.fnmatch(p.name, pat) for pat in pats):
+                hit = fam
+                break
+        if hit is None:
+            print("[WARN] --dir 目录名与任何工具命名都不匹配，忽略：%s" % p.name)
+            return out
+        out[hit] = p
     return out
 
 
@@ -139,13 +159,13 @@ def dir_size_mb(d):
 
 def main():
     ap = argparse.ArgumentParser(description="核验打包好的 exe")
-    ap.add_argument("--dir", default=None, help="出口目录（缺省取最新的 音频工具箱-v*）")
+    ap.add_argument("--dir", default=None, help="指定某工具的出口目录（缺省各工具取最新）")
     ap.add_argument("--no-launch", action="store_true", help="只核清单，不启动 GUI")
     args = ap.parse_args()
 
     roots = family_roots(args.dir)
-    if not roots.get("audio") or not roots["audio"].is_dir():
-        print("[FAIL] 找不到「音频工具箱」出口目录。用 --dir 指定，或设置 PT_EXE_ROOT。")
+    if not any(v and v.is_dir() for v in roots.values()):
+        print("[FAIL] 出口根下找不到任何工具目录。用 --dir 指定，或设置 PT_EXE_ROOT。")
         print("       出口根：%s" % EXE_ROOT)
         return 1
 
@@ -158,8 +178,8 @@ def main():
     print("-" * 76)
 
     def app_dir(cn, fam):
-        r = roots.get(fam)
-        return (r / cn) if r else None
+        # 一工具一目录，exe 就在目录根下（不再套一层中文子目录）
+        return roots.get(fam)
 
     for key, cn, fam in APPS:
         d = app_dir(cn, fam)

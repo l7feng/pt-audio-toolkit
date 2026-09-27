@@ -16,7 +16,7 @@ APP_NAME = "rename-unify"
 #   + R3 规则集导出/导入。
 # v1.7.0（2026-09-27）：D 档 F7+R2 合并（甲案）——原 pt-project-folder-builder
 #   作为第 5 页签「工程文件夹」并入，逻辑在 foldertree.py（纯逻辑、零 tkinter）。
-APP_VERSION = "1.7.3"
+APP_VERSION = "1.7.4"
 
 
 def app_dir():
