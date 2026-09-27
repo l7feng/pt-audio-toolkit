@@ -44,7 +44,7 @@ from typing import List, Optional, Tuple
 #        → v2.6.3 出厂默认路径收口到 Backup-Jianying（out/log/data/tmp/deliver/草稿库）
 #          + 导出页两个输入源合并为一块（五.2）+ 导入页草稿下拉跟随配置的草稿库
 #          + 修 apply_config 引用已删控件 var_template 的崩溃（09-24）
-APP_VERSION = "2.10.0"
+APP_VERSION = "2.12.0"
 
 
 def app_build_date() -> str:
@@ -420,6 +420,11 @@ def decrypt_draft_file(draft_file: Path) -> Path:
 
     ensure_jy_draftc_env()
 
+    output = draft_file.parent / f"{draft_file.name}.dec.json"
+    # S2.4：解密产物已存在且不比源旧 → 跳过子进程（避免每集重解密 + 重写 .env）
+    if output.exists() and output.stat().st_mtime >= draft_file.stat().st_mtime:
+        return output
+
     result = subprocess.run(
         [str(JY_DRAFTC_EXE), "-d", str(draft_file)],
         capture_output=True,
@@ -696,7 +701,7 @@ def _us_to_srt(us: int) -> str:
 
 
 def export_subtitles(json_path: Path, out_file: Path,
-                     win: tuple = None) -> int:
+                     win: tuple = None, data: dict = None) -> int:
     """v2.7.0（J10b）：从草稿文本轨导出字幕 .srt（内容勾选之一，不依赖 ffmpeg）。
 
     数据：``materials.texts``（id → content）+ ``tracks[type=text]`` 的
@@ -704,8 +709,9 @@ def export_subtitles(json_path: Path, out_file: Path,
     只保留窗口内的字幕，并把时间码平移到窗口起点（分包按集对齐用）。
     返回写入的字幕条数。
     """
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    if data is None:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
     texts_map = {m.get("id"): (m.get("content") or "")
                  for m in data.get("materials", {}).get("texts", [])}
     cues = []
@@ -1250,9 +1256,15 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
                       f"{'…' if len(missing) > 3 else ''}）→ 先用原名建文件夹")
             print(f"  [info] 检测到 {len(chunks)} 个视频片段 → 片段按视频窗归类")
 
+    # S2.2：素材文件名 → 路径 索引只建一次，逐片段复用（旧版每片段 os.walk 整树）
+    media_index = {}
+    for _r, _, _files in os.walk(draft_dir):
+        for _fn in _files:
+            media_index.setdefault(_fn.lower(), (Path(_r) / _fn).resolve())
+
     for i, seg in enumerate(segments, 1):
         # 源文件存在性（按草稿根解析 + 树内按名查找，一次性，多模板复用）
-        resolved = resolve_source_path(seg.source_path, draft_dir)
+        resolved = resolve_source_path(seg.source_path, draft_dir, media_index)
         if resolved is None:
             print(f"  ⏭ 跳过（找不到源文件）: {Path(seg.source_path).name}")
             logging.warning(f"[SKIP] 源文件缺失: {seg.source_path}")
@@ -1341,6 +1353,14 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
         logging.error(f"草稿 {draft_dir.name} 解析失败: {e}")
         stats["failed"] += 1
         return
+
+    # S2.1：整包 json 只读一次，字幕分包循环里复用（旧版每集都 json.load 一遍）
+    _draft_data = None
+    try:
+        with open(decrypted, "r", encoding="utf-8") as _f:
+            _draft_data = json.load(_f)
+    except Exception:
+        _draft_data = None
 
     total_s = total_us / 1e6
     print(f"  → {len(tracks)} 条音频轨 ｜ 时间线 {total_s:.3f}s（跟随视频轨）")
@@ -1458,7 +1478,8 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
                     sub_file = sub_dir / f"{folder}.srt"
                     n = export_subtitles(
                         decrypted, sub_file,
-                        win=(ch.tl_start_us, ch.tl_start_us + ch.tl_dur_us))
+                        win=(ch.tl_start_us, ch.tl_start_us + ch.tl_dur_us),
+                        data=_draft_data)
                     print(f"    ✓ 字幕: 字幕/{sub_file.name}（{n} 条）")
                     logging.info(f"[OK] {draft_dir.name}/{folder} 字幕 {n} 条")
                     stats["success"] += 1
@@ -1619,7 +1640,8 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
         stats["failed"] += 1
 
 
-def resolve_source_path(src: str, draft_dir: Path) -> Optional[Path]:
+def resolve_source_path(src: str, draft_dir: Path,
+                        index: dict = None) -> Optional[Path]:
     """把素材 path 解析成真实存在的绝对路径。
 
     剪映 audio/video 素材的 `path` 通常是**相对草稿根**的相对路径
@@ -1644,6 +1666,9 @@ def resolve_source_path(src: str, draft_dir: Path) -> Optional[Path]:
         return rel.resolve()
     name = p.name
     if name:
+        if index is not None:
+            hit = index.get(name.lower())
+            return hit
         for root, _, files in os.walk(draft_dir):
             if name in files:
                 return (Path(root) / name).resolve()

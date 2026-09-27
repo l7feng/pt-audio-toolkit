@@ -70,7 +70,7 @@ TEXTS = {
         "qc_note": "质检只读文件头，不动产物；此报告同时写入日志文件。",
 
         # —— P3 档案库页 / P4 导出历史 ——
-        "tab_library": " 3 · 档案库 ",
+        "tab_library": "档案库",
         "lib_what_title": "本页功能",
         "lib_what_body": ("管理档案目录（profile_dir）里平铺的 pt-profile.json：搜索 / 加载到导出页 / "
                           "在资源管理器打开 / 删除（走回收站）。下方「导出历史」按修改时间列出输出根"
@@ -102,9 +102,9 @@ TEXTS = {
         "help_howto": "使用说明",
         "help_about": "关于 pt-tools",
 
-        "tab_scan": " 1 · 扫描建档 ",
-        "tab_export": " 2 · 导出 ",
-        "tab_clean": " 4 · 清理 ",
+        "tab_scan": "扫描建档",
+        "tab_export": "导出",
+        "tab_clean": "清理",
 
         # —— 扫描页 ——
         "s_what_title": "本页功能",
@@ -446,7 +446,7 @@ TEXTS = {
         "qc_note": "QC only reads headers, never touches products; this report also goes to the log file.",
 
         # —— P3 library tab / P4 export history ——
-        "tab_library": " 3 · Library ",
+        "tab_library": "Library",
         "lib_what_title": "What this tab does",
         "lib_what_body": ("Manage flat pt-profile.json files in the profile folder: search / load into "
                           "Export tab / reveal in Explorer / delete (to Recycle Bin). The \"Export "
@@ -479,9 +479,9 @@ TEXTS = {
         "help_howto": "How to Use",
         "help_about": "About pt-tools",
 
-        "tab_scan": " 1 · Scan ",
-        "tab_export": " 2 · Export ",
-        "tab_clean": " 4 · Clean ",
+        "tab_scan": "Scan",
+        "tab_export": "Export",
+        "tab_clean": "Clean",
 
         "s_what_title": "What this tab does",
         "s_what_body": ("Scans the currently open Pro Tools session and builds a "

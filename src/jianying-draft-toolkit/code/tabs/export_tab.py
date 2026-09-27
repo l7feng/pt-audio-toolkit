@@ -59,7 +59,7 @@ def normalize_template_entry(e):
 
 
 class ExportTab(BaseTab):
-    title = "① 导出音频"
+    title = "导出音频"
     config_keys = (
         "input_dir", "output_dir", "name_template", "audio_format", "bitrate_kbps",
         "conflict", "dedupe", "extract_video_tracks", "skip_existing", "remarks",
@@ -238,10 +238,12 @@ class ExportTab(BaseTab):
         ttk.Label(cfg_box, text="素材类型").grid(
             row=3, column=2, sticky="e", padx=(18, 4))
         self.var_clip_type = tk.StringVar()
+        # v2.12.0（S4）：放开为可编辑输入框 —— 用户填什么大写缩写就用什么，
+        # 不再限死下拉；留空或选「自动判定」= 按草稿素材类型自动映射。
         self.cb_clip_type = ttk.Combobox(
             cfg_box, textvariable=self.var_clip_type,
             values=(CLIP_TYPE_AUTO_LABEL,) + CLIP_TYPE_VALUES, width=26,
-            state="readonly")
+            state="normal")
         self.cb_clip_type.grid(row=3, column=3, sticky="w", padx=4)
         self._set_clip_type_display()
 
@@ -658,13 +660,11 @@ class ExportTab(BaseTab):
         self.var_clip_type.set(key if key else CLIP_TYPE_AUTO_LABEL)
 
     def _read_clip_type(self) -> str:
+        # v2.12.0（S4）：可自由填 UCS 码，填什么用什么；只有选「自动判定」或留空才回落自动。
         label = (self.var_clip_type.get() or "").strip()
         if not label or label == CLIP_TYPE_AUTO_LABEL:
             return ""
-        if label in CLIP_TYPE_VALUES:
-            return label
-        raise ValueError("「素材类型」当前值是「%s」，不在可选项里 —— 请从下拉重新选一项"
-                         "（自动判定或 FX/MX/DX/AMB/BG/DIA/MUS 等）。" % label)
+        return label
 
     def _sync_mode(self):
         """按勾选模式开关控件：整轨专属项（规格/整轨命名/AAF）仅在勾了整轨时可用；
@@ -717,7 +717,7 @@ class ExportTab(BaseTab):
             pass
         # v2.10.0（Q1）：素材类型是片段命名的字段 → 仅片段模式可改
         try:
-            self.cb_clip_type.configure(state="readonly" if clip else "disabled")
+            self.cb_clip_type.configure(state="normal" if clip else "disabled")
         except Exception:
             pass
         try:

@@ -70,12 +70,12 @@ def _run_capture(fake_self):
 
 
 # ───────── 页签接线 ─────────
-@case("J11 接线：gui.py 三页签含 SeparationTab，④号页标题正确")
+@case("J11 接线：gui.py 三页签含 SeparationTab，标题正确")
 def j11_registered():
     assert os.path.isfile(SEP), SEP
     src = Path(JY_CODE, "gui.py").read_text(encoding="utf-8")
     assert "SeparationTab" in src, "gui.py 应注册人声分离页签"
-    assert sep.SeparationTab.title == "④ 人声分离", sep.SeparationTab.title
+    assert sep.SeparationTab.title == "人声分离", sep.SeparationTab.title  # S4：页签去圈码
     assert "separation_tab import" in src or "SeparationTab" in src
 
 

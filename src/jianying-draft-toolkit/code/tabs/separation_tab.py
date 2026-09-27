@@ -23,7 +23,7 @@ from .base import BaseTab, ScrollableFrame
 
 
 class SeparationTab(BaseTab):
-    title = "④ 人声分离"
+    title = "人声分离"
     config_keys = (
         "sep_input", "sep_output", "sep_stems",
     )

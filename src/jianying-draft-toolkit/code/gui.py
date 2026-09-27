@@ -748,35 +748,53 @@ class JianYingToolkitApp:
     # ───────────── 消息泵 ─────────────
 
     def _poll_queue(self):
+        # S2.3（v2.11.0）：日志泵限流。旧版每 tick 把队列抽干、每行 4 次 tk 调用，
+        # 长导出时主线程被日志灌趴（唯一 AppHangB1 来源）。改为：每 tick 最多抽
+        # BUDGET 行，按页合并成一次 insert + 一次 see，写完裁到 4000 行。
+        BUDGET = 300
         try:
-            while True:
-                item = self.msg_queue.get_nowait()
+            batched = {}          # id(tab) -> [tab, [texts]]
+            plain = []            # 非 __tablog__ 的普通 print 行 → 当前页
+            done = None
+            drained = 0
+            while drained < BUDGET:
+                try:
+                    item = self.msg_queue.get_nowait()
+                except queue.Empty:
+                    break
+                drained += 1
                 if isinstance(item, tuple) and item and item[0] == "__tablog__":
                     _, tab, text = item
                     if tab._log is not None:
-                        tab._log.configure(state="normal")
-                        tab._log.insert("end", text)
-                        tab._log.see("end")
-                        tab._log.configure(state="disabled")
+                        batched.setdefault(id(tab), [tab, []])[1].append(text)
                 elif isinstance(item, tuple) and item and item[0] == "__done__":
-                    _, tab, on_done, err = item
-                    btn = getattr(tab, "btn_run", None) or getattr(tab, "btn_import", None)
-                    idle = getattr(tab, "btn_run", None)
-                    tab.finish(on_done, err,
-                               self._busy_button(tab),
-                               self._idle_text(tab))
-                    # W7：长任务跑完弹通知（成功才弹；失败靠日志，避免骚扰）
-                    if err is None and getattr(tab, "title", None):
-                        toast(self.root, "剪映工程工具包",
-                              f"{tab.title} 完成")
+                    done = item
                 else:
-                    tab = self._current_tab()
-                    if tab is not None and tab._log is not None:
-                        tab._log.configure(state="normal")
-                        tab._log.insert("end", item)
-                        tab._log.see("end")
-                        tab._log.configure(state="disabled")
-        except queue.Empty:
+                    plain.append(item)
+            for _k, (tab, texts) in batched.items():
+                tab._log.configure(state="normal")
+                tab._log.insert("end", "".join(texts))
+                tab._log.see("end")
+                tab._log.configure(state="disabled")
+                tab._trim_log()
+            if plain:
+                tab = self._current_tab()
+                if tab is not None and tab._log is not None:
+                    tab._log.configure(state="normal")
+                    tab._log.insert("end", "".join(plain))
+                    tab._log.see("end")
+                    tab._log.configure(state="disabled")
+                    tab._trim_log()
+            if done is not None:
+                _, tab, on_done, err = done
+                tab.finish(on_done, err,
+                           self._busy_button(tab),
+                           self._idle_text(tab))
+                # W7：长任务跑完弹通知（成功才弹；失败靠日志，避免骚扰）
+                if err is None and getattr(tab, "title", None):
+                    toast(self.root, "剪映工程工具包",
+                          f"{tab.title} 完成")
+        except Exception:
             pass
         self.root.after(100, self._poll_queue)
 
@@ -797,8 +815,8 @@ class JianYingToolkitApp:
             return ""
         mapping = {
             "btn_run": "▶ 开始导出",
-            "btn_import": "② 导入到剪映草稿",
-            "btn_parse": "① 解析 PT 工程",
+            "btn_import": "导入到剪映草稿",
+            "btn_parse": "解析 PT 工程",
             "btn_preview": "预演（不写入）",
             "btn_dry": "预演（只列素材不复制）",
         }

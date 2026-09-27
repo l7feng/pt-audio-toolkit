@@ -35,8 +35,10 @@ class ScrollableFrame(ttk.Frame):
         super().__init__(master, **kw)
         self.canvas = tk.Canvas(self, highlightthickness=0)
         self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.vsb.set)
+        self.hsb = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)
         self.vsb.pack(side="right", fill="y")
+        self.hsb.pack(side="bottom", fill="x")
         self.canvas.pack(side="left", fill="both", expand=True)
         self.inner = ttk.Frame(self.canvas, padding=padding)
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
@@ -48,8 +50,11 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.bind_all("<MouseWheel>", self._on_wheel, add="+")
 
     def _on_canvas_configure(self, e):
-        # inner 宽度跟随 canvas —— 保证 LabelFrame 等 stretch 控件不截断
-        self.canvas.itemconfigure(self._win, width=e.width)
+        # S3（v3.5.0）：inner 宽度 = max(内容需求宽, 画布宽)。窄窗时拉伸填满；
+        # 内容超宽时 inner 不被压成窗口宽，横向滚动条出现（旧版强制等宽，
+        # 超宽按钮被挤成文字消失却仍可点，最坑）。
+        req = self.inner.winfo_reqwidth()
+        self.canvas.itemconfigure(self._win, width=max(req, e.width))
 
     def _on_wheel(self, e):
         # 鼠标下的控件不在本容器子树内 → 不是本页的事，跳过
@@ -73,6 +78,12 @@ class ScrollableFrame(ttk.Frame):
             if isinstance(x, (tk.Text, tk.Listbox, ttk.Treeview, ttk.Combobox)):
                 return
             x = getattr(x, "master", None)
+        if e.state & 0x0001:  # Shift 按住 → 横滚
+            try:
+                self.canvas.xview_scroll(int(-e.delta / 120) * 3, "units")
+            except Exception:
+                pass
+            return
         try:
             self.canvas.yview_scroll(int(-e.delta / 120), "units")
         except Exception:

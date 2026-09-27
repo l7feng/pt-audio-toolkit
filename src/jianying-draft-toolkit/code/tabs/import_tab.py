@@ -35,7 +35,7 @@ SRC_JSON = "json"
 
 
 class ImportTab(BaseTab):
-    title = "② 导入多轨"
+    title = "导入多轨"
     config_keys = ("import_json", "import_draft_dir", "import_exclude", "import_keep_aux")
 
     def __init__(self, parent, app):

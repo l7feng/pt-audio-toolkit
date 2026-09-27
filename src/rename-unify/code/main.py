@@ -224,11 +224,11 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.tab_run = ScrollableFrame(nb, padding=0)
         self.tab_undo = ScrollableFrame(nb, padding=0)
         self.tab_folder = ScrollableFrame(nb, padding=0)   # v1.7.0：合并进来的工程文件夹建树
-        nb.add(self.tab_rule, text="  1 · 项目信息与模板  ")
-        nb.add(self.tab_target, text="  2 · 目标与归位  ")
-        nb.add(self.tab_run, text="  3 · 预览与执行  ")
-        nb.add(self.tab_undo, text="  4 · 回溯与撤销  ")
-        nb.add(self.tab_folder, text="  5 · 工程文件夹  ")
+        nb.add(self.tab_rule, text="项目信息与模板")
+        nb.add(self.tab_target, text="目标与归位")
+        nb.add(self.tab_run, text="预览与执行")
+        nb.add(self.tab_undo, text="回溯与撤销")
+        nb.add(self.tab_folder, text="工程文件夹")
 
         self._build_rule_tab()
         self._build_target_tab()
@@ -891,7 +891,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         ttk.Button(btn, text="刷新预览", command=self._ft_refresh).pack(side="left")
         ttk.Button(btn, text="建立工程文件夹",
                    command=self._ft_build).pack(side="left", padx=8)
-        ttk.Label(btn, text="日志写在「3 · 预览与执行」页",
+        ttk.Label(btn, text="日志写在「预览与执行」页",
                   foreground="#888").pack(side="right")
 
         self._ft_refresh()
