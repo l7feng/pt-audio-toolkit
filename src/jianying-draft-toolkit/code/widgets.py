@@ -25,10 +25,10 @@ import tkinter as tk
 from tkinter import ttk
 try:
     from theme import current_theme_name, THEMES, FONT_BODY, FONT_BOLD, FONT_SMALL, \
-        FONT_SUBTITLE, PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL
+        FONT_SUBTITLE, FONT_TITLE, PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL
 except ImportError:  # pt-tools 包结构
     from ptools.gui.theme import (current_theme_name, THEMES, FONT_BODY, FONT_BOLD,
-        FONT_SMALL, FONT_SUBTITLE, PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL)
+        FONT_SMALL, FONT_SUBTITLE, FONT_TITLE, PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL)
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1220,3 +1220,66 @@ def auto_tooltip(root):
             pass
     walk(root)
     return root
+
+
+# ══════════════════════════════════════════════════════════════════
+# HeroHeader —— 顶部横幅（大图标色块 + 标题 + 状态区）
+# ══════════════════════════════════════════════════════════════════
+
+class HeroHeader(tk.Frame):
+    """现代 App 顶部横幅，制造视觉焦点。
+
+    用法：
+        hdr = HeroHeader(parent, title="剪映工程工具包",
+                         subtitle="v2.15.0 · 2026-09-28", icon="music")
+        hdr.pack(fill="x")
+        # 右侧放状态灯/设置：hdr.right 容器
+        StatusLED(hdr.right, ...).pack(side="left", padx=4)
+    """
+
+    def __init__(self, master, title="", subtitle="", icon=None,
+                 bg=None, accent=None, height=72, **kw):
+        pal = _pal()
+        self._bg = bg or pal.get("ELEVATED", pal["SURFACE"])
+        self._accent = accent or pal["ACCENT"]
+        self._fg = pal["FG"]
+        self._dim_c = pal["FG_DIM"]
+        tk.Frame.__init__(self, master, bg=self._bg, **kw)
+        pad = 14
+        inner = tk.Frame(self, bg=self._bg)
+        inner.pack(fill="x", padx=pad, pady=10)
+
+        # 左侧大图标色块
+        if icon:
+            ib = tk.Canvas(inner, width=44, height=44, bg=self._bg,
+                           highlightthickness=0, bd=0)
+            ib.pack(side="left", padx=(0, 12))
+            # 强调色圆角方块
+            self._icon_block(ib, 0, 0, 44, 12, fill=self._accent)
+            draw_icon(ib, icon, 11, 11, size=22, color="#ffffff", width=2)
+
+        # 标题 + 副标题
+        txt_box = tk.Frame(inner, bg=self._bg)
+        txt_box.pack(side="left", fill="y")
+        tk.Label(txt_box, text=title, bg=self._bg, fg=self._fg,
+                 font=FONT_TITLE, anchor="w").pack(anchor="w", pady=(2, 0))
+        if subtitle:
+            tk.Label(txt_box, text=subtitle, bg=self._bg, fg=self._dim_c,
+                     font=FONT_SMALL, anchor="w").pack(anchor="w")
+
+        # 右侧容器（状态灯/设置）
+        self.right = tk.Frame(inner, bg=self._bg)
+        self.right.pack(side="right")
+
+        # 底部强调色细线
+        line = tk.Frame(self, bg=pal["BORDER"], height=1)
+        line.pack(fill="x", side="bottom")
+        accent_line = tk.Frame(self, bg=self._accent, height=2)
+        # 强调线只占左侧一小段，更精致
+        accent_line.pack(fill="x", side="bottom")
+
+    def _icon_block(self, cv, x1, y1, d, r, fill):
+        pts = [x1+r, y1, x1+d-r, y1, x1+d, y1, x1+d, y1+r,
+               x1+d, y1+d-r, x1+d, y1+d, x1+d-r, y1+d, x1+r, y1+d,
+               x1, y1+d, x1, y1+d-r, x1, y1+r, x1, y1]
+        return cv.create_polygon(pts, smooth=True, fill=fill)

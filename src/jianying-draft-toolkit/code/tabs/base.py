@@ -23,6 +23,7 @@ from pathlib import Path
 from tkinter import ttk
 
 import main as core
+from theme import get_colors
 
 
 # ──────────────────── 通用 GUI 助手（S7 / S8，2026-09-27）────────────────────
@@ -176,7 +177,10 @@ class ScrollableFrame(ttk.Frame):
 
     def __init__(self, master, padding=10, **kw):
         super().__init__(master, **kw)
-        self.canvas = tk.Canvas(self, highlightthickness=0, takefocus=1)
+        self._pal = get_colors()
+        self.canvas = tk.Canvas(self, highlightthickness=0, takefocus=1,
+                                bg=self._pal["BG"], bd=0,
+                                highlightbackground=self._pal["BG"])
         self.vsb = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.hsb = ttk.Scrollbar(self, orient="horizontal", command=self.canvas.xview)
         self.canvas.configure(yscrollcommand=self.vsb.set, xscrollcommand=self.hsb.set)

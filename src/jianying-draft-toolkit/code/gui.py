@@ -41,7 +41,7 @@ from theme import (apply as apply_theme, initial_geometry, window_size,
     ICON_PLAY, ICON_STOP, ICON_CROSS, ICON_REFRESH, ParticleCanvas)  # S13/S12：共享主题与窗口几何（同源副本）
 from widgets import (StatusLED, Tooltip, CollapsibleFrame, IconButton, ToggleSwitch,
     Badge, ProgressRing, attach_tree_hover, attach_drop_highlight, attach_tooltip,
-    HoverCard, draw_icon, auto_tooltip)
+    HoverCard, draw_icon, auto_tooltip, HeroHeader)
 from columns import fit_tree_columns  # S11：表格列宽自适应（同源副本）
 
 # 拖拽支持（tkinterdnd2）。未安装时优雅降级为普通选择。
@@ -668,21 +668,24 @@ class JianYingToolkitApp:
     def _build_ui(self):
         self._setup_styles()
 
-        # 顶部标题条
-        head = ttk.Frame(self.root, padding=(PAD_LG, PAD_MD, PAD_LG, 0))
-        head.pack(fill="x")
-        ttk.Label(head, text=APP_TITLE, font=FONT_TITLE).pack(side="left")
+        # v3.12.0：顶部横幅（大图标色块 + 标题 + 状态区）
         self.var_status = tk.StringVar(value="检测中…")
-        self.lbl_status = ttk.Label(head, textvariable=self.var_status,
-                                    foreground="#666", cursor="hand2")
-        self.lbl_status.pack(side="right")
-        # v3.12.0：PT / 剪映 双状态指示灯
-        led_box = ttk.Frame(head)
-        led_box.pack(side="right", padx=(0, PAD_SM))
-        self.pt_led = StatusLED(led_box, state="off", size=12)
+        hdr = HeroHeader(
+            self.root, title="剪映工程工具包",
+            subtitle="v%s · %s" % (core.APP_VERSION, core.app_build_date()),
+            icon="music")
+        hdr.pack(fill="x")
+        # 右侧：双状态灯 + 状态文字
+        led_box = tk.Frame(hdr.right, bg=hdr._bg)
+        led_box.pack(side="left", padx=(0, 10))
+        self.pt_led = StatusLED(led_box, state="off", size=12, bg=hdr._bg)
         self.pt_led.pack(side="left", padx=2)
-        self.jy_led = StatusLED(led_box, state="off", size=12)
+        self.jy_led = StatusLED(led_box, state="off", size=12, bg=hdr._bg)
         self.jy_led.pack(side="left", padx=2)
+        self.lbl_status = tk.Label(hdr.right, textvariable=self.var_status,
+                                   bg=hdr._bg, fg=hdr._dim_c, cursor="hand2",
+                                   font=FONT_SMALL)
+        self.lbl_status.pack(side="left")
         self.lbl_status.bind("<Button-1>", lambda _e: self._refresh_status())
 
         nb = ttk.Notebook(self.root)

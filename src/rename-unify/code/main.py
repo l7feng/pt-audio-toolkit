@@ -46,7 +46,7 @@ from theme import (apply as apply_theme, initial_geometry, set_theme,
     ICON_PLAY, ICON_CROSS, ICON_PLUS, ICON_REFRESH, ParticleCanvas, FONT_SMALL)  # S13/S12：共享主题与窗口几何（同源副本）
 from widgets import (StatusLED, Tooltip, CollapsibleFrame, IconButton, ToggleSwitch,
     Badge, ProgressRing, attach_tree_hover, attach_drop_highlight, attach_tooltip,
-    HoverCard, draw_icon, auto_tooltip)
+    HoverCard, draw_icon, auto_tooltip, HeroHeader)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -225,8 +225,14 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
     # UI 构建
     # ------------------------------------------------------------------
     def _build_ui(self):
+        # v3.12.0：顶部横幅（大图标色块 + 标题）
+        hdr = HeroHeader(
+            self, title="统一命名工具",
+            subtitle="v%s · %s" % (CFG.APP_VERSION, CFG.build_date()),
+            icon="edit")
+        hdr.pack(fill="x")
         nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=PAD_LG, pady=PAD_MD)
+        nb.pack(fill="both", expand=True, padx=PAD_LG, pady=(PAD_SM, PAD_MD))
         self.nb = nb
 
         # G2/J12（D2 · 2026-09-27）：五页统一套可滚动容器（padding=0，各页
