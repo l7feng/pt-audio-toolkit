@@ -44,7 +44,7 @@ from typing import List, Optional, Tuple
 #        → v2.6.3 出厂默认路径收口到 Jianying-Backup（out/log/data/tmp/deliver/草稿库）
 #          + 导出页两个输入源合并为一块（五.2）+ 导入页草稿下拉跟随配置的草稿库
 #          + 修 apply_config 引用已删控件 var_template 的崩溃（09-24）
-APP_VERSION = "2.9.2"
+APP_VERSION = "2.10.0"
 
 
 def app_build_date() -> str:
@@ -1081,16 +1081,19 @@ def sanitize_filename(name: str) -> str:
 
 
 def render_name(template: str, seg: AudioSegment, seq_index: int, remarks: str = "",
-                extra: Optional[dict] = None) -> str:
+                extra: Optional[dict] = None, type_override: str = "") -> str:
     """按命名模板渲染目标文件名（不含扩展名）
 
     v2.5.1：`extra` 可注入所属视频片段解析出的字段（{视频项目}/{集数}/{编号}/
     {AiFX}/{视频名}）—— 片段模式按视频窗归属时由调用方传入。
+    v2.10.0（Q1）：`type_override` 非空时 {素材类型} 用它（UCS 码
+    FX/MX/DX/AMB/BG/DIA/MUS…），供音效库归档手动指定分类；空 = 自动判定。
     """
     import datetime
+    override = (type_override or "").strip()
     fields = {
         "项目名": seg.project,
-        "素材类型": TYPE_CATEGORY.get(seg.track_type, "audio"),
+        "素材类型": override if override else TYPE_CATEGORY.get(seg.track_type, "audio"),
         "序号": seq_index,
         "原始名": Path(seg.material_name).stem if seg.material_name else Path(seg.source_path).stem,
         "日期": datetime.date.today().strftime("%Y%m%d"),
@@ -1282,7 +1285,9 @@ def process_draft(draft_dir: Path, cfg: dict, temp_dir: Path, seen_ids: dict, st
                         extra = vinfo.as_fields()
 
                 # 命名与归档
-                base_name = render_name(template, seg, i, remarks, extra=extra)
+                # v2.10.0（Q1）：{素材类型} 支持手动覆盖（UCS 码）
+                base_name = render_name(template, seg, i, remarks, extra=extra,
+                                        type_override=str(cfg.get("clip_type_override", "") or ""))
                 # v2.6.1 产物目录分组：<草稿名|集名>/02-素材片段/（不再按 audio/music 分子目录）
                 tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
                     else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
@@ -1500,6 +1505,9 @@ def process_draft_tracks(draft_dir: Path, cfg: dict, temp_dir: Path, stats: dict
                 stats["success"] += 1
             else:
                 print(f"  ✗ AAF 失败: {msg}")
+                # v2.10.0：失败也要进文件日志 —— 旧版只 print（仅 GUI 可见），
+                # 导出日志里毫无痕迹，用户事后查「AAF 去哪了」无从下手
+                logging.error(f"[FAIL] AAF {draft_dir.name}: {msg}")
                 stats["failed"] += 1
         except Exception as e:
             print(f"  ✗ AAF 导出异常: {e}")
@@ -1579,7 +1587,8 @@ def process_direct_file(media_file: Path, cfg: dict, temp_dir: Path, seen_ids: d
                     stats["skipped"] += 1
                     continue
 
-            base_name = render_name(template, seg, 1, remarks)
+            base_name = render_name(template, seg, 1, remarks,
+                                    type_override=str(cfg.get("clip_type_override", "") or ""))
             # v2.6.1 产物目录分组：拖入文件提取的音频进「02-素材片段/」（不再分子目录）
             tpl_root = (Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"])) / f"模板{ti}") if multi \
                 else Path(cfg.get("output_dir", DEFAULT_CONFIG["output_dir"]))
@@ -1778,6 +1787,9 @@ def apply_cli_overrides(cfg: dict, args: list) -> dict:
             cfg["dedupe"] = False; del args[i]
         elif a == "--refresh":
             cfg["skip_existing"] = False; del args[i]
+        elif a == "--resume":
+            # v2.10.0：与 --refresh 对称 —— 显式开启断点续跑（默认已改为关）
+            cfg["skip_existing"] = True; del args[i]
         else:
             i += 1
     return cfg

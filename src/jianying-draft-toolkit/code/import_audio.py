@@ -130,7 +130,54 @@ def probe_duration_ms(path: Path) -> int:
     return ffprobe_duration_ms(path)
 
 
+def _jianying_install_dir():
+    """定位剪映安装目录（含 videoeditor.dll 的 Apps/<版本>/，取版本号最大者）。
+
+    与 main.find_jianying_install_dir 同源定位逻辑（本模块独立 CLI，不 import GUI 层）。
+    """
+    base = Path(os.environ.get("LOCALAPPDATA", "")) / "JianyingPro" / "Apps"
+    if not base.is_dir():
+        return None
+    cands = sorted((d for d in base.iterdir() if d.is_dir()),
+                   key=lambda p: p.name, reverse=True)
+    for d in cands:
+        if (d / "videoeditor.dll").is_file():
+            return d
+    return cands[0] if cands else None
+
+
+def _ensure_draftc_env(draftc: Path) -> None:
+    """自愈 .env：JY_INSTALL_DIR 指向的剪映版本目录不存在时自动改写。
+
+    剪映升级会更换 Apps/<版本号> 目录名（实测 11.6.0.14508 → 14527 之后，
+    旧 .env 让导入必挂「JY_INSTALL_DIR does not exist」—— 2026-09-27 实锤）。
+    仅在现值失效时重写，平时零开销；连剪映都找不到时不动手，让
+    jy-draftc 自己报出可读错误。
+    """
+    env_file = draftc.parent / ".env"
+    cur = ""
+    if env_file.is_file():
+        try:
+            for line in env_file.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith("JY_INSTALL_DIR="):
+                    cur = line.split("=", 1)[1].strip()
+                    break
+        except Exception:
+            cur = ""
+    if cur and Path(cur).is_dir():
+        return                                  # 现值有效，不动
+    install = _jianying_install_dir()
+    if install is None:
+        return
+    try:
+        env_file.write_text(f"JY_INSTALL_DIR={install}", encoding="utf-8")
+        print(f"[info] 剪映版本目录已变化，自动改写 .env → {install}")
+    except Exception:
+        pass
+
+
 def decrypt_file(draftc: Path, target: Path) -> Path:
+    _ensure_draftc_env(draftc)
     r = subprocess.run([str(draftc), "-d", str(target)], capture_output=True,
                        text=True, encoding="utf-8", errors="replace", timeout=120, **subprocess_kwargs(),)
     if r.returncode != 0 or "ok" not in r.stdout:
@@ -139,6 +186,7 @@ def decrypt_file(draftc: Path, target: Path) -> Path:
 
 
 def encrypt_file(draftc: Path, dec_file: Path) -> Path:
+    _ensure_draftc_env(draftc)
     r = subprocess.run([str(draftc), "-e", str(dec_file)], capture_output=True,
                        text=True, encoding="utf-8", errors="replace", timeout=120, **subprocess_kwargs(),)
     if r.returncode != 0 or "ok" not in r.stdout:

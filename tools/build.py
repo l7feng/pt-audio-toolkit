@@ -115,6 +115,14 @@ def check_builder(py):
     if r.returncode != 0:
         problems.append("解释器未安装 PyInstaller：%s\n      安装：%s -m pip install pyinstaller"
                         % (py, py))
+    # v3.1.0：pyaaf2 必查 —— 它只被 aaf_writer 的函数内 import 引用，
+    # 打包环境缺它时 PyInstaller 不报错、exe 照样出炉，但 AAF 导出
+    # 必然失败且旧版不写文件日志，用户只会看到「AAF 不见了」
+    #（2026-09-27 实锤：v2.7.0~v3.0.1 全部已发布 exe 都没打进 pyaaf2）。
+    r = subprocess.run([py, "-c", "import aaf2"], capture_output=True, text=True)
+    if r.returncode != 0:
+        problems.append("打包环境缺少 pyaaf2（剪映 AAF 导出必需）\n      安装：%s -m pip install pyaaf2"
+                        % py)
     return problems
 
 
@@ -142,6 +150,12 @@ def post_pt_tools_skills(out_root):
             if f.suffix == ".py":
                 shutil.copy2(f, d / f.name)
                 copied.append("%s/%s" % (sk, f.name))
+            elif f.is_dir():
+                # v3.1.0：子目录（如 pt-clips/scripts/core/，技能自洽的 host
+                # 副本）也要带 —— 旧版只平铺 *.py，导致技能副本 import
+                # `core.host` 时 ModuleNotFoundError，「生成交付包」必挂。
+                shutil.copytree(f, d / f.name, dirs_exist_ok=True)
+                copied.append("%s/%s/" % (sk, f.name))
     say("[post] pt-tools 内置技能脚本 %d 个 -> %s" % (len(copied), dst_root))
     for c in copied:
         say("       · %s" % c)

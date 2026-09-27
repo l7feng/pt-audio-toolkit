@@ -200,6 +200,7 @@ class ImportTab(BaseTab):
 
         # json 状态（J10：批量多选时显示批概要，单文件路径才做文件级检查）
         jp = Path(self.var_json.get().strip()) if self.var_json.get().strip() else None
+        json_kind = None
         if self._json_batch:
             ok_n = sum(1 for b in self._json_batch if b.is_file())
             self.lbl_json_state.configure(
@@ -208,16 +209,25 @@ class ImportTab(BaseTab):
         elif jp and jp.is_file():
             try:
                 doc, n_wav, is_pkg = self._json_summary(jp)
-                n_track = len(doc.get("tracks", []))
-                n_clip = sum(len(t.get("clips", [])) for t in doc.get("tracks", []))
-                audio_dir = jp.parent / "audio"
-                extra = ""
-                if is_pkg or audio_dir.is_dir():
-                    extra = f"｜音频 {n_wav} 个（包内 audio/）"
-                elif doc.get("online_files"):
-                    extra = "｜素材指向原始路径（本机自用）"
-                self.lbl_json_state.configure(
-                    text=f"✓ {n_track} 轨 / {n_clip} 片段{extra}", foreground="#2e7d32")
+                json_kind = self._json_kind(doc)
+                if json_kind != "pt-clips":
+                    # v2.10.0（Q6）：档案/未知结构直接红字说明，不再假装 ✓
+                    self.lbl_json_state.configure(
+                        text=("✗ 这是 PT 档案（pt-profile），不是片段清单 —— "
+                              "没有可导入的片段。请选交付包里的 pt-clips.json"
+                              "（pt-tools「扫描建档」页点「生成交付包」生成）"),
+                        foreground="#c62828")
+                else:
+                    n_track = len(doc.get("tracks", []))
+                    n_clip = sum(len(t.get("clips", [])) for t in doc.get("tracks", []))
+                    audio_dir = jp.parent / "audio"
+                    extra = ""
+                    if is_pkg or audio_dir.is_dir():
+                        extra = f"｜音频 {n_wav} 个（包内 audio/）"
+                    elif doc.get("online_files"):
+                        extra = "｜素材指向原始路径（本机自用）"
+                    self.lbl_json_state.configure(
+                        text=f"✓ {n_track} 轨 / {n_clip} 片段{extra}", foreground="#2e7d32")
             except Exception as e:
                 self.lbl_json_state.configure(text=f"✗ 解析失败: {e}", foreground="#c62828")
         elif jp:
@@ -227,7 +237,8 @@ class ImportTab(BaseTab):
 
         # 剪映状态（写入前置条件）
         draft = Path(self.var_draft_dir.get().strip()) if self.var_draft_dir.get().strip() else None
-        ready = bool(jp and jp.is_file() and draft and draft.is_dir())
+        ready = bool(jp and jp.is_file() and json_kind == "pt-clips"
+                     and draft and draft.is_dir())
         if draft and draft.is_dir():
             blockers, warns = self._jy_state(draft)
             if blockers:
@@ -251,6 +262,24 @@ class ImportTab(BaseTab):
         self.btn_import.configure(state=state)
         self.btn_preview.configure(
             state="normal" if (self._json_batch or (jp and jp.is_file())) else "disabled")
+
+    @staticmethod
+    def _json_kind(doc) -> str:
+        """识别 json 类型（v2.10.0 · Q6）。
+
+        - ``pt-clips``   片段清单：tracks[].clips[] 存在（交付包 / 解析产物）
+        - ``pt-profile`` 扫描建档的**档案**：有 session/tracks 但轨上没有 clips
+          —— 只记录轨清单，没有可导入的片段。2026-09-27 用户把它喂给导入页，
+          0 片段导入却显示「成功」，即「没跑通」的直接原因。
+        - ``unknown``    其余未知结构
+        """
+        tracks = doc.get("tracks")
+        if isinstance(tracks, list) and any(
+                isinstance(t, dict) and "clips" in t for t in tracks):
+            return "pt-clips"
+        if doc.get("session") and isinstance(tracks, list):
+            return "pt-profile"
+        return "unknown"
 
     def _json_summary(self, jp: Path):
         """读 pt-clips.json 概要：``(doc, wav_count, is_delivery_package)``。
@@ -496,6 +525,22 @@ class ImportTab(BaseTab):
         draft = Path(self.var_draft_dir.get().strip())
         if not jp.is_file():
             messagebox.showwarning("缺少数据源", "请先选择 pt-clips.json。")
+            return
+        # v2.10.0（Q6）：硬拦截档案文件 —— 旧版喂进 pt-profile 会「0 片段导入
+        # 成功」，日志显示任务成功、草稿却毫无变化，用户无从判断错在哪。
+        try:
+            doc = json.loads(jp.read_text(encoding="utf-8"))
+        except Exception as e:
+            messagebox.showerror("数据源不可读", f"{jp.name}\n{e}")
+            return
+        if self._json_kind(doc) != "pt-clips":
+            messagebox.showerror(
+                "选错文件：这不是片段清单",
+                f"「{jp.name}」是 PT 扫描档案（pt-profile），只记录轨道清单、"
+                "没有任何片段，导入它什么都写不进草稿。\n\n"
+                "正确数据源二选一：\n"
+                "· pt-tools「扫描建档」页点「生成交付包」→ 选包里的 pt-clips.json；\n"
+                "· 或本页选「Pro Tools 工程」点「① 解析 PT 工程」直接生成。")
             return
         if not draft.is_dir():
             messagebox.showwarning("缺少目标", "请选择要写入的剪映草稿文件夹。")

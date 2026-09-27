@@ -5,6 +5,7 @@
 与其他两页完全独立：输入源、输出目录、命名规则都用自己的配置字段。
 """
 
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk, messagebox
@@ -34,6 +35,14 @@ CONFLICT_MODES = {
 }
 CONFLICT_LABEL_TO_KEY = {v: k for k, v in CONFLICT_MODES.items()}
 
+# v2.10.0（Q1）：片段命名 {素材类型} 的手动覆盖值。
+# 自动判定沿用 core.TYPE_CATEGORY（audio/voice/music/sfx，按源素材类型映射）；
+# 手动值用 UCS 分类码，供音效库归档工作流直接命名：
+#   FX=音效  MX=音乐  DX=对白  AMB=环境声  BG=背景  DIA=台词  MUS=音乐
+CLIP_TYPE_AUTO_LABEL = "自动判定（audio/voice/music/sfx）"
+CLIP_TYPE_VALUES = ("audio", "voice", "music", "sfx",
+                    "FX", "MX", "DX", "AMB", "BG", "DIA", "MUS")
+
 
 def normalize_template_entry(e):
     """J1（v2.7.0）：模板条目归一 —— str → {"name": …, "template": …}。
@@ -56,7 +65,7 @@ class ExportTab(BaseTab):
         "conflict", "dedupe", "extract_video_tracks", "skip_existing", "remarks",
         "export_mode", "track_name_template", "track_spec", "export_aaf",
         "aaf_media_mode", "export_subtitles", "split_folder_template",
-        "split_by_video", "video_project_answers",
+        "split_by_video", "video_project_answers", "clip_type_override",
     )
 
     def __init__(self, parent, app):
@@ -220,17 +229,30 @@ class ExportTab(BaseTab):
         self.var_conflict = tk.StringVar()
         # v2.6.2：旧版这里是纯英文的 rename/cover/skip
         self.cb_conflict = ttk.Combobox(cfg_box, textvariable=self.var_conflict,
-                                        values=list(CONFLICT_LABEL_TO_KEY), width=20,
+                                        values=list(CONFLICT_LABEL_TO_KEY), width=16,
                                         state="readonly")
-        self.cb_conflict.grid(row=3, column=1, columnspan=3, sticky="w", padx=4)
+        self.cb_conflict.grid(row=3, column=1, sticky="w", padx=4)
         self._set_conflict_display()
+
+        # v2.10.0（Q1）：素材类型下拉 —— {素材类型} 占位符的取值
+        ttk.Label(cfg_box, text="素材类型").grid(
+            row=3, column=2, sticky="e", padx=(18, 4))
+        self.var_clip_type = tk.StringVar()
+        self.cb_clip_type = ttk.Combobox(
+            cfg_box, textvariable=self.var_clip_type,
+            values=(CLIP_TYPE_AUTO_LABEL,) + CLIP_TYPE_VALUES, width=26,
+            state="readonly")
+        self.cb_clip_type.grid(row=3, column=3, sticky="w", padx=4)
+        self._set_clip_type_display()
 
         # 开关
         self.var_dedupe = tk.BooleanVar(value=bool(self.cfg.get("dedupe", True)))
         self.var_extract_video = tk.BooleanVar(
             value=bool(self.cfg.get("extract_video_tracks", True)))
+        # v2.10.0（Q2）：断点续跑默认**不勾选** —— 旧默认 True 会把上一轮产物
+        # 当成「已完成」整批跳过，输出目录空空却显示成功，像工具坏了。
         self.var_skip_existing = tk.BooleanVar(
-            value=bool(self.cfg.get("skip_existing", True)))
+            value=bool(self.cfg.get("skip_existing", False)))
         self.var_split_video = tk.BooleanVar(
             value=bool(self.cfg.get("split_by_video", False)))
         row = ttk.Frame(cfg_box)
@@ -242,8 +264,9 @@ class ExportTab(BaseTab):
         ttk.Checkbutton(row, text="断点续跑（跳过已处理草稿）",
                         variable=self.var_skip_existing).pack(side="left", padx=16)
         # v2.5.0：按视频片段分包（一个视频 = 一个交付文件夹）
+        # v2.10.0（Q4）：片段模式同样生效 —— 片段按视频窗归进对应「集」文件夹
         self.chk_split = ttk.Checkbutton(
-            row, text="按视频分包（一个视频片段一个文件夹）",
+            row, text="按视频分包（整轨/片段都按集归文件夹）",
             variable=self.var_split_video)
         self.chk_split.pack(side="left", padx=16)
         # v2.7.0（J10b）：内容勾选 —— 字幕（文本轨 → .srt）
@@ -261,6 +284,8 @@ class ExportTab(BaseTab):
         ttk.Label(cfg_box,
                   text="分包时可用新占位符：{视频项目} {集数} {编号} {AiFX} {视频名}；"
                        "整轨命名另可用 {轨道类别}（MX/DX/SFX/AiFX 自动判定）；"
+                       "「素材类型」可手动指定 {素材类型} 的取值（FX/MX/DX/AMB/BG/DIA/MUS 等，"
+                       "默认自动判定）；"
                        "视频名是纯数字或项目名超过 4 字时会弹窗请您补项目名。",
                   foreground="#888").grid(row=6, column=0, columnspan=4, sticky="w",
                                           padx=4, pady=(0, 4))
@@ -322,6 +347,8 @@ class ExportTab(BaseTab):
         except ValueError:
             self.cfg["bitrate_kbps"] = 320
         self.cfg["conflict"] = self._read_conflict()
+        # v2.10.0（Q1）：{素材类型} 手动覆盖（空 = 自动判定）
+        self.cfg["clip_type_override"] = self._read_clip_type()
         self.cfg["dedupe"] = bool(self.var_dedupe.get())
         self.cfg["extract_video_tracks"] = bool(self.var_extract_video.get())
         self.cfg["skip_existing"] = bool(self.var_skip_existing.get())
@@ -336,9 +363,10 @@ class ExportTab(BaseTab):
         self.cfg["track_spec"] = self._read_spec()
         self.cfg["export_aaf"] = bool(self.var_aaf.get())
         self.cfg["aaf_media_mode"] = self._read_aaf_mode()
-        # 分包只在整轨模式下有意义（片段模式本来就是按片段出的）
-        self.cfg["split_by_video"] = bool(self.var_split_video.get()) and \
-            "tracks" in self._mode_set()
+        # v2.10.0（Q4）：分包不再限整轨 —— 片段模式同样按视频窗归「集」文件夹
+        # （旧版强制 `and "tracks" in mset`，导致纯片段模式永远平铺、
+        #   一个工程多个集数没法分夹。分段/整轨的按集能力 main 里本来就有。）
+        self.cfg["split_by_video"] = bool(self.var_split_video.get())
         self.cfg["split_folder_template"] = self.var_split_tpl.get().strip() or "{视频名}"
         # v2.7.0（J10b）：字幕导出（内容勾选之一）
         self.cfg["export_subtitles"] = bool(self.var_subtitles.get())
@@ -360,8 +388,9 @@ class ExportTab(BaseTab):
         self._set_conflict_display()
         self.var_dedupe.set(bool(c.get("dedupe", True)))
         self.var_extract_video.set(bool(c.get("extract_video_tracks", True)))
-        self.var_skip_existing.set(bool(c.get("skip_existing", True)))
+        self.var_skip_existing.set(bool(c.get("skip_existing", False)))
         self.var_remarks.set(c.get("remarks", ""))
+        self._set_clip_type_display()
         self._seed_templates()
         self._fill_templates()
         mraw = c.get("export_mode", ["tracks"])
@@ -622,6 +651,21 @@ class ExportTab(BaseTab):
         raise ValueError("「重名策略」当前值是「%s」，不在可选项里 —— 请从下拉重新选一项。"
                          % (label or "（空）"))
 
+    # ── v2.10.0（Q1）：素材类型「值 ↔ 显示」 ──
+
+    def _set_clip_type_display(self):
+        key = str(self.cfg.get("clip_type_override", "") or "").strip()
+        self.var_clip_type.set(key if key else CLIP_TYPE_AUTO_LABEL)
+
+    def _read_clip_type(self) -> str:
+        label = (self.var_clip_type.get() or "").strip()
+        if not label or label == CLIP_TYPE_AUTO_LABEL:
+            return ""
+        if label in CLIP_TYPE_VALUES:
+            return label
+        raise ValueError("「素材类型」当前值是「%s」，不在可选项里 —— 请从下拉重新选一项"
+                         "（自动判定或 FX/MX/DX/AMB/BG/DIA/MUS 等）。" % label)
+
     def _sync_mode(self):
         """按勾选模式开关控件：整轨专属项（规格/整轨命名/AAF）仅在勾了整轨时可用；
         片段专属项（格式/码率/去重）仅在勾了片段时可用。
@@ -632,8 +676,9 @@ class ExportTab(BaseTab):
         tracks = "tracks" in mset
         clip = "clips" in mset
         state = "normal" if tracks else "disabled"
-        # 分包依赖整轨（按视频区间切整轨），未勾整轨时置灰
-        self.chk_split.configure(state=state)
+        # v2.10.0（Q4）：分包不再依赖整轨 —— 片段模式也按视频窗归「集」文件夹，
+        # 任一模式勾选即可用；两种都没勾时置灰（本来也导不出东西）
+        self.chk_split.configure(state="normal" if (tracks or clip) else "disabled")
         # v2.6.5（J2）：AAF 只配整轨/分包模式（AAF 描述完整时间线；纯片段模式
         # 只有素材块、无法生成时间线语义的 AAF）。置灰时把原因写进文案，
         # 不再让用户对着灰色复选框猜「为什么不能用了」。
@@ -668,6 +713,11 @@ class ExportTab(BaseTab):
         # v2.6.6（J4）：码率仅 mp3 有意义 —— wav 下也置灰，避免「WAV+320」的困惑
         try:
             self.cb_format.configure(state="readonly" if clip else "disabled")
+        except Exception:
+            pass
+        # v2.10.0（Q1）：素材类型是片段命名的字段 → 仅片段模式可改
+        try:
+            self.cb_clip_type.configure(state="readonly" if clip else "disabled")
         except Exception:
             pass
         try:
@@ -731,7 +781,12 @@ class ExportTab(BaseTab):
             pass
 
     def _refresh_input_summary(self):
-        """即时识别「剪映草稿目录」里有几个草稿，并给出可读反馈。"""
+        """即时识别「剪映草稿目录」里有几个草稿，并给出可读反馈。
+
+        v2.10.0（Q5）：扫描挪到**后台线程** —— 输入指向大目录时
+        resolve_input_paths 会 rglob 全树（几千个 stat），旧版在主线程做，
+        手填路径时每次敲键都可能卡住界面。结果经 after 轮询回主线程刷新。
+        """
         if not getattr(self, "var_input_summary", None):
             return
         raw = self.var_input_dir.get().strip()
@@ -742,18 +797,45 @@ class ExportTab(BaseTab):
         if not root.exists():
             self.var_input_summary.set("⚠ 路径不存在：%s" % raw)
             return
-        try:
-            drafts, _r, _fm = core.resolve_input_paths([root])
-        except Exception as e:
-            self.var_input_summary.set("⚠ 识别失败：%s" % e)
-            return
-        if drafts:
-            self.var_input_summary.set("✓ 已识别 %d 个剪映草稿" % len(drafts))
-            self.log("· 草稿目录识别：%d 个 —— %s\n" % (
-                len(drafts), "、".join(d.name for d in drafts[:10])))
-        else:
-            self.var_input_summary.set("⚠ 该目录下没识别到剪映草稿"
-                                       "（可往上一级选草稿根目录）")
+        if getattr(self, "_scan_busy", False):
+            return                            # 上一轮还在扫，避免堆积
+        self._scan_busy = True
+        self.var_input_summary.set("… 识别中")
+        result = {}
+
+        def scan():
+            try:
+                result["drafts"] = core.resolve_input_paths([root])[0]
+            except Exception as e:
+                result["err"] = e
+
+        threading.Thread(target=scan, daemon=True).start()
+
+        def poll():
+            if "drafts" not in result and "err" not in result:
+                try:
+                    self.after(120, poll)
+                except Exception:
+                    pass
+                return
+            self._scan_busy = False
+            # 扫描期间路径又被改了 → 以最新值为准再刷一轮
+            if self.var_input_dir.get().strip() != raw:
+                self._schedule_input_summary()
+                return
+            if "err" in result:
+                self.var_input_summary.set("⚠ 识别失败：%s" % result["err"])
+                return
+            drafts = result["drafts"]
+            if drafts:
+                self.var_input_summary.set("✓ 已识别 %d 个剪映草稿" % len(drafts))
+                self.log("· 草稿目录识别：%d 个 —— %s\n" % (
+                    len(drafts), "、".join(d.name for d in drafts[:10])))
+            else:
+                self.var_input_summary.set("⚠ 该目录下没识别到剪映草稿"
+                                           "（可往上一级选草稿根目录）")
+
+        self.after(60, poll)
 
     def _set_dropped(self, paths):
         self.on_drop(list(paths))
@@ -836,55 +918,79 @@ class ExportTab(BaseTab):
             messagebox.showwarning("缺少输出目录", "请先填写「输出目录」，或点「浏览…」选择。")
             return
 
-        draft_dirs, media_files, root = [], [], None
-        # v2.6.2（Q10）：改成「**最后操作者优先**」。旧版这里 `if self.dropped_paths:`
-        # 恒优先 —— 只要历史拖过一次没清空，上面「剪映草稿目录」填什么目录都不生效，
-        # 于是看起来就是"只能通过拖拽读取信息"。现在：选/填目录会清空 dropped_paths，
-        # 拖入会写回目录框，两者互为最后操作，不会互相压过。
-        if self.dropped_paths:
-            draft_dirs, root, file_mode = core.resolve_input_paths(self.dropped_paths)
-            if not draft_dirs and not media_files and not file_mode:
-                messagebox.showwarning("无法识别输入",
-                                       "拖入的内容里没有识别到剪映草稿或音视频文件。")
-                return
-            if file_mode:
-                media_files = self._collect_media_files()
-        else:
-            root_str = self.cfg.get("input_dir", "").strip()
-            root = Path(root_str) if root_str else core.DEFAULT_JIANYING_DRAFT_ROOT
-            # 浏览按钮选中的目录也走递归草稿识别（与拖拽一致），避免只扫直接子目录
-            if root_str:
-                found, _, _ = core.resolve_input_paths([root])
-                if found:
-                    draft_dirs = found
-
-        # 分包模式：先解析视频名，判断不出的项目名**先问人**再跑（工具不猜）
-        if self.cfg.get("split_by_video"):
-            if not self._prepare_video_names(root, draft_dirs):
-                return
-
         self.save_config(quiet=True)
         cfg = dict(self.cfg)
 
-        def job():
-            stats = core.execute_export(cfg, root, draft_dirs=draft_dirs,
-                                        media_files=media_files)
-            print(f"\n✓ 导出完成：成功 {stats['success']} ｜ 失败 {stats['failed']} ｜ "
-                  f"跳过 {stats['skipped']}")
+        # ── v2.10.0（Q5）：两阶段异步导出，主线程全程零重活 ──
+        # 旧版在**主线程**里做两件重活，是「开始导出就死机」的根因
+        #（Windows 事件日志 2026-09-27 13:35:36 / 13:38:28 两次 AppHangB1
+        #  「Top level window is idle」实锤）：
+        #   ① resolve_input_paths —— 输入指向大目录时 rglob 全树（草稿目录里
+        #      Resources/ 等子树动辄几千个文件）；
+        #   ② _prepare_video_names —— 分包模式逐草稿解密（jy-draftc 子进程
+        #      单个最长 60s，剪映开着时 videoeditor.dll 争用更慢）。
+        # 现在：阶段1（后台）解析输入 + 视频名准备 → 阶段2（主线程）必要时
+        # 弹项目名补录框 → 阶段3（后台）真导出。界面始终可响应。
+        def phase1():
+            self._phase1_msg = None
+            draft_dirs, media_files, root = [], [], None
+            if self.dropped_paths:
+                draft_dirs, root, file_mode = core.resolve_input_paths(self.dropped_paths)
+                if not draft_dirs and not media_files and not file_mode:
+                    self._phase1_msg = "拖入的内容里没有识别到剪映草稿或音视频文件。"
+                    return [], [], None
+                if file_mode:
+                    media_files = self._collect_media_files()
+            else:
+                root_str = self.cfg.get("input_dir", "").strip()
+                root = Path(root_str) if root_str else core.DEFAULT_JIANYING_DRAFT_ROOT
+                # 浏览按钮选中的目录也走递归草稿识别（与拖拽一致）
+                if root_str:
+                    found, _, _ = core.resolve_input_paths([root])
+                    if found:
+                        draft_dirs = found
+            if cfg.get("split_by_video"):
+                self._scan_video_names(root, draft_dirs)
+            self._export_drafts, self._export_media, self._export_root = \
+                draft_dirs, media_files, root
+            return draft_dirs, media_files, root
 
-        self.run_async(job, btn=self.btn_run, busy_text="导出中…")
+        def phase1_done(err):
+            if err is not None:
+                return                      # 异常已由框架写进日志
+            msg = getattr(self, "_phase1_msg", None)
+            if msg:
+                messagebox.showwarning("无法识别输入", msg)
+                return
+            # 主线程：分包缺项目名 → 弹窗补录（GUI 只能主线程碰）
+            if not self._confirm_video_names(cfg):
+                self.log("\n（已取消：分包模式的视频项目名没有补全）\n")
+                return
 
-    def _prepare_video_names(self, root, draft_dirs) -> bool:
-        """分包前的视频名解析 + 项目名补录。
+            def job():
+                stats = core.execute_export(cfg, self._export_root,
+                                            draft_dirs=self._export_drafts,
+                                            media_files=self._export_media)
+                print(f"\n✓ 导出完成：成功 {stats['success']} ｜ 失败 {stats['failed']} ｜ "
+                      f"跳过 {stats['skipped']}")
 
-        流程：扫描草稿 → 取视频轨片段名 → 解析（已存过的答案直接沿用）→
-        仍有缺项就弹窗问 → 答案存进 `cfg["video_project_answers"]`（下次不再问）。
+            self.run_async(job, btn=self.btn_run, busy_text="导出中…")
 
-        返回 `False` = 用户取消，调用方应中止导出。
+        self.run_async(phase1, on_done=phase1_done, btn=self.btn_run,
+                       busy_text="解析输入…")
+
+    def _scan_video_names(self, root, draft_dirs):
+        """（后台线程）分包前的视频名扫描 + 解析 —— 只算不问。
+
+        v2.10.0（Q5）自 _prepare_video_names 拆出：解密/解析是重活
+        （jy-draftc 单个最长 60s），必须在后台线程跑并逐草稿打进度；
+        缺项存进 ``self._pending_names``，真正弹窗问人由主线程的
+        ``_confirm_video_names`` 完成（GUI 控件只能在主线程碰）。
         """
         from core.videoname import parse_many, pending_map, suggest_project
-        from .videoname_dialog import ask_video_projects
 
+        self._pending_names = {}
+        self._pending_suggest = ""
         names = []
         dirs = list(draft_dirs or [])
         if not dirs and root:
@@ -892,8 +998,9 @@ class ExportTab(BaseTab):
                 dirs = core.scan_drafts(Path(root))
             except Exception as e:
                 self.log(f"  [warn] 扫描草稿失败：{e}\n")
-        for d in dirs:
+        for i, d in enumerate(dirs, 1):
             try:
+                self.log(f"  · 解析视频名（{i}/{len(dirs)}）：{d.name}\n")
                 raw = core.resolve_draft_content_file(Path(d))
                 dec = core.decrypt_draft_file(raw)
                 for ch in core.parse_video_chunks(Path(d), dec):
@@ -902,21 +1009,32 @@ class ExportTab(BaseTab):
             except Exception as e:
                 self.log(f"  [warn] 视频名解析失败（{Path(d).name}）：{e}\n")
         if not names:
-            return True
+            return
 
         infos = core.apply_project(
             parse_many(names), self.cfg.get("video_project_answers") or {})
-        pend = pending_map(infos)
+        self._pending_names = pending_map(infos)
+        self._pending_suggest = suggest_project(infos)
+
+    def _confirm_video_names(self, cfg) -> bool:
+        """（主线程）分包缺项补录弹窗；返回 False = 用户取消，中止导出。
+
+        答案存进 ``cfg["video_project_answers"]``（快照与共享配置各一份，
+        两者都要更新），下次不再问。
+        """
+        pend = getattr(self, "_pending_names", None)
         if not pend:
             return True
+        from .videoname_dialog import ask_video_projects
 
         got = ask_video_projects(self.winfo_toplevel(), list(pend.values()),
-                                 suggest_project(infos))
+                                 getattr(self, "_pending_suggest", ""))
         if got is None:                      # 取消 → 中止，不带着缺项跑
             return False
         answers = dict(self.cfg.get("video_project_answers") or {})
         answers.update({k: v for k, v in got.items() if v})
         self.cfg["video_project_answers"] = answers
+        cfg["video_project_answers"] = answers
         self.var_split_video.set(True)
         return True
 

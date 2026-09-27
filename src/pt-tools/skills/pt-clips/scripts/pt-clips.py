@@ -12,6 +12,9 @@ pt-tools 扫描建档页「生成交付包」经技能 venv 的 python 子进程
 ⚠️ 同源约定：本目录的 pt_clip_scan.py / make_delivery_package.py / import_audio.py
    与剪映工具 `code/` 下同名模块**同源**——修 bug/改逻辑必须双向同步
    （单一真源问题登记在 13 号方案 D 批工具合并时统一）。
+   `core/host.py` 是剪映工具 `code/core/host.py` 的同源副本（v3.1.0 补）：
+   技能脚本独立于 code/ 运行，没有它 `from core.host import …` 直接
+   ModuleNotFoundError，「生成交付包」整链路挂掉（2026-09-27 实锤）。
 """
 import argparse
 import sys

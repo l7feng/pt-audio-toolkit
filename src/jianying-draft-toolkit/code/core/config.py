@@ -91,7 +91,13 @@ DEFAULT_CONFIG = {
     "conflict": "rename",
     "dedupe": True,
     "extract_video_tracks": True,
-    "skip_existing": True,
+    # v2.10.0：断点续跑默认改为**不勾选**（旧默认 True 会把上轮产物当成
+    # 「已完成」整批跳过，用户对着空输出目录以为工具坏了；要续跑再手动勾）
+    "skip_existing": False,
+    # v2.10.0（Q1）：片段命名 {素材类型} 的手动覆盖值 —— 空 = 自动按源判定
+    # （audio/voice/music/sfx）；填 FX/MX/DX/AMB/BG/DIA/MUS 等则全部片段
+    # 用该值命名（UCS 分类码，供音效库归档工作流）
+    "clip_type_override": "",
     "temp_dir": "D:/My-Temporary/Jianying-Backup/Tools/tmp",
     # ── 整轨 / AAF（2026-09-18 新增）──
     "export_mode": "tracks",                     # tracks=整轨（默认）| clips=片段
@@ -138,7 +144,8 @@ CONFIG_FIELDS = {
     "conflict": ("重名冲突策略", "rename=自动重命名 | cover=覆盖 | skip=跳过"),
     "dedupe": ("内容去重", "true=启用（基于首 4KB 哈希）| false=关闭"),
     "extract_video_tracks": ("提取视频内嵌音轨", "true=启用（方案扩展场景）| false=仅独立音频轨道"),
-    "skip_existing": ("断点续跑", "true=跳过已处理草稿 | false=每次全量"),
+    "skip_existing": ("断点续跑", "true=跳过已处理草稿 | false=每次全量（v2.10.0 起默认 false）"),
+    "clip_type_override": ("素材类型覆盖（片段模式）", "空=自动判定（audio/voice/music/sfx）；或填 UCS 码 FX/MX/DX/AMB/BG/DIA/MUS 等统一命名"),
     "temp_dir": ("临时目录", "出厂默认 = Tools/tmp；留空 = 数据目录/tmp（数据目录也空则 输出目录/.tmp）"),
     "log_dir": ("导出日志目录", "导出日志.log 的落点；留空 = 输出目录根"),
     "data_dir": ("运行数据目录", "processed_drafts.txt（断点续跑）/tmp 临时文件落点；留空 = 输出目录根"),
@@ -208,8 +215,18 @@ def load_config(config_path: Path) -> dict:
                     save_config(cfg, config_path)
                 except Exception:
                     pass
+        # v2.10.0：断点续跑出厂默认 True→False 的一次性迁移。旧配置里存的
+        # True 绝大多数是旧出厂默认（跟着配置一路存下来的），不是用户特意
+        # 勾的 —— 只翻这一次并落盘标记，之后用户再勾 True 永久尊重。
+        if isinstance(cfg, dict) and not cfg.get("_migrated_2100_skip"):
+            if cfg.get("skip_existing") is True:
+                cfg["skip_existing"] = False
+            cfg["_migrated_2100_skip"] = True
+            try:
+                save_config(cfg, config_path)
+            except Exception:
+                pass
         return cfg
-    return {}
     return {}
 
 
@@ -299,7 +316,7 @@ def init_config(config_path: Path) -> dict:
     # 7-9. 布尔项
     dedupe = parse_bool(ask("启用内容去重？(y/n)", "y" if current.get("dedupe", True) else "n") or "y", True)
     extract_video = parse_bool(ask("提取视频内嵌音轨？(y/n)", "y" if current.get("extract_video_tracks", True) else "n") or "y", True)
-    skip_existing = parse_bool(ask("断点续跑，跳过已处理草稿？(y/n)", "y" if current.get("skip_existing", True) else "n") or "y", True)
+    skip_existing = parse_bool(ask("断点续跑，跳过已处理草稿？(y/n)", "y" if current.get("skip_existing", False) else "n") or "n", False)
 
     # 10. 备注（模板字段 {备注}）
     remarks = ask("备注文案（命名模板 {备注} 字段，可留空）", current.get("remarks", ""))
