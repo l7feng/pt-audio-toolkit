@@ -41,6 +41,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 from scrollable import ScrollableFrame  # G2/J12：页内可滚动容器（同源副本，改一处同步三处）
 from columns import fit_tree_columns  # S11：表格列宽按权重自适应（同源副本，改一处同步两处）
 from theme import (apply as apply_theme, initial_geometry, set_theme,
+    PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL,
     list_themes, current_theme_name, buttonize,
     ICON_PLAY, ICON_CROSS, ICON_PLUS, ICON_REFRESH, ParticleCanvas)  # S13/S12：共享主题与窗口几何（同源副本）
 
@@ -222,7 +223,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
     # ------------------------------------------------------------------
     def _build_ui(self):
         nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=8, pady=8)
+        nb.pack(fill="both", expand=True, padx=PAD_LG, pady=PAD_MD)
         self.nb = nb
 
         # G2/J12（D2 · 2026-09-27）：五页统一套可滚动容器（padding=0，各页
@@ -246,7 +247,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
         # 状态栏
         bar = ttk.Frame(self)
-        bar.pack(fill="x", side="bottom", padx=10, pady=(0, 6))
+        bar.pack(fill="x", side="bottom", padx=PAD_LG, pady=(0, PAD_SM))
         self.var_status = tk.StringVar(value="就绪")
         ttk.Label(bar, textvariable=self.var_status, style="Hint.TLabel").pack(side="left")
         # S13：主题选择下拉（无菜单栏，放状态栏右侧）
@@ -269,7 +270,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
         # ---- 字段值 ----
         fld = ttk.LabelFrame(f, text="字段值（改这里即可换项目，无需碰模板）")
-        fld.pack(fill="x", padx=10, pady=(10, 6))
+        fld.pack(fill="x", padx=PAD_LG, pady=(PAD_LG, PAD_SM))
 
         hint_map = {
             "片名": "剧名/项目名缩写（开源版示例；工具不预设具体项目）",
@@ -737,7 +738,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         f = self.tab_run.inner
 
         top = ttk.LabelFrame(f, text="目标范围")
-        top.pack(fill="x", padx=10, pady=(10, 6))
+        top.pack(fill="x", padx=PAD_LG, pady=(PAD_LG, PAD_SM))
         top.columnconfigure(1, weight=1)
 
         ttk.Label(top, text="目标目录:").grid(row=0, column=0, sticky="w", padx=6, pady=4)
@@ -778,7 +779,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
                   ).grid(row=3, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
 
         act = ttk.Frame(f)
-        act.pack(fill="x", padx=10, pady=(0, 6))
+        act.pack(fill="x", padx=PAD_LG, pady=(0, PAD_SM))
         self.var_plan_state = tk.StringVar(value="尚未生成计划")
         self.lbl_plan_state = ttk.Label(act, textvariable=self.var_plan_state,
                                         style="Bad.TLabel")
@@ -853,7 +854,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
         # ---- ① 路径 ----
         path_f = ttk.LabelFrame(f, text=" 路径 ")
-        path_f.pack(fill="x", padx=10, pady=(10, 6))
+        path_f.pack(fill="x", padx=PAD_LG, pady=(PAD_LG, PAD_SM))
         path_f.columnconfigure(1, weight=1)
         ttk.Label(path_f, text="模板路径").grid(row=0, column=0, sticky="w", **pad)
         e_tpl = ttk.Entry(path_f, textvariable=sv("template_root"))
@@ -871,7 +872,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
         # ---- ② 本批内容 ----
         batch_f = ttk.LabelFrame(f, text=" 本批内容 ")
-        batch_f.pack(fill="x", padx=10, pady=(0, 6))
+        batch_f.pack(fill="x", padx=PAD_LG, pady=(0, PAD_SM))
         batch_f.columnconfigure(1, weight=1)
         ttk.Label(batch_f, text="项目名称").grid(row=0, column=0, sticky="w", **pad)
         # 默认取页1「片名」（字段链收敛）；页1 没填才用 foldertree 自带值
@@ -888,7 +889,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
         # ---- ③ 命名信息 ----
         info_f = ttk.LabelFrame(f, text=" 命名信息 ")
-        info_f.pack(fill="x", padx=10, pady=(0, 6))
+        info_f.pack(fill="x", padx=PAD_LG, pady=(0, PAD_SM))
         for i, (key, label) in enumerate(
                 (("seq", "序号"), ("level", "等级"), ("date", "日期"), ("user", "用户"))):
             ttk.Label(info_f, text=label).grid(row=0, column=i * 2, sticky="w", **pad)
@@ -908,7 +909,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
         # ---- ④ 选项 ----
         opt_f = ttk.LabelFrame(f, text=" 选项 ")
-        opt_f.pack(fill="x", padx=10, pady=(0, 6))
+        opt_f.pack(fill="x", padx=PAD_LG, pady=(0, PAD_SM))
         ttk.Label(opt_f, text="模板 ptx").grid(row=0, column=0, sticky="w", **pad)
         self.ft_ptx = tk.StringVar(value=FT.norm_ptx_mode(ft.get("ptx_mode", "原样复制")))
         ptx_row = ttk.Frame(opt_f)
@@ -924,7 +925,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
         # ---- ⑤ 预览 ----
         prev_f = ttk.LabelFrame(f, text=" 预览 ")
-        prev_f.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        prev_f.pack(fill="both", expand=True, padx=PAD_LG, pady=(0, PAD_SM))
         self.ft_example = tk.StringVar(value="示例: ")
         ttk.Label(prev_f, textvariable=self.ft_example).pack(anchor="w", padx=6, pady=(4, 2))
         self.ft_prev = tk.Text(prev_f, height=10, wrap="none")
@@ -1094,7 +1095,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
     def _build_undo_tab(self):
         f = self.tab_undo.inner
         top = ttk.LabelFrame(f, text="回溯日志（每次执行自动生成 rename_log_*.csv）")
-        top.pack(fill="x", padx=10, pady=(10, 6))
+        top.pack(fill="x", padx=PAD_LG, pady=(PAD_LG, PAD_SM))
         top.columnconfigure(1, weight=1)
 
         ttk.Label(top, text="日志文件:").grid(row=0, column=0, sticky="w", padx=6, pady=4)

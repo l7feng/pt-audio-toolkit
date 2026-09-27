@@ -101,6 +101,19 @@ FONT_TITLE = ("Microsoft YaHei UI", 13, "bold")
 
 MIN_W, MIN_H = 900, 620   # S12：三工具统一最小尺寸
 
+# S13-v4：统一间距常量（布局重排用）
+PAD_XS = 2
+PAD_SM = 4
+PAD_MD = 8
+PAD_LG = 12
+PAD_XL = 16
+PAD_XXL = 24
+# 标准内边距元组（左, 上, 右, 下）
+PAD_BODY = (PAD_LG, PAD_MD, PAD_LG, PAD_MD)     # 页面主体
+PAD_CARD = (PAD_MD, PAD_MD, PAD_MD, PAD_MD)      # 卡片内部
+PAD_BTN_ROW = (0, PAD_SM, 0, PAD_SM)             # 按钮行
+PAD_STATUSBAR = (PAD_LG, PAD_SM, PAD_LG, PAD_SM)  # 状态栏
+
 
 # ── 主题查询 ──────────────────────────────────────────────────────
 
@@ -219,8 +232,12 @@ def apply(root, theme_name=None):
     # 进度条 / 分隔线 / 分组框
     st.configure("TProgressbar", background=ACCENT, troughcolor=BG, bordercolor=BG)
     st.configure("Separator", background=BORDER)
-    st.configure("TLabelframe", background=BG, bordercolor=BORDER)
-    st.configure("TLabelframe.Label", background=BG, foreground=FG)
+    st.configure("TLabelframe", background=BG, bordercolor=BORDER, relief="solid", borderwidth=1)
+    st.configure("TLabelframe.Label", background=BG, foreground=FG, font=FONT_BOLD, padding=(PAD_MD, 0, PAD_MD, 0))
+    # 卡片式 Frame（SURFACE 背景，用于内容区突出）
+    st.configure("Card.TFrame", background=SURFACE, relief="solid", borderwidth=1, bordercolor=BORDER)
+    # 页签内容区（带内边距）
+    st.configure("Tab.TFrame", background=BG)
     # Checkbutton / Radiobutton
     st.configure("TCheckbutton", background=BG, foreground=FG)
     st.configure("TRadiobutton", background=BG, foreground=FG)

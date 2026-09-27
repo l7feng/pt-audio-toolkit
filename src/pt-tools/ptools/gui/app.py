@@ -29,6 +29,7 @@ from ptools.core.paths import PathResolver
 from ptools.gui.columns import fit_tree_columns
 from ptools.gui.scrollable import ScrollableFrame
 from ptools.gui.theme import (apply as apply_theme, initial_geometry, window_size,
+    PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL,
     set_theme, list_themes, current_theme_name, buttonize,
     ICON_PLAY, ICON_STOP, ICON_DOWN, ICON_GEAR, ICON_CHECK, ICON_CROSS,
     ICON_PLUS, ICON_REFRESH, ICON_FOLDER, ICON_SCAN, ICON_SAVE, ParticleCanvas)
@@ -215,8 +216,8 @@ class App(_DND_BASE):
         self._warn_packed = False
         nb = ttk.Notebook(self)
         self.nb = nb
-        nb.pack(fill="both", expand=True, padx=8, pady=(4, 0))
-        self.pt_info.pack(fill="x", padx=8, pady=(6, 0), before=self.nb)
+        nb.pack(fill="both", expand=True, padx=PAD_LG, pady=(PAD_SM, 0))
+        self.pt_info.pack(fill="x", padx=PAD_LG, pady=(PAD_MD, 0), before=self.nb)
         # G2/J12（D2 · 2026-09-27）：四页统一套可滚动容器 —— 信息密页窗口
         # 不够高时右侧出滚动条；tab 对象引用不变（set_ptsl 等照旧直调）。
         def _scroll_tab(cls, text):
@@ -780,7 +781,7 @@ class App(_DND_BASE):
 
 class ScanTab(ttk.Frame):
     def __init__(self, master, app):
-        super().__init__(master, padding=12)
+        super().__init__(master, padding=PAD_LG)
         self.app = app
         self.busy = False
         self.last_profile_path = ""
@@ -829,7 +830,7 @@ class ScanTab(ttk.Frame):
         self.scan_btn = ttk.Button(row2, text=ICON_SCAN+" "+T("s_scan_btn"),
                                    command=self.do_scan,
                                    style="Accent.TButton")
-        self.scan_btn.pack(side="left", padx=6)
+        self.scan_btn.pack(side="right", padx=(6, 0))
 
         # —— P1（v2.7.0 / C批）：生成交付包（扫描 + 打包一步完成）——
         deliv = ttk.LabelFrame(self, text="  " + T("d_run") + "（PT → 剪辑机，一步到位）  ",
@@ -850,10 +851,10 @@ class ScanTab(ttk.Frame):
                    command=self._browse_deliv).pack(side="left")
         drow2 = ttk.Frame(deliv)
         drow2.pack(fill="x", pady=(0, 2))
+        ttk.Label(drow2, text=T("d_note"), foreground="#888").pack(side="left", padx=(0, 8))
         self.deliv_btn = ttk.Button(drow2, text=ICON_PLAY+" "+T("d_run"), command=self.do_delivery,
                                     style="Accent.TButton")
-        self.deliv_btn.pack(side="left")
-        ttk.Label(drow2, text=T("d_note"), foreground="#888").pack(side="left", padx=8)
+        self.deliv_btn.pack(side="right")
 
         # —— 扫描摘要 ——
         summ = ttk.LabelFrame(self, text="  " + T("s_summary") + "  ", padding=6)
@@ -1041,7 +1042,7 @@ class ScanTab(ttk.Frame):
 
 class ExportTab(ttk.Frame):
     def __init__(self, master, app):
-        super().__init__(master, padding=12)
+        super().__init__(master, padding=PAD_LG)
         self.app = app
         self.busy = False
         self.preview_ok = False
@@ -2508,7 +2509,7 @@ class LibraryTab(ttk.Frame):
     """
 
     def __init__(self, master, app):
-        super().__init__(master, padding=12)
+        super().__init__(master, padding=PAD_LG)
         self.app = app
         self._rows = {}      # iid -> 档案绝对路径
         self._hist = {}      # iid -> 输出根条目绝对路径
@@ -2738,7 +2739,7 @@ class LibraryTab(ttk.Frame):
 
 class CleanTab(ttk.Frame):
     def __init__(self, master, app):
-        super().__init__(master, padding=12)
+        super().__init__(master, padding=PAD_LG)
         self.app = app
 
         warn = ttk.Frame(self, style="Danger.TFrame")

@@ -36,6 +36,7 @@ from tabs.paths_dialog import PathsDialog
 from core.host import StatusProbe
 from core import menus as menu_actions
 from theme import (apply as apply_theme, initial_geometry, window_size,
+    PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL, FONT_TITLE,
     set_theme, list_themes, current_theme_name, buttonize,
     ICON_PLAY, ICON_STOP, ICON_CROSS, ICON_REFRESH, ParticleCanvas)  # S13/S12：共享主题与窗口几何（同源副本）
 from columns import fit_tree_columns  # S11：表格列宽自适应（同源副本）
@@ -665,10 +666,9 @@ class JianYingToolkitApp:
         self._setup_styles()
 
         # 顶部标题条
-        head = ttk.Frame(self.root, padding=(12, 8, 12, 0))
+        head = ttk.Frame(self.root, padding=(PAD_LG, PAD_MD, PAD_LG, 0))
         head.pack(fill="x")
-        ttk.Label(head, text=APP_TITLE,
-                  font=("Microsoft YaHei UI", 13, "bold")).pack(side="left")
+        ttk.Label(head, text=APP_TITLE, font=FONT_TITLE).pack(side="left")
         self.var_status = tk.StringVar(value="检测中…")
         self.lbl_status = ttk.Label(head, textvariable=self.var_status,
                                     foreground="#666", cursor="hand2")
@@ -676,7 +676,7 @@ class JianYingToolkitApp:
         self.lbl_status.bind("<Button-1>", lambda _e: self._refresh_status())
 
         nb = ttk.Notebook(self.root)
-        nb.pack(fill="both", expand=True, padx=8, pady=(6, 8))
+        nb.pack(fill="both", expand=True, padx=PAD_LG, pady=(PAD_MD, PAD_MD))
         self.notebook = nb
 
         for cls in (ExportTab, ImportTab, SeparationTab):   # v2.8.0（J11）：人声分离页
@@ -687,7 +687,7 @@ class JianYingToolkitApp:
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         # 底部状态条
-        foot = ttk.Frame(self.root, padding=(12, 0, 12, 8))
+        foot = ttk.Frame(self.root, padding=(PAD_LG, 0, PAD_LG, PAD_MD))
         foot.pack(fill="x")
         ttk.Label(foot, text=f"配置文件：{core.CONFIG_PATH}",
                   foreground="#999").pack(side="left")
