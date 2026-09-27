@@ -28,9 +28,9 @@ from ptools.core.notify import toast
 from ptools.core.paths import PathResolver
 from ptools.gui.scrollable import ScrollableFrame
 from ptools.core.settings import (
-    APP_DIR, BIT_DEPTHS, CREATE_NO_WINDOW, DEFAULT_EXPORT_FORMAT,
-    DEFAULT_FALLBACK_DURATION, DEFAULT_VIDEO_MARGIN, EXPORT_MODES,
-    FORMAT_FOLLOW, SAMPLE_RATES, TRACK_FMT_CYCLE,
+    APP_DIR, BIT_DEPTHS, CREATE_NO_WINDOW, DEFAULT_DELIVERY_ROOT,
+    DEFAULT_EXPORT_FORMAT, DEFAULT_FALLBACK_DURATION, DEFAULT_VIDEO_MARGIN,
+    EXPORT_MODES, FORMAT_FOLLOW, SAMPLE_RATES, TRACK_FMT_CYCLE,
 )
 from ptools.worker.runner import CmdWorker, ptsl_online
 
@@ -672,7 +672,7 @@ class ScanTab(ttk.Frame):
         ttk.Label(steps, text=T("s_step3"), foreground="#555").pack(anchor="w", pady=(2, 0))
 
         # —— 输出目录 / 档案名 / 扫描按钮 ——
-        # v1.4.0：建档输出默认走 profile_dir（PT-Tools-Backup/json），不再与
+        # v1.4.0：建档输出默认走 profile_dir（Backup-PT-Tools/json），不再与
         # 导出输出共用 last_out_dir —— 两个落点语义不同，混用一个值会互相带偏。
         row = ttk.Frame(self)
         row.pack(fill="x", pady=(0, 6))
@@ -701,9 +701,10 @@ class ScanTab(ttk.Frame):
         drow = ttk.Frame(deliv)
         drow.pack(fill="x", pady=(4, 2))
         ttk.Label(drow, text=T("d_pkg_out")).pack(side="left")
-        self.deliv_var = app.v("delivery_out",
-                               (os.path.join(app.cfg["last_out_dir"], "deliver")
-                                if app.cfg.get("last_out_dir") else ""))
+        # 交付包落点：出厂默认走独立常量 DEFAULT_DELIVERY_ROOT（Backup-Deliver\PT-Tools），
+        # 不再从 last_out_dir 派生 —— 否则交付包会随输出目录漂移（v1.4.0 之前的老毛病）。
+        # 用户在界面改过就以 config 的 delivery_out 为准（app.v 优先于默认值）。
+        self.deliv_var = app.v("delivery_out", DEFAULT_DELIVERY_ROOT)
         ttk.Entry(drow, textvariable=self.deliv_var, width=44).pack(side="left", padx=6)
         ttk.Button(drow, text=T("s_browse"), width=10,
                    command=self._browse_deliv).pack(side="left")
@@ -1498,7 +1499,7 @@ class ExportTab(ttk.Frame):
             sess = self.session_var.get().strip()
             if not sess:
                 raise ValueError(T("msg_sess_missing"))
-        # v1.4.0：输出目录不存在就现建（出厂默认 PT-Tools-Backup/out 首次
+        # v1.4.0：输出目录不存在就现建（出厂默认 Backup-PT-Tools/out 首次
         # 使用时还没有实体目录），别等 exporter 写文件时才失败。
         out_dir = self._resolve_out_dir()
         if out_dir:

@@ -22,8 +22,13 @@ ENV_SKILLS_ROOT = "PTOOLS_SKILLS_ROOT"
 # 4-项目/12-pt-audio-toolkit仓库维护/06-2026-09-24-四工具默认路径总表.md）：
 #   · 档案（pt-profile.json）平铺存 json 目录，扫描完自动命名 <工程名>-pt-profile.json
 #   · 导出产物统一落 out 目录
-DEFAULT_PROFILE_DIR = r"D:\My-Temporary\PT-Tools-Backup\json"
-DEFAULT_OUT_ROOT = r"D:\My-Temporary\PT-Tools-Backup\out"
+DEFAULT_PROFILE_DIR = r"D:\My-Temporary\Backup-PT-Tools\json"
+DEFAULT_OUT_ROOT = r"D:\My-Temporary\Backup-PT-Tools\out"
+# 交付包（PT-Deliver）出厂默认落点（2026-09-27 裁决 2/6）：
+# 交付包与工具产出区**分离**，两个工具各占 Backup-Deliver 下一个子目录。
+# 独立常量而非 `os.path.join(DEFAULT_OUT_ROOT, "deliver")` —— 否则交付包会跟着
+# out 目录跑，换 out 目录就把交付包带走（正是本轮要根治的毛病）。
+DEFAULT_DELIVERY_ROOT = r"D:\My-Temporary\Backup-Deliver\PT-Tools"
 
 # ---------------------------------------------------------------------------
 # 配置落点（W4 · 2026-09-24 拍板：四工具统一 **exe 旁**，便携、随 exe 走）

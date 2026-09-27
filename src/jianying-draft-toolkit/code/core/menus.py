@@ -95,7 +95,7 @@ def default_paths() -> dict:
     except Exception:
         pass
     labels = {
-        "input_dir": ("剪映草稿目录", "出厂默认 = Jianying-Backup 草稿库；清空 = 自动定位剪映默认草稿目录"),
+        "input_dir": ("剪映草稿目录", "出厂默认 = Backup-Jianying 草稿库；清空 = 自动定位剪映默认草稿目录"),
         "output_dir": ("① 导出音频的输出目录", "必填；产物按 <草稿名>/<集名>/01-多条WAV|02-素材片段|03-AAF 分组"),
         "log_dir": ("导出日志目录", "导出日志.log 的落点；留空 = 输出目录根"),
         "data_dir": ("运行数据目录", "processed_drafts.txt（断点续跑）/ tmp 临时文件的落点；留空 = 输出目录根"),
@@ -331,7 +331,7 @@ def about_lines(version: str, build_date: str) -> list:
         f"程序目录：{app_dir()}",
         "",
         "工作目录说明：",
-        "  D:\\My-Temporary\\Jianying-Backup\\ 是工具的工作目录（草稿库 + 产物）",
+        "  D:\\My-Temporary\\Backup-Jianying\\ 是工具的工作目录（草稿库 + 产物）",
         "  它【不是】临时目录，请勿删除——删除将丢失草稿库与历史导出产物",
         "",
         "前置条件速查：",

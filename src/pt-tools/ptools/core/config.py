@@ -65,8 +65,8 @@ def _migrate_cfg(cfg):
       ③ fallback_duration：旧默认 240s，没检出视频时**假装片子 4 分钟**
         （6 分钟的片会被悄悄截断）→ 60
     v1.4.0（cfg_version 2 → 3）默认路径收口：
-      ④ profile_dir 缺省 → PT-Tools-Backup/json（建档输出 + 档案浏览默认目录）
-      ⑤ last_out_dir 为空 → PT-Tools-Backup/out
+      ④ profile_dir 缺省 → Backup-PT-Tools/json（建档输出 + 档案浏览默认目录）
+      ⑤ last_out_dir 为空 → Backup-PT-Tools/out
     用户若手工改过这些值，一律保留，不覆盖。
     """
     ver = int(cfg.get("cfg_version") or 0)

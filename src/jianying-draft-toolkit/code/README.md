@@ -42,7 +42,7 @@
 ├── 02-素材片段/<music|audio…>/<集名>/ ← 片段模式（按剪映素材类型自动归档）
 └── 03-AAF/<草稿名>/<集名>/          ← AAF（分包每集一个 .aaf + Media/ + timeline.json）
 
-<log_dir>/导出日志.log               ← 日志（默认 D:\My-Temporary\Jianying-Backup\Tools\log）
+<log_dir>/导出日志.log               ← 日志（默认 D:\My-Temporary\Backup-Jianying\Tools\log）
 <data_dir>/processed_drafts.txt      ← 断点续跑状态（默认 …\Tools\data）
 <data_dir>/tmp/                      ← 临时文件（导出结束自动清理）
 ```
@@ -151,7 +151,7 @@ jianying-draft-toolkit/
 
 ## 工作目录说明（2026-09-24）
 
-出厂默认路径统一收口到 **`D:\My-Temporary\Jianying-Backup\`**（Project/ 草稿库 + Tools/ 产物、日志与运行数据）。
+出厂默认路径统一收口到 **`D:\My-Temporary\Backup-Jianying\`**（Project/ 草稿库 + Tools/ 产物、日志与运行数据）。
 
 > ⚠️ **它是工作目录，不是临时目录**。名字里带 "My-Temporary" 只是历史遗留的目录名，
 > 实际承载着剪映草稿库与全部历史导出产物，**不要删除、不要清理**。
