@@ -146,7 +146,7 @@ CONFIG_FIELDS = {
     "dedupe": ("内容去重", "true=启用（基于首 4KB 哈希）| false=关闭"),
     "extract_video_tracks": ("提取视频内嵌音轨", "true=启用（方案扩展场景）| false=仅独立音频轨道"),
     "skip_existing": ("断点续跑", "true=跳过已处理草稿 | false=每次全量（v2.10.0 起默认 false）"),
-    "clip_type_override": ("素材类型覆盖（片段模式）", "空=自动判定（audio/voice/music/sfx）；或填 UCS 码 FX/MX/DX/AMB/BG/DIA/MUS 等统一命名"),
+    "clip_type_override": ("素材类型覆盖（片段模式）", "空=按素材名自动归类（DX/FX/BG/MX 四桶，v3.10.0）；或自由填写统一命名缩写"),
     "temp_dir": ("临时目录", "出厂默认 = Tools/tmp；留空 = 数据目录/tmp（数据目录也空则 输出目录/.tmp）"),
     "log_dir": ("导出日志目录", "导出日志.log 的落点；留空 = 输出目录根"),
     "data_dir": ("运行数据目录", "processed_drafts.txt（断点续跑）/tmp 临时文件落点；留空 = 输出目录根"),

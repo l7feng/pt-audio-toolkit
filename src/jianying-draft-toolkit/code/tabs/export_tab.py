@@ -36,12 +36,13 @@ CONFLICT_MODES = {
 CONFLICT_LABEL_TO_KEY = {v: k for k, v in CONFLICT_MODES.items()}
 
 # v2.10.0（Q1）：片段命名 {素材类型} 的手动覆盖值。
-# 自动判定沿用 core.TYPE_CATEGORY（audio/voice/music/sfx，按源素材类型映射）；
-# 手动值用 UCS 分类码，供音效库归档工作流直接命名：
-#   FX=音效  MX=音乐  DX=对白  AMB=环境声  BG=背景  DIA=台词  MUS=音乐
-CLIP_TYPE_AUTO_LABEL = "自动判定（audio/voice/music/sfx）"
-CLIP_TYPE_VALUES = ("audio", "voice", "music", "sfx",
-                    "FX", "MX", "DX", "AMB", "BG", "DIA", "MUS")
+# v3.10.0（R-码表）：码表收敛为四桶（自动判定走 main.classify_clip_type，
+# 按素材命名信息归类；输入框仍可自由填，不限于下拉值）：
+#   DX=对白（台词/内心VO/画外音OS）  FX=音效（动效/拟音）
+#   BG=环境（背景）                  MX=音乐
+# 旧值 audio/voice/music/sfx/AMB/DIA/MUS 退役（导入方向 CATEGORY_MAP 不受影响）。
+CLIP_TYPE_AUTO_LABEL = "自动判定（按素材名归类 DX/FX/BG/MX）"
+CLIP_TYPE_VALUES = ("DX", "FX", "BG", "MX")
 
 
 def normalize_template_entry(e):
@@ -157,17 +158,18 @@ class ExportTab(BaseTab):
         self.var_aaf = tk.BooleanVar(value=bool(self.cfg.get("export_aaf", False)))
         self.var_aaf_mode = tk.StringVar(value=self.cfg.get("aaf_media_mode", "media"))
         aaf_row = ttk.Frame(mode_box)
-        aaf_row.grid(row=4, column=0, columnspan=4, sticky="w", padx=4, pady=3)
+        aaf_row.grid(row=4, column=0, columnspan=4, sticky="we", padx=4, pady=3)
         self.chk_aaf = ttk.Checkbutton(
             aaf_row, text="同时导出 AAF（交给 Pro Tools 混音）",
             variable=self.var_aaf, command=self._sync_mode)
         self.chk_aaf.pack(side="left")
         ttk.Label(aaf_row, text="交付方式").pack(side="left", padx=(16, 4))
+        # S11：去掉写死 width=42（窗口一窄就撑出行），改随行弹性伸缩
         self.cb_aaf = ttk.Combobox(
-            aaf_row, textvariable=self.var_aaf_mode, state="readonly", width=42,
+            aaf_row, textvariable=self.var_aaf_mode, state="readonly",
             values=list(AAF_LABEL_TO_KEY))
         self._set_aaf_display()
-        self.cb_aaf.pack(side="left")
+        self.cb_aaf.pack(side="left", fill="x", expand=True)
 
         mode_box.columnconfigure(2, weight=1)
 
@@ -191,9 +193,10 @@ class ExportTab(BaseTab):
                                        exportselection=0)
         self.lb_templates.grid(row=0, column=0, columnspan=4, sticky="we", padx=(0, 4))
         row_nt = ttk.Frame(nt_frame)
-        row_nt.grid(row=1, column=0, columnspan=4, sticky="w", pady=(3, 0))
+        row_nt.grid(row=1, column=0, columnspan=4, sticky="we", pady=(3, 0))
         self.var_new_tpl = tk.StringVar()
-        ttk.Entry(row_nt, textvariable=self.var_new_tpl, width=42).pack(side="left", padx=(0, 4))
+        ttk.Entry(row_nt, textvariable=self.var_new_tpl).pack(
+            side="left", padx=(0, 4), fill="x", expand=True)
         ttk.Button(row_nt, text="添加模板", command=self._add_template).pack(side="left", padx=2)
         ttk.Button(row_nt, text="删除选中", command=self._remove_template).pack(side="left", padx=2)
         # v2.7.0（J1）：模板可命名 —— 三栏管理弹窗（模板名/内容/样例）
@@ -285,9 +288,9 @@ class ExportTab(BaseTab):
         ttk.Entry(row, textvariable=self.var_split_tpl, width=16).pack(side="left")
         ttk.Label(cfg_box,
                   text="分包时可用新占位符：{视频项目} {集数} {编号} {AiFX} {视频名}；"
-                       "整轨命名另可用 {轨道类别}（MX/DX/SFX/AiFX 自动判定）；"
-                       "「素材类型」可手动指定 {素材类型} 的取值（FX/MX/DX/AMB/BG/DIA/MUS 等，"
-                       "默认自动判定）；"
+                       "整轨命名另可用 {轨道类别}（MX/DX/FX 自动判定）；"
+                       "「素材类型」可手动指定 {素材类型} 的取值（DX对白 / FX音效 / BG环境 / MX音乐，"
+                       "默认按素材名自动判定，也可自由填写）；"
                        "视频名是纯数字或项目名超过 4 字时会弹窗请您补项目名。",
                   foreground="#888").grid(row=6, column=0, columnspan=4, sticky="w",
                                           padx=4, pady=(0, 4))
