@@ -29,6 +29,7 @@ from tkinter import ttk, messagebox
 
 import main as core
 from .base import BaseTab, ScrollableFrame, default_draft_root, list_drafts
+from widgets import ToggleSwitch
 
 SRC_PT = "pt"
 SRC_JSON = "json"
@@ -120,7 +121,10 @@ class ImportTab(BaseTab):
         ttk.Label(opt, text="（逗号分隔；留空 = 默认排除 VCA/Verb/Dly/BUS 等辅助轨）",
                   foreground="#888").pack(side="left")
         self.var_keep_aux = tk.BooleanVar(value=bool(self.cfg.get("import_keep_aux", False)))
-        ttk.Checkbutton(opt, text="保留辅助轨", variable=self.var_keep_aux).pack(side="left", padx=16)
+        ttk.Label(opt, text="保留辅助轨").pack(side="left")
+        ToggleSwitch(opt, value=self.var_keep_aux.get(),
+                     command=lambda v: self.var_keep_aux.set(v)
+                     ).pack(side="left", padx=5)
 
         # ── 按钮 ──
         btn_box = ttk.Frame(outer)

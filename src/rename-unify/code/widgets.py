@@ -35,6 +35,17 @@ except ImportError:  # pt-tools 包结构
 # 配色辅助（跟随当前主题）
 # ══════════════════════════════════════════════════════════════════
 
+def _measure_text(font_desc, text):
+    """测量文字像素宽度（不依赖可见窗口）。"""
+    if not text:
+        return 0
+    try:
+        from tkinter import font as _tkfont
+        return int(_tkfont.Font(font=font_desc).measure(text))
+    except Exception:
+        return len(text) * 8
+
+
 def _pal():
     """取当前主题完整色板（基础 + 派生色），未 apply 时回落 warm。"""
     try:
@@ -472,17 +483,14 @@ class IconButton(tk.Canvas):
         self._hover = False
 
         # 先测量文字宽度
-        tmp = tk.Toplevel(); tmp.withdraw()
-        tc = tk.Canvas(tmp)
-        tw = tc.fontmeasure(self._font, text)[0] if text else 0
-        tmp.destroy()
+        tw = _measure_text(self._font, text)
 
         iw = icon_size + (6 if text else 0) if icon else 0
         w = self._px * 2 + iw + tw
         h = self._py * 2 + max(icon_size, 16)
         tk.Canvas.__init__(self, master, width=w, height=h,
                           bg=self._bg_base, highlightthickness=0, bd=0, **kw)
-        self._w, self._h = w, h
+        self._cw, self._h = w, h
         self._draw()
         self.configure(cursor="hand2")
         self.bind("<Enter>", self._on_enter)
@@ -498,10 +506,10 @@ class IconButton(tk.Canvas):
         r = 8
         # 按钮背景（圆角矩形，用多边形近似）
         if self._primary or self._danger or self._hover:
-            self._round_rect(1, 1, self._w - 1, self._h - 1, r,
+            self._round_rect(1, 1, self._cw - 1, self._h - 1, r,
                              fill=fill, outline="")
         else:
-            self._round_rect(1, 1, self._w - 1, self._h - 1, r,
+            self._round_rect(1, 1, self._cw - 1, self._h - 1, r,
                              fill=fill, outline=_pal()["BORDER"])
         cx = self._px
         cy = (self._h - self._icon_size) / 2
@@ -566,7 +574,7 @@ class ToggleSwitch(tk.Canvas):
         self._off_color = _mix(pal["FG"], pal["BG"], 0.7)
         self._value = bool(value)
         self._command = command
-        self._w, self._h = width, height
+        self._cw, self._h = width, height
         tk.Canvas.__init__(self, master, width=width, height=height,
                            bg=self._bg, highlightthickness=0, bd=0, **kw)
         self.configure(cursor="hand2")
@@ -576,12 +584,12 @@ class ToggleSwitch(tk.Canvas):
 
     def _knob_target(self):
         pad, d = 3, self._h - 6
-        return self._w - pad - d if self._value else pad
+        return self._cw - pad - d if self._value else pad
 
     def _draw(self):
         self.delete("all")
         track_c = self._on_color if self._value else self._off_color
-        self._round_rect(0, 0, self._w, self._h, self._h / 2,
+        self._round_rect(0, 0, self._cw, self._h, self._h / 2,
                          fill=track_c, outline="")
         pad, d = 3, self._h - 6
         kx = self._knob_x
@@ -680,12 +688,10 @@ class Badge(tk.Canvas):
         self._text = text
         self._font = font or ("Microsoft YaHei UI", 8, "bold")
         self._px, self._py = padx, pady
-        tmp = tk.Toplevel(); tmp.withdraw()
-        tw = tk.Canvas(tmp).fontmeasure(self._font, text)[0]
-        tmp.destroy()
-        self._w = padx * 2 + tw
+        tw = _measure_text(self._font, text)
+        self._cw = padx * 2 + tw
         self._h = pady * 2 + 13
-        tk.Canvas.__init__(self, master, width=self._w, height=self._h,
+        tk.Canvas.__init__(self, master, width=self._cw, height=self._h,
                            bg=self._bg, highlightthickness=0, bd=0, **kw)
         self._draw()
 
@@ -697,8 +703,8 @@ class Badge(tk.Canvas):
     def _draw(self):
         self.delete("all")
         soft = _mix(self._color, self._bg, 0.82)
-        self._round_rect(0, 0, self._w, self._h, self._h / 2, fill=soft, outline="")
-        self.create_text(self._w / 2, self._h / 2, text=self._text,
+        self._round_rect(0, 0, self._cw, self._h, self._h / 2, fill=soft, outline="")
+        self.create_text(self._cw / 2, self._h / 2, text=self._text,
                          fill=self._color, font=self._font)
 
     def set_text(self, text):
@@ -959,10 +965,7 @@ class Segmented(tk.Canvas):
         self._command = command
         self._font = font or FONT_BOLD
         self._px, self._py = padx, pady
-        tmp = tk.Toplevel(); tmp.withdraw()
-        tc = tk.Canvas(tmp)
-        widths = [tc.fontmeasure(self._font, lbl)[0] for _, lbl in options]
-        tmp.destroy()
+        widths = [_measure_text(self._font, lbl) for _, lbl in options]
         self._seg_w = [w + padx * 2 for w in widths]
         total_w = sum(self._seg_w)
         self._h = pady * 2 + 16
@@ -1038,7 +1041,7 @@ class SideNav(tk.Canvas):
         self._items = items
         self._value = value or (items[0][0] if items else None)
         self._command = command
-        self._w, self._ih = width, item_h
+        self._cw, self._ih = width, item_h
         self._h = item_h * len(items) + 24
         tk.Canvas.__init__(self, master, width=width, height=self._h,
                            bg=self._nav_bg, highlightthickness=0, bd=0, **kw)
@@ -1076,11 +1079,11 @@ class SideNav(tk.Canvas):
         for i, (key, label, icon) in enumerate(self._items):
             y = 12 + i * self._ih
             if key == self._value:
-                self._round_rect(8, y, self._w - 8, y + self._ih - 4,
+                self._round_rect(8, y, self._cw - 8, y + self._ih - 4,
                                  9, fill=pal["ACCENT"], outline="")
                 tc, ic = "#ffffff", "#ffffff"
             elif key == self._hover_key:
-                self._round_rect(8, y, self._w - 8, y + self._ih - 4,
+                self._round_rect(8, y, self._cw - 8, y + self._ih - 4,
                                  9, fill=_mix(pal["FG"], self._nav_bg, 0.88),
                                  outline="")
                 tc, ic = pal["FG"], pal["FG"]

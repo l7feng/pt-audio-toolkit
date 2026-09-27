@@ -546,7 +546,8 @@ class App(_DND_BASE):
         ttk.Label(bar, textvariable=self.status_prof_var,
                   style="Small.TLabel").pack(side="left", padx=PAD_MD)
         ttk.Label(bar, textvariable=self.status_skills_var,
-                  style="Small.TLabel").pack(side="right")
+                  style="Small.TLabel").pack(side="right", padx=(0, 10))
+        Badge(bar, text="Pro", variant="accent").pack(side="right", padx=(0, 6))
 
     # 日志滚动上限：批量几十集时 Text 行数是主线程卡顿的隐形来源
     LOG_MAX_LINES = 5000

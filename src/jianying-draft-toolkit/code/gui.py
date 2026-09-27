@@ -687,6 +687,8 @@ class JianYingToolkitApp:
                                    font=FONT_SMALL)
         self.lbl_status.pack(side="left")
         self.lbl_status.bind("<Button-1>", lambda _e: self._refresh_status())
+        Badge(hdr.right, text="Pro", variant="accent",
+              bg=hdr._bg).pack(side="left", padx=(10, 0))
 
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=PAD_LG, pady=(PAD_MD, PAD_MD))

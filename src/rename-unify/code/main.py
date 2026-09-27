@@ -231,6 +231,8 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
             subtitle="v%s · %s" % (CFG.APP_VERSION, CFG.build_date()),
             icon="edit")
         hdr.pack(fill="x")
+        Badge(hdr.right, text="Pro", variant="accent",
+              bg=hdr._bg).pack(side="left")
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=PAD_LG, pady=(PAD_SM, PAD_MD))
         self.nb = nb
@@ -780,8 +782,12 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         opt = ttk.Frame(top)
         opt.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
         self.var_rec = tk.BooleanVar(value=bool(self.cfg["recursive"]))
-        ttk.Checkbutton(opt, text="含子目录", variable=self.var_rec,
-                        command=self._refresh_preview).pack(side="left", padx=(0, 12))
+        ttk.Label(opt, text="含子目录").pack(side="left")
+        def _on_rec(v):
+            self.var_rec.set(v)
+            self._refresh_preview()
+        ToggleSwitch(opt, value=self.var_rec.get(),
+                     command=_on_rec).pack(side="left", padx=(5, 14))
         ttk.Label(opt, text="扩展名:").pack(side="left")
         self.var_exts = tk.StringVar(value=self.cfg["exts"])
         ttk.Entry(opt, textvariable=self.var_exts, width=30).pack(side="left", padx=6)
@@ -946,8 +952,12 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
             ttk.Radiobutton(ptx_row, text=label, variable=self.ft_ptx, value=key,
                             command=self._ft_refresh).pack(side="left", padx=6)
         self.ft_skip = tk.BooleanVar(value=bool(ft.get("skip_existing", True)))
-        ttk.Checkbutton(opt_f, text="已存在项跳过", variable=self.ft_skip
-                        ).grid(row=1, column=1, sticky="w", padx=4)
+        skip_row = ttk.Frame(opt_f)
+        skip_row.grid(row=1, column=1, sticky="w", padx=4)
+        ttk.Label(skip_row, text="已存在项跳过").pack(side="left")
+        ToggleSwitch(skip_row, value=self.ft_skip.get(),
+                     command=lambda v: self.ft_skip.set(v)
+                     ).pack(side="left", padx=5)
         ttk.Label(opt_f, text="集数位置：Project 子目录（F5 已删「项目根」选项）",
                   foreground="#888").grid(row=2, column=1, sticky="w", padx=4, pady=(2, 0))
 
