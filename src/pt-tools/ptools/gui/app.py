@@ -28,7 +28,10 @@ from ptools.core.notify import toast
 from ptools.core.paths import PathResolver
 from ptools.gui.columns import fit_tree_columns
 from ptools.gui.scrollable import ScrollableFrame
-from ptools.gui.theme import apply as apply_theme, initial_geometry, window_size, set_theme, list_themes, current_theme_name
+from ptools.gui.theme import (apply as apply_theme, initial_geometry, window_size,
+    set_theme, list_themes, current_theme_name, buttonize,
+    ICON_PLAY, ICON_STOP, ICON_DOWN, ICON_GEAR, ICON_CHECK, ICON_CROSS,
+    ICON_PLUS, ICON_REFRESH, ICON_FOLDER, ICON_SCAN, ICON_SAVE, ParticleCanvas)
 from ptools.core.settings import (
     APP_DIR, BIT_DEPTHS, CREATE_NO_WINDOW, DEFAULT_DELIVERY_ROOT,
     DEFAULT_EXPORT_FORMAT, DEFAULT_FALLBACK_DURATION, DEFAULT_VIDEO_MARGIN,
@@ -183,6 +186,12 @@ class App(_DND_BASE):
 
     def _build_ui(self):
         apply_theme(self, theme_name=self.cfg.get("theme"))   # S13：共享主题（读 cfg["theme"]，默认 warm）
+        buttonize(self)   # S13-v2：按钮悬停变手型 + 图标
+        # S13-v3：动态像素粒子背景（底层，cfg["particle_bg"]=False 可关闭）
+        self.particle = ParticleCanvas(self, enabled=bool(self.cfg.get("particle_bg", True)),
+                                        theme_name=self.cfg.get("theme"))
+        self.particle.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.tk.call("lower", str(self.particle))
         self.title(T("app_title"))
         # S12：窗口几何 —— cfg 有记录用记录（钳到 minsize）；无记录按屏幕自适应；
         # 语言切换重建 UI 时窗口已在屏上，保留当前几何不重置。
@@ -382,6 +391,12 @@ class App(_DND_BASE):
         actual = set_theme(self, name)
         self.cfg["theme"] = actual
         save_config(self.cfg)
+        # 粒子背景同步换色
+        try:
+            if hasattr(self, "particle") and self.particle.winfo_exists():
+                self.particle.set_theme(actual)
+        except Exception:
+            pass
         self.log("[theme] 界面主题 -> %s\n" % actual)
 
     # ---------------- 日志 / 状态栏 ----------------
@@ -479,7 +494,7 @@ class App(_DND_BASE):
         ttk.Button(btn_row, text=T("log_clear"), command=self._clear_log,
                    width=16).pack(side="left")
         # v1.3.0 卡死专项：中止按钮 + 运行时长 / 无输出看门狗读数
-        self.abort_btn = ttk.Button(btn_row, text=T("log_abort"),
+        self.abort_btn = ttk.Button(btn_row, text=ICON_STOP+" "+T("log_abort"),
                                     command=self._abort_worker, width=12,
                                     style="Danger.TButton", state="disabled")
         self.abort_btn.pack(side="left", padx=(8, 0))
@@ -811,7 +826,7 @@ class ScanTab(ttk.Frame):
         ttk.Label(row2, text=T("s_name")).pack(side="left")
         self.name_var = app.v("scan_name", "pt-profile.json")
         ttk.Entry(row2, textvariable=self.name_var, width=24).pack(side="left", padx=6)
-        self.scan_btn = ttk.Button(row2, text=T("s_scan_btn"),
+        self.scan_btn = ttk.Button(row2, text=ICON_SCAN+" "+T("s_scan_btn"),
                                    command=self.do_scan,
                                    style="Accent.TButton")
         self.scan_btn.pack(side="left", padx=6)
@@ -835,7 +850,7 @@ class ScanTab(ttk.Frame):
                    command=self._browse_deliv).pack(side="left")
         drow2 = ttk.Frame(deliv)
         drow2.pack(fill="x", pady=(0, 2))
-        self.deliv_btn = ttk.Button(drow2, text=T("d_run"), command=self.do_delivery,
+        self.deliv_btn = ttk.Button(drow2, text=ICON_PLAY+" "+T("d_run"), command=self.do_delivery,
                                     style="Accent.TButton")
         self.deliv_btn.pack(side="left")
         ttk.Label(drow2, text=T("d_note"), foreground="#888").pack(side="left", padx=8)
@@ -937,7 +952,7 @@ class ScanTab(ttk.Frame):
         # P1：交付包与扫描共用 worker 通道，按 _mode 分流收尾
         if getattr(self, "_mode", "scan") == "delivery":
             try:
-                self.deliv_btn.configure(state="normal", text=T("d_run"))
+                self.deliv_btn.configure(state="normal", text=ICON_PLAY+" "+T("d_run"))
             except Exception:
                 pass
             if returncode == 0:
@@ -1263,7 +1278,7 @@ class ExportTab(ttk.Frame):
         self.preview_btn = ttk.Button(btnrow, text=T("e_preview"),
                                       command=self.do_preview)
         self.preview_btn.pack(side="left")
-        self.export_btn = ttk.Button(btnrow, text=T("e_export"),
+        self.export_btn = ttk.Button(btnrow, text=ICON_PLAY+" "+T("e_export"),
                                      command=self.do_export,
                                      style="Accent.TButton")
         self.export_btn.pack(side="left", padx=8)
@@ -2138,7 +2153,7 @@ class BatchExportDialog(tk.Toplevel):
         btns = ttk.Frame(box)
         btns.pack(fill="x")
         ttk.Button(btns, text=T("b_add"), command=self._add_sessions).pack(side="left")
-        ttk.Button(btns, text=T("b_remove"), command=self._remove_selected,
+        ttk.Button(btns, text=ICON_CROSS+" "+T("b_remove"), command=self._remove_selected,
                    style="Danger.TButton").pack(side="left", padx=6)
         ttk.Button(btns, text=T("b_rescan"), command=self._rescan_all).pack(side="left")
         self.tree = ttk.Treeview(box, columns=("session", "video", "status"),
@@ -2181,7 +2196,7 @@ class BatchExportDialog(tk.Toplevel):
         # W8（v1.5.0）：白天空好任务清单存盘，夜里 `pt-tools --batch jobs.json` 执行
         ttk.Button(start_row, text=T("b_save_jobs"),
                    command=self._save_jobs).pack(side="left")
-        ttk.Button(start_row, text=T("b_start"), command=self._start,
+        ttk.Button(start_row, text=ICON_PLAY+" "+T("b_start"), command=self._start,
                    style="Accent.TButton").pack(side="right")
 
     # ---- 行管理 ----
@@ -2548,7 +2563,7 @@ class LibraryTab(ttk.Frame):
                    command=self._load_selected).pack(side="left")
         ttk.Button(btns, text=T("lib_open_dir"),
                    command=self._open_dir).pack(side="left", padx=8)
-        ttk.Button(btns, text=T("lib_delete"),
+        ttk.Button(btns, text=ICON_CROSS+" "+T("lib_delete"),
                    command=self._delete_selected,
                    style="Danger.TButton").pack(side="left")
 

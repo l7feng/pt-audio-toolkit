@@ -40,7 +40,9 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from scrollable import ScrollableFrame  # G2/J12：页内可滚动容器（同源副本，改一处同步三处）
 from columns import fit_tree_columns  # S11：表格列宽按权重自适应（同源副本，改一处同步两处）
-from theme import apply as apply_theme, initial_geometry, set_theme, list_themes, current_theme_name  # S13/S12：共享主题与窗口几何（同源副本）
+from theme import (apply as apply_theme, initial_geometry, set_theme,
+    list_themes, current_theme_name, buttonize,
+    ICON_PLAY, ICON_CROSS, ICON_PLUS, ICON_REFRESH, ParticleCanvas)  # S13/S12：共享主题与窗口几何（同源副本）
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -176,6 +178,12 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
 
         self._load_targets_and_templates()
         apply_theme(self, theme_name=self.cfg.get("theme"))   # S13：共享主题（读 cfg["theme"]，默认 warm）
+        buttonize(self)   # S13-v2：按钮悬停变手型
+        # S13-v3：动态像素粒子背景（底层）
+        self.particle = ParticleCanvas(self, enabled=bool(self.cfg.get("particle_bg", True)),
+                                        theme_name=self.cfg.get("theme"))
+        self.particle.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.tk.call("lower", str(self.particle))
         self._build_ui()
 
         self.title(CFG.title())
@@ -322,10 +330,10 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         b1.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(b1, text="保存为默认", command=self._save_cfg).pack(side="right", padx=4)
         ttk.Button(b1, text="恢复内置模板", command=self._reset_templates).pack(side="right", padx=4)
-        ttk.Button(b1, text="删除模板", command=self._del_template,
+        ttk.Button(b1, text="✗ 删除模板", command=self._del_template,
                    style="Danger.TButton").pack(side="right", padx=4)
         ttk.Button(b1, text="编辑模板", command=self._edit_template).pack(side="right", padx=4)
-        ttk.Button(b1, text="新增模板", command=self._add_template).pack(side="right", padx=4)
+        ttk.Button(b1, text="＋ 新增模板", command=self._add_template).pack(side="right", padx=4)
 
         self._reload_templates()
 
@@ -485,9 +493,9 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         tb.grid(row=0, column=0, sticky="sew", padx=16, pady=(0, 16))
         ttk.Button(tb, text="保存为默认", command=self._save_cfg).pack(side="right", padx=4)
         ttk.Button(tb, text="恢复内置目标", command=self._reset_targets).pack(side="right", padx=4)
-        ttk.Button(tb, text="删除目标", command=self._del_target,
+        ttk.Button(tb, text="✗ 删除目标", command=self._del_target,
                    style="Danger.TButton").pack(side="right", padx=4)
-        ttk.Button(tb, text="新增目标", command=self._add_target).pack(side="right", padx=4)
+        ttk.Button(tb, text="＋ 新增目标", command=self._add_target).pack(side="right", padx=4)
         ttk.Button(tb, text="全不选", command=lambda: self._set_all_targets(False)).pack(side="right", padx=4)
         ttk.Button(tb, text="全选", command=lambda: self._set_all_targets(True)).pack(side="right", padx=4)
 
@@ -628,6 +636,11 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.var_theme.set(actual)
         self.cfg["theme"] = actual
         CFG.save_config(self.cfg)
+        try:
+            if hasattr(self, "particle") and self.particle.winfo_exists():
+                self.particle.set_theme(actual)
+        except Exception:
+            pass
         self.var_status.set("主题已切换: %s" % actual)
 
     def _choose_dialog(self, title, prompt, options, current=None):
@@ -771,10 +784,10 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
                                         style="Bad.TLabel")
         self.lbl_plan_state.pack(side="left")
 
-        self.btn_apply = ttk.Button(act, text="执行重命名", command=self._on_apply,
+        self.btn_apply = ttk.Button(act, text="▶ 执行重命名", command=self._on_apply,
                                     style="Accent.TButton", state="disabled")
         self.btn_apply.pack(side="right", padx=4)
-        self.btn_plan = ttk.Button(act, text="生成计划", command=self._refresh_preview)
+        self.btn_plan = ttk.Button(act, text="↻ 生成计划", command=self._refresh_preview)
         self.btn_plan.pack(side="right", padx=4)
         self.btn_manual = ttk.Button(act, text="手动分类…", command=self._on_manual)
         self.btn_manual.pack(side="right", padx=4)
@@ -1092,7 +1105,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         row = ttk.Frame(top)
         row.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
         ttk.Button(row, text="列出目录下的日志", command=self._list_logs).pack(side="left", padx=(0, 8))
-        ttk.Button(row, text="清空日志目录", command=self._clear_logs,
+        ttk.Button(row, text="✗ 清空日志目录", command=self._clear_logs,
                    style="Danger.TButton").pack(side="left")
 
         un = ttk.LabelFrame(f, text="撤销（把「新文件名」改回「原文件名」）")

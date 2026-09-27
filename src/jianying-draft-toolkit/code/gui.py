@@ -35,7 +35,9 @@ from tabs.separation_tab import SeparationTab
 from tabs.paths_dialog import PathsDialog
 from core.host import StatusProbe
 from core import menus as menu_actions
-from theme import apply as apply_theme, initial_geometry, window_size, set_theme, list_themes, current_theme_name  # S13/S12：共享主题与窗口几何（同源副本）
+from theme import (apply as apply_theme, initial_geometry, window_size,
+    set_theme, list_themes, current_theme_name, buttonize,
+    ICON_PLAY, ICON_STOP, ICON_CROSS, ICON_REFRESH, ParticleCanvas)  # S13/S12：共享主题与窗口几何（同源副本）
 from columns import fit_tree_columns  # S11：表格列宽自适应（同源副本）
 
 # 拖拽支持（tkinterdnd2）。未安装时优雅降级为普通选择。
@@ -571,6 +573,11 @@ class JianYingToolkitApp:
         actual = set_theme(self.root, name)
         self.cfg["theme"] = actual
         try:
+            if hasattr(self, "particle") and self.particle.winfo_exists():
+                self.particle.set_theme(actual)
+        except Exception:
+            pass
+        try:
             path = core.config_path()
             disk = {k: self.cfg.get(k) for k in self.cfg}
             path.write_text(json.dumps(disk, ensure_ascii=False, indent=2),
@@ -639,6 +646,18 @@ class JianYingToolkitApp:
         """
         try:
             apply_theme(self.root, theme_name=self.cfg.get("theme"))
+            buttonize(self.root)
+            # S13-v3：动态像素粒子背景（延迟到布局完成）
+            def _mk_particle():
+                try:
+                    self.particle = ParticleCanvas(self.root,
+                        enabled=bool(self.cfg.get("particle_bg", True)),
+                        theme_name=self.cfg.get("theme"))
+                    self.particle.place(relx=0, rely=0, relwidth=1, relheight=1)
+                    self.root.tk.call("lower", str(self.particle))
+                except Exception:
+                    pass
+            self.root.after(120, _mk_particle)
         except Exception:
             pass
 

@@ -36,8 +36,8 @@ from tkinter import ttk
 THEMES = {
     "warm": {
         "label":      "米白暖调",
-        "BG":         "#f7f6f3",   # 窗口底
-        "SURFACE":    "#ffffff",   # 卡片 / 输入框 / 表格底
+        "BG":         "#f5f3ef",   # 窗口底（稍暖，不晃眼）
+        "SURFACE":    "#fdfcfa",   # 卡片 / 输入框 / 表格底（极淡暖白，非纯白）
         "BORDER":     "#e2dfda",   # 细边框
         "FG":         "#2b2a28",   # 正文
         "FG_DIM":     "#8a8781",   # 次要文字
@@ -50,8 +50,8 @@ THEMES = {
     },
     "cool": {
         "label":      "冷灰专业",
-        "BG":         "#f4f5f7",
-        "SURFACE":    "#ffffff",
+        "BG":         "#f2f4f7",
+        "SURFACE":    "#fbfcfd",
         "BORDER":     "#d8dde3",
         "FG":         "#1f2937",
         "FG_DIM":     "#6b7280",
@@ -162,9 +162,11 @@ def apply(root, theme_name=None):
     btn_hover = _lighten(BG, 8) if _is_dark(pal) else _darken(BG, 6)
     btn_press = _lighten(BG, 4) if _is_dark(pal) else _darken(BG, 10)
     st.map("TButton",
-           background=[("pressed", btn_press), ("active", btn_hover)],
-           lightcolor=[("pressed", btn_press)],
-           darkcolor=[("pressed", btn_press)])
+           background=[("pressed", btn_press), ("active", btn_hover),
+                       ("disabled", pal["BG"])],
+           foreground=[("disabled", pal["FG_DIM"])],
+           lightcolor=[("pressed", btn_press), ("active", btn_hover)],
+           darkcolor=[("pressed", btn_press), ("active", btn_hover)])
     # 主按钮（Accent）
     st.configure("Accent.TButton", background=ACCENT, foreground="#ffffff",
                  font=FONT_BOLD, bordercolor=ACCENT, lightcolor=ACCENT,
@@ -357,3 +359,249 @@ def window_size(win):
         return win.geometry().split("+")[0]
     except Exception:
         return ""
+
+
+# ── 按钮交互增强（S13-v2：图形按钮 + 鼠标交互）──────────────────
+
+def buttonize(root):
+    """递归给所有 ttk.Button 加 hand2 光标（悬停变手型）。
+
+    ttk.Button 默认是箭头光标，悬停没有反馈。调用一次后所有按钮
+    （含动态创建的子窗口按钮）悬停时变手型，提升可点击感。
+    幂等：重复调用无害（已绑定的按钮跳过）。
+    """
+    def _walk(w):
+        try:
+            cls = w.winfo_class()
+        except Exception:
+            return
+        if cls in ("TButton", "TCheckbutton", "TRadiobutton", "TMenubutton"):
+            try:
+                if not getattr(w, "_btn_hand_cursor", False):
+                    w.configure(cursor="hand2")
+                    w._btn_hand_cursor = True
+            except Exception:
+                pass
+        try:
+            for c in w.winfo_children():
+                _walk(c)
+        except Exception:
+            pass
+    try:
+        root.after(100, lambda: _walk(root))
+    except Exception:
+        pass
+
+
+# 常用图标（Unicode 符号，微软雅黑下单色渲染，不引第三方库）
+ICON_PLAY = "\u25b6"   # ▶ 播放/导出/执行
+ICON_STOP = "\u25a0"   # ■ 停止/中止
+ICON_DOWN = "\u2193"   # ↓ 导入/下载
+ICON_GEAR = "\u2699"   # ⚙ 设置
+ICON_CHECK = "\u2713"  # ✓ 确认/完成
+ICON_CROSS = "\u2717"  # ✗ 删除/清空/取消
+ICON_PLUS = "\uff0b"   # ＋ 新增/添加
+ICON_REFRESH = "\u21bb"  # ↻ 刷新/重新识别
+ICON_FOLDER = "\U0001f4c2"  # 📂 打开目录（emoji，Windows 下单色）
+ICON_SCAN = "\U0001f50d"    # 🔍 扫描（emoji）
+ICON_SAVE = "\U0001f4be"    # 💾 保存（emoji）
+
+
+def icon(label):
+    """给按钮文字加图标前缀。用法：text=theme.icon(theme.ICON_PLAY)+"开始导出" """
+    return label + " "
+
+
+
+# ── 动态像素粒子背景（S13-v3：视觉增强）──────────────────────────
+
+class ParticleCanvas(tk.Canvas):
+    """窗口底层动态像素粒子背景。
+
+    设计取向：
+      · 像素风——粒子是 2~4px 的小方块（不是圆点），契合"像素粒子"需求
+      · 低干扰——粒子用主题色的低饱和变体，慢速漂浮 + 渐入渐出，不抢内容视线
+      · 性能友好——默认 30 粒子 / 25fps，窗口最小化时自动暂停
+      · 主题感知——深浅主题自动切换粒子颜色（亮色主题用暗粒子，深色主题用亮粒子）
+      · 可关闭——cfg["particle_bg"]=False 时不创建
+
+    用法（在 _build_ui 最开始、所有控件之前）：
+        self.particle = ParticleCanvas(self, enabled=cfg.get("particle_bg", True))
+        self.particle.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.particle.lower()
+    """
+
+    PARTICLE_COUNT = 30      # 粒子数量
+    TICK_MS = 40             # 25fps
+    SIZE_MIN, SIZE_MAX = 2, 4  # 粒子尺寸（px，像素方块）
+    SPEED_MAX = 0.6          # 最大漂移速度（px/tick）
+    LIFE_MIN, LIFE_MAX = 120, 300  # 生命周期（tick 数）
+
+    def __init__(self, master, enabled=True, theme_name=None):
+        super().__init__(master, highlightthickness=0, bd=0)
+        self._enabled = enabled
+        self._theme_name = theme_name or "warm"
+        self._particles = []
+        self._job = None
+        self._paused = False
+        if enabled:
+            self._configure_bg()
+            self._spawn_initial()
+            self._start()
+            # 窗口最小化/恢复时暂停/继续
+            try:
+                self.bind("<Unmap>", lambda _e: self._pause())
+                self.bind("<Map>", lambda _e: self._resume())
+            except Exception:
+                pass
+
+    def _configure_bg(self):
+        """根据主题设置画布背景色和粒子调色板。"""
+        pal = THEMES.get(self._theme_name, THEMES[DEFAULT_THEME])
+        try:
+            self.configure(background=pal["BG"])
+        except Exception:
+            pass
+        # 粒子颜色：亮色主题用 ACCENT 的暗色变体 + FG_DIM；深色主题用亮色变体
+        if _is_dark(pal):
+            self._colors = [
+                _lighten(pal["ACCENT"], 30),
+                _lighten(pal["FG_DIM"], 20),
+                _lighten(pal["SELECT_BG"], 10),
+            ]
+        else:
+            self._colors = [
+                _darken(pal["ACCENT"], 10),
+                pal["FG_DIM"],
+                _darken(pal["SELECT_BG"], 5),
+            ]
+
+    def set_theme(self, theme_name):
+        """切换主题时更新背景色和粒子颜色。"""
+        self._theme_name = theme_name
+        self._configure_bg()
+        # 更新已有粒子颜色
+        for p in self._particles:
+            try:
+                self.itemconfig(p["id"], fill=p["color"])
+            except Exception:
+                pass
+
+    def _spawn_initial(self):
+        """初始生成粒子（随机位置和生命周期）。"""
+        try:
+            w = max(self.winfo_width(), 800)
+            h = max(self.winfo_height(), 600)
+        except Exception:
+            w, h = 800, 600
+        import random
+        for _ in range(self.PARTICLE_COUNT):
+            self._spawn_one(x=random.uniform(0, w), y=random.uniform(0, h),
+                            initial_life=True)
+
+    def _spawn_one(self, x=None, y=None, initial_life=False):
+        """生成一个新粒子。"""
+        import random
+        try:
+            w = max(self.winfo_width(), 800)
+            h = max(self.winfo_height(), 600)
+        except Exception:
+            w, h = 800, 600
+        if x is None:
+            x = random.uniform(0, w)
+        if y is None:
+            y = random.uniform(0, h)
+        size = random.randint(self.SIZE_MIN, self.SIZE_MAX)
+        color = random.choice(self._colors)
+        max_life = random.randint(self.LIFE_MIN, self.LIFE_MAX)
+        life = random.randint(0, max_life) if initial_life else 0
+        # 速度：慢速漂浮，带轻微向上倾向
+        angle = random.uniform(0, 6.283)
+        speed = random.uniform(0.1, self.SPEED_MAX)
+        vx = speed * 0.4  # 水平漂移慢
+        vy = -speed * 0.6  # 轻微向上飘
+        item = self.create_rectangle(x, y, x + size, y + size,
+                                      fill=color, outline="", width=0)
+        self._particles.append({
+            "id": item, "x": x, "y": y, "vx": vx, "vy": vy,
+            "size": size, "color": color, "life": life, "max_life": max_life,
+        })
+
+    def _tick(self):
+        """动画帧：更新所有粒子位置和生命周期。"""
+        if not self._enabled or self._paused:
+            return
+        try:
+            w = max(self.winfo_width(), 100)
+            h = max(self.winfo_height(), 100)
+        except Exception:
+            w, h = 800, 600
+
+        alive = []
+        for p in self._particles:
+            p["life"] += 1
+            if p["life"] >= p["max_life"]:
+                # 粒子死亡：删除并在底部生成新的
+                try:
+                    self.delete(p["id"])
+                except Exception:
+                    pass
+                continue
+            p["x"] += p["vx"]
+            p["y"] += p["vy"]
+            # 边界环绕
+            if p["x"] < -10:
+                p["x"] = w + 5
+            elif p["x"] > w + 10:
+                p["x"] = -5
+            if p["y"] < -10:
+                p["y"] = h + 5
+            elif p["y"] > h + 10:
+                p["y"] = -5
+            # 渐入渐出：生命前 15% 和后 15% 改变透明度（用颜色深浅模拟）
+            fade_ratio = 1.0
+            fade_in = int(p["max_life"] * 0.15)
+            fade_out = int(p["max_life"] * 0.85)
+            if p["life"] < fade_in:
+                fade_ratio = p["life"] / max(fade_in, 1)
+            elif p["life"] > fade_out:
+                fade_ratio = (p["max_life"] - p["life"]) / max(p["max_life"] - fade_out, 1)
+            # 用 move 移动（比 coords 快）
+            try:
+                self.move(p["id"], p["vx"], p["vy"])
+            except Exception:
+                pass
+            alive.append(p)
+
+        self._particles = alive
+        # 补充死亡的粒子
+        while len(self._particles) < self.PARTICLE_COUNT:
+            self._spawn_one(y=max(self.winfo_height() - 10, 100))
+
+        self._job = self.after(self.TICK_MS, self._tick)
+
+    def _start(self):
+        if self._job is None and self._enabled:
+            self._job = self.after(self.TICK_MS, self._tick)
+
+    def _pause(self):
+        self._paused = True
+        if self._job:
+            try:
+                self.after_cancel(self._job)
+            except Exception:
+                pass
+            self._job = None
+
+    def _resume(self):
+        if self._paused and self._enabled:
+            self._paused = False
+            self._start()
+
+    def destroy(self):
+        self._pause()
+        self._particles = []
+        try:
+            super().destroy()
+        except Exception:
+            pass

@@ -106,7 +106,7 @@ class ExportTab(BaseTab):
 
         src_row2 = ttk.Frame(src_box)
         src_row2.grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 0))
-        ttk.Button(src_row2, text="清空", width=6,
+        ttk.Button(src_row2, text="✗ 清空", width=6,
                    command=self._clear_dropped,
                    style="Danger.TButton").pack(side="left")
         ttk.Button(src_row2, text="重新识别", width=9,
@@ -199,7 +199,7 @@ class ExportTab(BaseTab):
         ttk.Entry(row_nt, textvariable=self.var_new_tpl).pack(
             side="left", padx=(0, 4), fill="x", expand=True)
         ttk.Button(row_nt, text="添加模板", command=self._add_template).pack(side="left", padx=2)
-        ttk.Button(row_nt, text="删除选中", command=self._remove_template,
+        ttk.Button(row_nt, text="✗ 删除选中", command=self._remove_template,
                    style="Danger.TButton").pack(side="left", padx=2)
         # v2.7.0（J1）：模板可命名 —— 三栏管理弹窗（模板名/内容/样例）
         ttk.Button(row_nt, text="管理…", command=self._manage_templates).pack(side="left", padx=2)

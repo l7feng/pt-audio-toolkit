@@ -83,7 +83,7 @@ class SeparationTab(BaseTab):
         # 按钮行
         btn_box = ttk.Frame(wrap)
         btn_box.pack(fill="x", padx=8, pady=6)
-        self.btn_run = ttk.Button(btn_box, text="开始分离", command=self._on_run,
+        self.btn_run = ttk.Button(btn_box, text="▶ 开始分离", command=self._on_run,
                                    style="Accent.TButton")
         self.btn_run.pack(side="left", padx=4)
         ttk.Button(btn_box, text="打开输出目录",
