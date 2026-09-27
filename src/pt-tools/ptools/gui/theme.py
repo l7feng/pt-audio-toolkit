@@ -319,6 +319,11 @@ def apply(root, theme_name=None):
     except Exception:
         pass
 
+    # v3.12.0：缓存完整色板（基础 + 派生）
+    global _full_pal
+    _full_pal = dict(pal)
+    _full_pal.update(derived_colors(pal))
+
     # 运行时切换：递归重着色原生 tk 控件（Text / Listbox / Canvas / Entry 等）
     _recolor_native(root, pal)
     return st
@@ -416,6 +421,64 @@ def _dim(color, bg):
     return _rgb_to_hex((cr * 0.45 + br * 0.55,
                          cg * 0.45 + bg_ * 0.55,
                          cb * 0.45 + bb * 0.55))
+
+
+# ── v3.12.0 派生色系统（多层背景，解决配色层次/比例问题）──────────
+
+def _blend(c1, c2, t):
+    """公开颜色混合：t=0 全 c1，t=1 全 c2。"""
+    a, b = _hex_to_rgb(c1), _hex_to_rgb(c2)
+    return _rgb_to_hex(tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3)))
+
+
+def derived_colors(pal):
+    """由基础色板派生多层背景色，返回 {色键: #hex}。
+
+    层次（从底到高）：
+      BG → BG_ALT（交替区块）→ SURFACE（卡片）→ SURFACE_ALT（卡片内嵌套）
+      → ELEVATED（悬浮/弹窗）；HOVER 为交互悬停层；ACCENT_SOFT 淡强调。
+    深色/浅色主题自动取正确方向。
+    """
+    dark = _is_dark(pal)
+    bg, fg = pal["BG"], pal["FG"]
+    surf, acc = pal["SURFACE"], pal["ACCENT"]
+    if dark:
+        bg_alt = _blend(bg, fg, 0.045)
+        surf_alt = _blend(surf, fg, 0.06)
+        elevated = _blend(surf, fg, 0.10)
+        hover = _blend(surf, fg, 0.12)
+    else:
+        bg_alt = _blend(bg, fg, 0.035)
+        surf_alt = _blend(surf, fg, 0.045)
+        elevated = _blend(surf, "#ffffff", 0.5)
+        hover = _blend(surf, acc, 0.10)
+    return {
+        "BG_ALT": bg_alt,
+        "SURFACE_ALT": surf_alt,
+        "ELEVATED": elevated,
+        "HOVER": hover,
+        "ACCENT_SOFT": _blend(acc, bg, 0.85),
+        "ACCENT_SOFTER": _blend(acc, bg, 0.92),
+        "BORDER_STRONG": _blend(pal["BORDER"], fg, 0.25),
+    }
+
+
+# 全局当前完整色板（基础 + 派生），供 widgets/界面随时取用
+_full_pal = {}
+
+
+def get_colors():
+    """取当前主题完整色板（基础色 + 派生色），未 apply 时用 warm。"""
+    if not _full_pal:
+        pal = dict(THEMES[DEFAULT_THEME])
+        pal.update(derived_colors(pal))
+        return pal
+    return dict(_full_pal)
+
+
+def color(key, default=None):
+    """按色键取当前主题颜色（含派生色）。"""
+    return get_colors().get(key, default)
 
 
 # ── S12：窗口几何（记住上次 + 首次自适应）─────────────────────

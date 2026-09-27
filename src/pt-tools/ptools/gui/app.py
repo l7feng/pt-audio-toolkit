@@ -33,6 +33,9 @@ from ptools.gui.theme import (apply as apply_theme, initial_geometry, window_siz
     set_theme, list_themes, current_theme_name, buttonize,
     ICON_PLAY, ICON_STOP, ICON_DOWN, ICON_GEAR, ICON_CHECK, ICON_CROSS,
     ICON_PLUS, ICON_REFRESH, ICON_FOLDER, ICON_SCAN, ICON_SAVE, ParticleCanvas)
+from ptools.gui.widgets import (StatusLED, Tooltip, CollapsibleFrame, IconButton,
+    ToggleSwitch, Badge, ProgressRing, attach_tree_hover, attach_drop_highlight,
+    attach_tooltip, HoverCard, draw_icon, auto_tooltip)
 from ptools.core.settings import (
     APP_DIR, BIT_DEPTHS, CREATE_NO_WINDOW, DEFAULT_DELIVERY_ROOT,
     DEFAULT_EXPORT_FORMAT, DEFAULT_FALLBACK_DURATION, DEFAULT_VIDEO_MARGIN,
@@ -227,14 +230,15 @@ class App(_DND_BASE):
             nb.add(wrap, text=text)
             return tab
 
-        self.scan_tab = _scroll_tab(ScanTab, T("tab_scan"))
-        self.export_tab = _scroll_tab(ExportTab, T("tab_export"))
-        self.library_tab = _scroll_tab(LibraryTab, T("tab_library"))
-        self.clean_tab = _scroll_tab(CleanTab, T("tab_clean"))
+        self.scan_tab = _scroll_tab(ScanTab, "🔍 " + T("tab_scan"))
+        self.export_tab = _scroll_tab(ExportTab, "⬇ " + T("tab_export"))
+        self.library_tab = _scroll_tab(LibraryTab, "📚 " + T("tab_library"))
+        self.clean_tab = _scroll_tab(CleanTab, "🧹 " + T("tab_clean"))
         self._build_log()
         self._build_statusbar()
         if not self.ptsl_on:
             self._show_warn_bar()
+        self.after(600, self._auto_enhance)
 
     def _show_warn_bar(self):
         """P1：挂出离线黄条（幂等）。"""
@@ -511,6 +515,22 @@ class App(_DND_BASE):
         if self._log_open:
             body.pack(fill="both", expand=False, pady=(2, 0))
 
+    def _auto_enhance(self):
+        """v3.12.0：遍历全部 Treeview 加行 hover 高亮（鼠标交互增强）。"""
+        def walk(w):
+            try:
+                if isinstance(w, ttk.Treeview):
+                    attach_tree_hover(w)
+            except Exception:
+                pass
+            try:
+                for c in w.winfo_children():
+                    walk(c)
+            except Exception:
+                pass
+        walk(self)
+        auto_tooltip(self)
+
     def _build_statusbar(self):
         bar = ttk.Frame(self, padding=PAD_STATUSBAR)
         bar.pack(fill="x")
@@ -518,6 +538,8 @@ class App(_DND_BASE):
         self.status_sess_var = tk.StringVar(value=T("status_session") % "—")
         self.status_prof_var = tk.StringVar(value=T("status_profile") % "—")
         self.status_skills_var = tk.StringVar(value="…")
+        self.ptsl_led = StatusLED(bar, state="off", size=12)
+        self.ptsl_led.pack(side="left", padx=(0, PAD_SM))
         ttk.Label(bar, textvariable=self.status_ptsl_var, font=FONT_SMALL).pack(side="left")
         ttk.Label(bar, textvariable=self.status_sess_var,
                   style="Small.TLabel").pack(side="left", padx=PAD_MD)
@@ -697,6 +719,8 @@ class App(_DND_BASE):
         on = ptsl_online()
         self.ptsl_on = on
         self.status_ptsl_var.set(T("status_ptsl_on") if on else T("status_ptsl_off"))
+        if getattr(self, "ptsl_led", None):
+            self.ptsl_led.set_state("ok" if on else "err")
         # P1：离线黄条随探测结果收放
         if on:
             self._hide_warn_bar()
@@ -1093,11 +1117,11 @@ class ExportTab(ttk.Frame):
                    self.cb_bus, self.cb_track):
             _w.pack(side="left", padx=3)
 
-        # -- 工程
-        row2b = ttk.Frame(self)
-        row2b.pack(fill="x", pady=(4, 0))
-        ttk.Label(row2b, text=T("e_session"),
-                  foreground="#555").pack(side="left")
+        # -- 工程（v3.12.0：可折叠面板，默认用当前工程）
+        sess_cf = CollapsibleFrame(self, title=T("e_session"), open=True)
+        sess_cf.pack(fill="x", pady=(PAD_MD, 0))
+        row2b = ttk.Frame(sess_cf.body)
+        row2b.pack(fill="x", padx=PAD_SM, pady=(PAD_SM, PAD_SM))
         self.sess_mode_var = app.v("sess_mode", "current")
         ttk.Radiobutton(row2b, text=T("e_sess_current"), value="current",
                         variable=self.sess_mode_var,

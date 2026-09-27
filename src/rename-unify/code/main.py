@@ -44,6 +44,9 @@ from theme import (apply as apply_theme, initial_geometry, set_theme,
     PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL,
     list_themes, current_theme_name, buttonize,
     ICON_PLAY, ICON_CROSS, ICON_PLUS, ICON_REFRESH, ParticleCanvas, FONT_SMALL)  # S13/S12：共享主题与窗口几何（同源副本）
+from widgets import (StatusLED, Tooltip, CollapsibleFrame, IconButton, ToggleSwitch,
+    Badge, ProgressRing, attach_tree_hover, attach_drop_highlight, attach_tooltip,
+    HoverCard, draw_icon, auto_tooltip)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -233,11 +236,11 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.tab_run = ScrollableFrame(nb, padding=0)
         self.tab_undo = ScrollableFrame(nb, padding=0)
         self.tab_folder = ScrollableFrame(nb, padding=0)   # v1.7.0：合并进来的工程文件夹建树
-        nb.add(self.tab_rule, text="项目信息与模板")
-        nb.add(self.tab_target, text="目标与归位")
-        nb.add(self.tab_run, text="预览与执行")
-        nb.add(self.tab_undo, text="回溯与撤销")
-        nb.add(self.tab_folder, text="工程文件夹")
+        nb.add(self.tab_rule, text="📋 项目信息与模板")
+        nb.add(self.tab_target, text="🎯 目标与归位")
+        nb.add(self.tab_run, text="▶ 预览与执行")
+        nb.add(self.tab_undo, text="↩ 回溯与撤销")
+        nb.add(self.tab_folder, text="📁 工程文件夹")
 
         self._build_rule_tab()
         self._build_target_tab()
@@ -249,7 +252,9 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         bar = ttk.Frame(self)
         bar.pack(fill="x", side="bottom", padx=PAD_LG, pady=(0, PAD_SM))
         self.var_status = tk.StringVar(value="就绪")
-        ttk.Label(bar, textvariable=self.var_status, style="Hint.TLabel").pack(side="left")
+        self.status_led = StatusLED(bar, state="ok", size=12)
+        self.status_led.pack(side="left", padx=(0, PAD_SM))
+        ttk.Label(bar, textvariable=self.var_status, style="Small.TLabel").pack(side="left")
         # S13：主题选择下拉（无菜单栏，放状态栏右侧）
         self.var_theme = tk.StringVar(value=current_theme_name() or self.cfg.get("theme") or "warm")
         theme_box = ttk.Frame(bar)
@@ -261,7 +266,24 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.cb_theme.pack(side="left", padx=(4, 0))
         self.cb_theme.bind("<<ComboboxSelected>>", self._on_theme_change)
         ttk.Label(bar, text="配置文件: " + CFG.CONFIG_PATH,
-                  foreground="#888").pack(side="right")
+                  style="Small.TLabel").pack(side="right")
+        self.after(600, self._auto_enhance)
+
+    def _auto_enhance(self):
+        """v3.12.0：遍历全部 Treeview 加行 hover 高亮。"""
+        def walk(w):
+            try:
+                if isinstance(w, ttk.Treeview):
+                    attach_tree_hover(w)
+            except Exception:
+                pass
+            try:
+                for c in w.winfo_children():
+                    walk(c)
+            except Exception:
+                pass
+        walk(self)
+        auto_tooltip(self)
 
     # ============ 页1：项目信息与模板 ============
     def _build_rule_tab(self):

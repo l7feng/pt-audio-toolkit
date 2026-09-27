@@ -39,6 +39,9 @@ from theme import (apply as apply_theme, initial_geometry, window_size,
     PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL, FONT_TITLE, FONT_SMALL,
     set_theme, list_themes, current_theme_name, buttonize,
     ICON_PLAY, ICON_STOP, ICON_CROSS, ICON_REFRESH, ParticleCanvas)  # S13/S12：共享主题与窗口几何（同源副本）
+from widgets import (StatusLED, Tooltip, CollapsibleFrame, IconButton, ToggleSwitch,
+    Badge, ProgressRing, attach_tree_hover, attach_drop_highlight, attach_tooltip,
+    HoverCard, draw_icon, auto_tooltip)
 from columns import fit_tree_columns  # S11：表格列宽自适应（同源副本）
 
 # 拖拽支持（tkinterdnd2）。未安装时优雅降级为普通选择。
@@ -673,15 +676,24 @@ class JianYingToolkitApp:
         self.lbl_status = ttk.Label(head, textvariable=self.var_status,
                                     foreground="#666", cursor="hand2")
         self.lbl_status.pack(side="right")
+        # v3.12.0：PT / 剪映 双状态指示灯
+        led_box = ttk.Frame(head)
+        led_box.pack(side="right", padx=(0, PAD_SM))
+        self.pt_led = StatusLED(led_box, state="off", size=12)
+        self.pt_led.pack(side="left", padx=2)
+        self.jy_led = StatusLED(led_box, state="off", size=12)
+        self.jy_led.pack(side="left", padx=2)
         self.lbl_status.bind("<Button-1>", lambda _e: self._refresh_status())
 
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True, padx=PAD_LG, pady=(PAD_MD, PAD_MD))
         self.notebook = nb
 
+        _tab_icons = {ExportTab: "⬇", ImportTab: "⬆",
+                      SeparationTab: "🎵"}
         for cls in (ExportTab, ImportTab, SeparationTab):   # v2.8.0（J11）：人声分离页
             tab = cls(nb, self)
-            nb.add(tab, text=tab.title)
+            nb.add(tab, text=_tab_icons.get(cls, "") + " " + tab.title)
             self._tabs.append(tab)
 
         nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -690,13 +702,14 @@ class JianYingToolkitApp:
         foot = ttk.Frame(self.root, padding=(PAD_LG, 0, PAD_LG, PAD_MD))
         foot.pack(fill="x")
         ttk.Label(foot, text=f"配置文件：{core.CONFIG_PATH}",
-                  foreground="#999").pack(side="left")
+                  style="Small.TLabel").pack(side="left")
         self.btn_refresh = ttk.Button(foot, text="刷新状态",
                                        command=self._refresh_status)
         self.btn_refresh.pack(side="right", padx=(0, 8))
         self.btn_save_all = ttk.Button(foot, text="保存全部配置",
                                        command=self.save_all)
         self.btn_save_all.pack(side="right")
+        self.root.after(700, lambda: auto_tooltip(self.root))
 
     def _on_tab_changed(self, _evt=None):
         tab = self._current_tab()
@@ -762,6 +775,9 @@ class JianYingToolkitApp:
             "剪映 " + ("运行中（导入前请退出）" if jy else "未运行"),
         ]
         self.var_status.set(" ｜ ".join(parts))
+        if getattr(self, "pt_led", None):
+            self.pt_led.set_state("ok" if pt[0] else "err")
+            self.jy_led.set_state("warn" if jy else "ok")
         # 探测结果回来后，让当前页的门控（按钮启用/禁用）跟着刷新 ——
         # 各页 refresh_states 现在读的是探测缓存，必须有人通知它们「有结果了」。
         tab = self._current_tab()
