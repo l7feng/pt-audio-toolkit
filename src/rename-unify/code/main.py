@@ -850,9 +850,12 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
             ttk.Entry(info_f, width=12,
                       textvariable=sv(key, default)).grid(row=0, column=i * 2 + 1, padx=4)
         ttk.Label(info_f, text="集数命名").grid(row=1, column=0, sticky="w", **pad)
+        self._ft_ep_label_by_key = {k: lbl for k, lbl in FT.EP_NAMING_MODES}
+        self._ft_ep_key_by_label = {lbl: k for k, lbl in FT.EP_NAMING_MODES}
         cb = ttk.Combobox(info_f, width=22, state="readonly",
-                          values=[m[0] for m in FT.EP_NAMING_MODES])
-        cb.set(str(ft.get("ep_naming", "name_num")))
+                          values=[lbl for _k, lbl in FT.EP_NAMING_MODES])
+        cb.set(self._ft_ep_label_by_key.get(str(ft.get("ep_naming", "name_num")),
+                                            self._ft_ep_label_by_key["name_num"]))
         cb.grid(row=1, column=1, columnspan=3, sticky="w", padx=4)
         cb.bind("<<ComboboxSelected>>", lambda _e: self._ft_refresh())
         self.ft_ep_naming = cb
@@ -861,11 +864,11 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         opt_f = ttk.LabelFrame(f, text=" 选项 ")
         opt_f.pack(fill="x", padx=10, pady=(0, 6))
         ttk.Label(opt_f, text="模板 ptx").grid(row=0, column=0, sticky="w", **pad)
-        self.ft_ptx = tk.StringVar(value=str(ft.get("ptx_mode", "原样复制")))
+        self.ft_ptx = tk.StringVar(value=FT.norm_ptx_mode(ft.get("ptx_mode", "原样复制")))
         ptx_row = ttk.Frame(opt_f)
         ptx_row.grid(row=0, column=1, sticky="w", padx=4)
-        for label, val in FT.PTX_MODES:
-            ttk.Radiobutton(ptx_row, text=label, variable=self.ft_ptx, value=val,
+        for key, label in FT.PTX_MODES:
+            ttk.Radiobutton(ptx_row, text=label, variable=self.ft_ptx, value=key,
                             command=self._ft_refresh).pack(side="left", padx=6)
         self.ft_skip = tk.BooleanVar(value=bool(ft.get("skip_existing", True)))
         ttk.Checkbutton(opt_f, text="已存在项跳过", variable=self.ft_skip
@@ -896,10 +899,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
     # ---- 页5 辅助 ----
     def _ft_collect(self):
         """页5 字段 -> 配置 dict（保存时调用）。"""
-        try:
-            eps_mode = self.ft_ep_naming.get()
-        except Exception:
-            eps_mode = "name_num"
+        eps_mode = self._ft_ep_key()
         return {
             "template_root": self.ft["template_root"].get().strip(),
             "output_root": self.ft["output_root"].get().strip(),
@@ -911,6 +911,14 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
             "ptx_mode": self.ft_ptx.get(),
             "skip_existing": bool(self.ft_skip.get()),
         }
+
+    def _ft_ep_key(self):
+        """页5 集数命名下拉（显示中文标签）→ 内部键 num/name_num/..."""
+        try:
+            lbl = self.ft_ep_naming.get()
+        except Exception:
+            return "name_num"
+        return getattr(self, "_ft_ep_key_by_label", {}).get(lbl, "name_num")
 
     def _ft_set_prev(self, text):
         self.ft_prev.configure(state="normal")
@@ -961,7 +969,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         project_root, steps, warns, ep_names = FT.plan_creation(
             eps, g("name"), g("seq"), g("level"), g("date"), g("user"),
             g("output_root"), g("template_root"),
-            ptx_mode=self.ft_ptx.get(), ep_naming=self.ft_ep_naming.get())
+            ptx_mode=self.ft_ptx.get(), ep_naming=self._ft_ep_key())
         return eps, errs, project_root, steps, warns, ep_names
 
     def _ft_refresh(self):

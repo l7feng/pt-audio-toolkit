@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""GUI 冒烟总调度：4 个界面逐个起（独立子进程 + 超时），失败继续下一条。"""
+"""GUI 冒烟总调度：3 个界面逐个起（独立子进程 + 超时），失败继续下一条。"""
 import os
 import subprocess
 import sys
@@ -9,7 +9,8 @@ import _common as C                                    # noqa: E402
 
 PY = C.PY
 HERE = os.path.dirname(os.path.abspath(__file__))
-TARGETS = [("pt-tools", "pt"), ("pt-project-folder-builder", "folder"),
+# 2026-09-27：folder-builder 已退役（能力并入 rename-unify 第 5 页签）
+TARGETS = [("pt-tools", "pt"),
            ("rename-unify", "rename"), ("jianying-draft-toolkit", "jy")]
 
 for label, key in TARGETS:

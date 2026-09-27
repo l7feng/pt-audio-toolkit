@@ -1,6 +1,7 @@
 # tests/ —— pt-audio-toolkit 回归测试
 
-四个工具（pt-tools / pt-project-folder-builder / jianying-draft-toolkit / rename-unify）的回归测试。
+三个工具（pt-tools / jianying-draft-toolkit / rename-unify）的回归测试。
+（pt-project-folder-builder 已于 v3.0.0 并入 rename-unify 第 5 页签「工程文件夹」，建树用例归 test_foldertree_merge.py。）
 
 > 这批脚本原在临时目录 `D:\My-Temporary\pt-toolkit-test\`，临时目录随时会被清理，
 > 而它是当时唯一的测试资产 —— 2026-09-23 收编入库（改进方案 A1），并顺手做了跨机化（A2）。

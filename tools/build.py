@@ -1,39 +1,54 @@
 # -*- coding: utf-8 -*-
-"""pt-audio-toolkit 统一打包入口（四工具 → PyInstaller onedir + windowed）。
+"""pt-audio-toolkit 统一打包入口（三工具 → PyInstaller onedir + windowed）。
 
 用法
 ----
-    python tools/build.py                       # 构建全部四个工具
-    python tools/build.py pt-tools rename-unify # 只构建指定工具
-    python tools/build.py --version 1.1.0 --date 20260923
+    python tools/build.py                          # 构建全部三个工具
+    python tools/build.py pt-tools rename-unify    # 只构建指定工具
+    python tools/build.py --version 3.3.0 --date 20260928
     python tools/build.py --out-root D:\\somewhere\\exe
     python tools/build.py --py C:\\path\\to\\python.exe
 
-输出布局（默认）
-----------------
-    <out-root>/audio-toolkit-v<版本>-<日期>/<工具名>/
-        <工具名>.exe  +  _internal/            （通用）
-        pt-tools/_internal/skills/              （内置技能脚本，开箱即用）
-        jianying-draft-toolkit/tools/           （jy-draftc 解密器）
+出口布局（2026-09-27 人类裁决①甲：通用工具与 PT/剪映分家，工具名改中文）
+--------------------------------------------------------------------
+    <out-root>/音频工具箱-v<仓库版本>-<日期>/
+        Pro Tools工具箱/    Pro Tools工具箱.exe   +  _internal/
+        剪映工程工具包/       剪映工程工具包.exe      +  _internal/ +  tools/
+    <out-root>/统一命名工具-v<该工具版本>-<日期>/
+        统一命名工具/         统一命名工具.exe         +  _internal/
 
-    ⚠️ 分发时**整个工具文件夹一起给** —— `_internal/` 必须与 exe 同级。
+**剧本双语拆分工具不在本仓**：它是独立仓库
+（``D:\\Ai-Files\\GitHub-warehouse\\script-splitter``，有各自的 GitHub 远端），
+由它自己的 ``build_exe.py`` 构建到
+``<out-root>/剧本双语拆分工具-v<版本>-<日期>/``，本脚本不碰。
+
+命名要点
+--------
+* PyInstaller 的 ``--name`` 一律保持 **ASCII**（仓库内目录与入口名都是英文，
+  也避开非 ASCII 变量名的坑）；**打包完成后由本脚本统一改名成中文**。
+* 改名安全：onedir 产物靠 ``os.path.dirname(sys.executable)`` 定位 ``_internal``
+  （见 ``src/pt-tools/ptools/core/paths.py``），整目录一起改名不影响运行。
+* 出口**根目录**（默认 ``D:\\Ai-Files\\Agent-Preset\\exe``）保持 ASCII ——
+  桌面快捷方式指向的是根目录；只在叶子层用中文。
+* 旧产物一律**改名保留**（``<内部名>.prev-<时间戳>``）而非删除。
 
 为什么不用各目录的 build.ps1
 ----------------------------
-PowerShell 把原生程序的 stderr 当错误流，配 `$ErrorActionPreference=Stop` 时，
-PyInstaller 打出第一行 `INFO:` 就会触发 NativeCommandError 而**静默中断**
+PowerShell 把原生程序的 stderr 当错误流，配 ``$ErrorActionPreference=Stop`` 时，
+PyInstaller 打出第一行 ``INFO:`` 就会触发 NativeCommandError 而**静默中断**
 （表现为只输出 "building ..." 就退出）。四个 build.ps1 里有三份都在跟这个坑搏斗
 （rename-unify 那份还专门写了一段注释解释它，并单独把 ErrorActionPreference
 降级成 Continue 绕过）。
 
-本脚本一律直调 `python -m PyInstaller`，逐工具取 returncode，
+本脚本一律直调 ``python -m PyInstaller``，逐工具取 returncode，
 失败时打印「工具名 + 返回码 + 关键 stderr 行」，**绝不静默**。
 
-四个旧 build.ps1 已降级为转发本脚本的薄壳，既有调用方式（`.\\build.ps1`）不变。
+各目录的 build.ps1 已降级为转发本脚本的薄壳，既有调用方式（``.\\build.ps1``）不变。
 """
 import argparse
 import datetime
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,7 +63,13 @@ for _s in (sys.stdout, sys.stderr):
 
 REPO = Path(__file__).resolve().parent.parent
 
-# 每个工具：入口 / PyInstaller --name / 额外参数 / 后置动作
+# 出口家族：PT 工具箱与剪映工具包是同一条流水线的两端，共用一个版本目录（跟仓库
+# 版本走）；其余工具各自独立目录（版本用工具自己的 APP_VERSION）。
+FAMILY_AUDIO = "audio"
+FAMILY_SOLO = "solo"
+
+# 每个工具：入口 / PyInstaller --name / 额外参数 / 后置动作 /
+#          出口家族 / 中文展示名（= 出口文件夹名 = exe 名）/ 版本定义文件
 TARGETS = [
     {
         "key": "pt-tools",
@@ -56,13 +77,9 @@ TARGETS = [
         "name": "pt-tools",
         "args": ["--hidden-import", "tkinterdnd2", "--collect-data", "tkinterdnd2"],
         "post": "pt_tools_skills",
-    },
-    {
-        "key": "pt-project-folder-builder",
-        "entry": "src/pt-project-folder-builder/folder_builder_gui.py",
-        "name": "pt-project-folder-builder",
-        "args": [],
-        "post": None,
+        "family": FAMILY_AUDIO,
+        "cn": "Pro Tools工具箱",
+        "version_file": "src/pt-tools/ptools/core/settings.py",
     },
     {
         "key": "jianying-draft-toolkit",
@@ -70,6 +87,9 @@ TARGETS = [
         "name": "jianying-draft-toolkit",
         "args": ["--hidden-import", "tkinterdnd2", "--collect-data", "tkinterdnd2"],
         "post": "jianying_tools",
+        "family": FAMILY_AUDIO,
+        "cn": "剪映工程工具包",
+        "version_file": "src/jianying-draft-toolkit/code/main.py",
     },
     {
         "key": "rename-unify",
@@ -78,8 +98,17 @@ TARGETS = [
         "args": ["--paths", "src/rename-unify/code",
                  "--hidden-import", "tkinterdnd2", "--collect-data", "tkinterdnd2"],
         "post": None,
+        "family": FAMILY_SOLO,
+        "cn": "统一命名工具",
+        "version_file": "src/rename-unify/code/config.py",
     },
 ]
+
+# 家族 → {"dir": 出口目录名前缀（None = 用工具自己的中文名）, "ver": 版本来源}
+FAMILIES = {
+    FAMILY_AUDIO: {"dir": "音频工具箱", "ver": "repo"},
+    FAMILY_SOLO: {"dir": None, "ver": "tool"},
+}
 
 LOG = []
 
@@ -91,13 +120,41 @@ def say(msg=""):
 
 # ── 版本 ─────────────────────────────────────────────────────
 def repo_version():
-    """仓库级版本：读仓库根 VERSION 文件（纯文本，如 `1.1.0`）。"""
+    """仓库级版本：读仓库根 VERSION 文件（纯文本，如 `3.3.0`）。"""
     p = REPO / "VERSION"
     if p.is_file():
         v = p.read_text(encoding="utf-8").strip()
         if v:
             return v
     return "0.0.0"
+
+
+_VERSION_RE = re.compile(r"""^APP_VERSION\s*=\s*["']([^"']+)["']""", re.M)
+
+
+def tool_version(t):
+    """工具自己的版本：从其源码里的 `APP_VERSION = "x.y.z"` 解析。
+
+    独立家族（统一命名工具等）的出口目录名带自己的版本号，必须与窗口标题里
+    显示的一致，所以这里**读源码**而不是在打包脚本里另抄一份（抄一份必然漂移）。
+    """
+    p = REPO / t["version_file"]
+    try:
+        m = _VERSION_RE.search(p.read_text(encoding="utf-8"))
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    say("[WARN] %s 读不到版本（%s），出口目录版本号回落 0.0.0" % (t["key"], t["version_file"]))
+    return "0.0.0"
+
+
+def family_dir(t, out_root, repo_ver, date):
+    """该工具所属家族的出口目录（家族目录 = 版本目录，内含各中文工具文件夹）。"""
+    fam = FAMILIES[t["family"]]
+    ver = repo_ver if fam["ver"] == "repo" else tool_version(t)
+    label = fam["dir"] or t["cn"]
+    return Path(out_root) / ("%s-v%s-%s" % (label, ver, date))
 
 
 # ── 构建解释器自检 ───────────────────────────────────────────
@@ -126,18 +183,18 @@ def check_builder(py):
     return problems
 
 
-# ── 后置动作 ─────────────────────────────────────────────────
-def post_pt_tools_skills(out_root):
-    """把三个技能脚本内置到 _internal/skills/<skill>/scripts/（PathResolver 的查找布局）。
+# ── 后置动作（只对构建成功的工具做）──────────────────────────
+def post_pt_tools_skills(out_root, t):
+    """把四个技能脚本内置到 _internal/skills/<skill>/scripts/（PathResolver 的查找布局）。
 
     来源取**仓库内** `src/pt-tools/skills/`（唯一真源）。
     外部 `D:\\Ai-Files\\Agent-Preset\\Skills\\protools-skills\\` 是**技能生效区**，
-    2026-09-23 已逐文件核对 MD5，6 个脚本与仓内完全一致 —— 因此从仓内复制不会引入旧版。
+    2026-09-23 已逐文件核对 MD5，脚本与仓内完全一致 —— 因此从仓内复制不会引入旧版。
 
     注意：venv（含 py-ptsl）**不打包** —— 体积大且属运行时环境。
     故 exe 自带脚本、但运行仍需一个含 venv 的技能目录（见 pt-tools 的「设置 > 技能目录」）。
     """
-    dst_root = out_root / "pt-tools" / "_internal" / "skills"
+    dst_root = Path(out_root) / t["cn"] / "_internal" / "skills"
     src_root = REPO / "src" / "pt-tools" / "skills"
     copied = []
     for sk in ("pt-scanner", "pt-exporter", "pt-cleaner", "pt-clips"):
@@ -162,14 +219,14 @@ def post_pt_tools_skills(out_root):
     return len(copied) > 0
 
 
-def post_jianying_tools(out_root):
+def post_jianying_tools(out_root, t):
     """复制 tools/（jy-draftc 解密器）到 exe 同级。
 
     onedir 而非 onefile 的原因就在这里：jy-draftc 运行时要把剪映安装路径
     写进 .env，需要 exe 旁有**真实目录**（onefile 会解到临时目录且被清理）。
     """
     src = REPO / "src" / "jianying-draft-toolkit" / "tools"
-    dst = out_root / "jianying-draft-toolkit" / "tools"
+    dst = Path(out_root) / t["cn"] / "tools"
     if dst.is_dir():
         shutil.rmtree(dst, ignore_errors=True)
     shutil.copytree(src, dst)
@@ -185,7 +242,7 @@ POST = {
 
 
 # ── 单工具构建 ───────────────────────────────────────────────
-def build_one(py, t, out_root, work_root, spec_dir, staging_root):
+def build_one(py, t, out_root, work_root, spec_dir, staging_root, run_id):
     name = t["name"]
     entry = REPO / t["entry"]
     say()
@@ -207,7 +264,9 @@ def build_one(py, t, out_root, work_root, spec_dir, staging_root):
            "--distpath", str(staging_root),
            "--workpath", str(work_root / name),
            "--specpath", str(spec_dir)]
-    cmd += [str(x) if x.startswith("src/") else x for x in t["args"]]
+    # args 里的仓库相对路径（如 --paths src/rename-unify/code）转绝对路径：
+    # PyInstaller 以**当前工作目录**解析这些参数，脚本从别处调用时会找不到
+    cmd += [str(REPO / x) if x.startswith("src/") else x for x in t["args"]]
     cmd.append(str(entry))
 
     t0 = datetime.datetime.now()
@@ -217,14 +276,24 @@ def build_one(py, t, out_root, work_root, spec_dir, staging_root):
 
     built = staging_root / name
     ok = (p.returncode == 0) and (built / (name + ".exe")).is_file()
+    dst = Path(out_root) / t["cn"]
     if ok:
-        dst = out_root / name
         if dst.exists():
-            prev = out_root / ("%s.prev-%s" % (name, staging_root.name))
+            # 保留名用内部 ASCII 名，避免中文目录里出现「中文.prev-时间戳」这种
+            # 后续脚本难以辨认的名字
+            prev = dst.with_name("%s.prev-%s" % (name, run_id))
             dst.rename(prev)
             say("[keep] 旧产物已改名保留（未删除）：%s" % prev.name)
         shutil.move(str(built), str(dst))
-    exe = out_root / name / (name + ".exe")
+        # 打包后统一改名：exe 与所在文件夹同名（中文），见模块 docstring「命名要点」
+        old_exe = dst / (name + ".exe")
+        new_exe = dst / (t["cn"] + ".exe")
+        if old_exe.is_file():
+            if new_exe.exists():
+                new_exe.unlink()
+            old_exe.rename(new_exe)
+            say("[cn] exe 已改名：%s -> %s" % (old_exe.name, new_exe.name))
+    exe = dst / (t["cn"] + ".exe")
     say("[%s] %s（%.0f 秒）" % ("OK" if ok else "FAIL", exe if ok else "未产出 exe", dt))
     if not ok:
         # 关键：打印工具名 + 返回码 + 末尾 stderr，绝不静默
@@ -237,7 +306,7 @@ def build_one(py, t, out_root, work_root, spec_dir, staging_root):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="pt-audio-toolkit 四工具统一打包",
+        description="pt-audio-toolkit 三工具统一打包",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("tools", nargs="*", help="要构建的工具名（缺省=全部）")
     ap.add_argument("--out-root", default=os.environ.get("PT_EXE_ROOT",
@@ -254,16 +323,13 @@ def main():
     args = ap.parse_args()
 
     version = args.version or repo_version()
-        # 2026-09-27：出口目录曾人工改名 audio-toolkit-*（内含剪映/剧本工具，
-    # 「pt-」前缀名不副实）；这里改根因，让后续构建自动一致。
-    out_root = Path(args.out_root) / ("audio-toolkit-v%s-%s" % (version, args.date))
     work_root = Path(args.work) / "work"
     spec_dir = Path(args.work) / "spec"
 
     say("pt-audio-toolkit 统一打包")
     say("  仓库     : %s" % REPO)
     say("  版本     : %s（%s）" % (version, "命令行指定" if args.version else "VERSION 文件"))
-    say("  出口     : %s" % out_root)
+    say("  出口根   : %s" % args.out_root)
     say("  解释器   : %s" % args.py)
     say()
 
@@ -287,7 +353,17 @@ def main():
         say("没有匹配到任何工具。")
         return 2
 
-    out_root.mkdir(parents=True, exist_ok=True)
+    # 2026-09-27（人类裁决①甲）：出口改为**按家族分目录** —— PT 工具箱与剪映工具包
+    # 共用「音频工具箱-v<仓库版本>-<日期>」，统一命名工具等通用工具各自独立目录，
+    # 不再与 PT/剪映挤在同一个大目录里。
+    out_roots = {}
+    for t in wanted:
+        out_roots[t["key"]] = family_dir(t, args.out_root, version, args.date)
+    for d in sorted({str(v) for v in out_roots.values()}):
+        Path(d).mkdir(parents=True, exist_ok=True)
+        say("  出口目录：%s" % d)
+    say()
+
     spec_dir.mkdir(parents=True, exist_ok=True)
 
     # 每次构建用全新的 staging：PyInstaller 会删除 --distpath 下的同名目录，
@@ -299,8 +375,8 @@ def main():
     results = {}
     for t in wanted:
         try:
-            results[t["key"]] = build_one(args.py, t, out_root, work_root,
-                                          spec_dir, staging_root)
+            results[t["key"]] = build_one(args.py, t, out_roots[t["key"]],
+                                          work_root, spec_dir, staging_root, run_id)
         except Exception as e:
             say("[FAIL] %s 构建异常：%s" % (t["key"], e))
             results[t["key"]] = False
@@ -309,7 +385,7 @@ def main():
     for t in wanted:
         if results.get(t["key"]) and t.get("post"):
             try:
-                results[t["key"] + ":post"] = POST[t["post"]](out_root)
+                results[t["key"] + ":post"] = POST[t["post"]](out_roots[t["key"]], t)
             except Exception as e:
                 say("[FAIL] %s 后置异常：%s" % (t["key"], e))
                 results[t["key"] + ":post"] = False
@@ -322,12 +398,15 @@ def main():
         say("  %-32s %s" % (k, "OK" if v else "FAIL"))
     say()
     for t in wanted:
-        d = out_root / t["name"]
+        d = out_roots[t["key"]] / t["cn"]
         if d.is_dir():
             n = sum(len(fs) for _r, _dd, fs in os.walk(d))
             mb = sum(os.path.getsize(os.path.join(r, f))
                      for r, _dd, fs in os.walk(d) for f in fs) / 1048576.0
-            say("  %-32s %6.1f MB  %4d 文件" % (t["name"] + "/", mb, n))
+            say("  %-32s %6.1f MB  %4d 文件" % (t["cn"] + "/", mb, n))
+    say()
+    say("  剧本双语拆分工具不在本仓 —— 由 D:\\Ai-Files\\GitHub-warehouse\\script-splitter")
+    say("  的 build_exe.py 自行构建到 剧本双语拆分工具-v<版本>-<日期>\\ 。")
 
     log_path = Path(args.work) / "build.log"
     try:

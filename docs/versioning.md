@@ -6,14 +6,14 @@
 
 ## 规则
 
-1. **工具版本（APP_VERSION）**：`pt-tools` / `pt-project-folder-builder` /
+1. **工具版本（APP_VERSION）**：`pt-tools` /
    `jianying-draft-toolkit` / `rename-unify` 各自独立演进，谁改谁升
    （修 bug 升 patch，加功能升 minor，破坏性升 major）。
 2. **仓库版本（VERSION 文件）**：只在**发版日**由打包发起人统一改一次，
-   当轮四个工具的版本以 CHANGELOG 的对照行为准，不强求与 VERSION 相等。
-3. **CHANGELOG 每轮必登记**「仓库版本 | 日期 | 四工具版本对照 | 要点」一行，
+   当轮三个工具的版本以 CHANGELOG 的对照行为准，不强求与 VERSION 相等。
+3. **CHANGELOG 每轮必登记**「仓库版本 | 日期 | 三工具版本对照 | 要点」一行，
    这是两轨之间唯一的权威对照表。
-4. exe 出口目录名跟仓库版本：`Agent-Preset\exe\pt-audio-toolkit-v<仓库版本>-<日期>\`。
+4. exe 出口：`Agent-Preset\exe\` 下按家族分目录——PT/剪映共用 `音频工具箱-v<仓库版本>-<日期>\`，统一命名工具独立 `统一命名工具-v<工具版本>-<日期>\`。
 
 ## 判定口径速查
 

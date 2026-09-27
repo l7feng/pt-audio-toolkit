@@ -16,48 +16,39 @@ C.ensure_tk()          # folder_builder_gui / ptools.gui.app 都 import tkinter
 SRC = str(C.SRC)
 case = C.case
 
-# ───────── F6：folder-builder 根名解析 ─────────
-sys.path.insert(0, os.path.join(SRC, "pt-project-folder-builder"))
-import folder_builder_gui as fb                        # noqa: E402
+# ───────── F6：folder-builder 根名解析（已并入 rename-unify/code/foldertree.py） ─────────
+sys.path.insert(0, os.path.join(SRC, "rename-unify", "code"))
+import foldertree as FT                                # noqa: E402
 
 
 @case("F6 根名解析：标准形态 15-测试D_20260925_7F")
 def f6_standard():
-    r = fb.parse_project_root_name("15-测试D_20260925_7F")
+    r = FT.parse_project_root_name("15-测试D_20260925_7F")
     assert r == {"name": "测试", "level": "D",
                  "date": "20260925", "user": "7F"}, r
 
 
 @case("F6 根名解析：结尾非 ABCD → 整体算项目名")
 def f6_no_level():
-    r = fb.parse_project_root_name("3-星际穿越_20260901_7F")
+    r = FT.parse_project_root_name("3-星际穿越_20260901_7F")
     assert r["name"] == "星际穿越" and r["level"] == "", r
     assert r["date"] == "20260901" and r["user"] == "7F", r
 
 
 @case("F6 根名解析：形态不符（纯数字/无序号/空/缺日期段）→ None")
 def f6_bad():
-    assert fb.parse_project_root_name("15") is None
-    assert fb.parse_project_root_name("测试D_20260925_7F") is None
-    assert fb.parse_project_root_name("15-测试D") is None
-    assert fb.parse_project_root_name("") is None
-    assert fb.parse_project_root_name(None) is None
+    assert FT.parse_project_root_name("15") is None
+    assert FT.parse_project_root_name("测试D_20260925_7F") is None
+    assert FT.parse_project_root_name("15-测试D") is None
+    assert FT.parse_project_root_name("") is None
+    assert FT.parse_project_root_name(None) is None
 
 
 @case("F6 根名解析：单字母项目名不误拆等级")
 def f6_single_letter():
     # 项目名本身只有 1 个字符时不能把名字拆没（len(body) > 1 才拆等级）
-    r = fb.parse_project_root_name("7-D_20260925_7F")
+    r = FT.parse_project_root_name("7-D_20260925_7F")
     assert r["name"] == "D" and r["level"] == "", r
-
-
-@case("F6 默认项目名：出厂默认已改「测试」（F3）")
-def f3_default_name():
-    src = open(os.path.join(SRC, "pt-project-folder-builder",
-                            "folder_builder_gui.py"),
-               encoding="utf-8").read()
-    assert 'tk.StringVar(value="测试")' in src, "默认项目名应为「测试」"
-    assert 'value="誓言"' not in src, "默认项目名不得携带个人项目信息"
 
 
 # ───────── P2：ptools 文案 / 弹窗居中 ─────────

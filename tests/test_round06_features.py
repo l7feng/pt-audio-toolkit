@@ -258,35 +258,4 @@ run("R1 write_audit/load_audit 审计往返", r1_audit_roundtrip)
 run("R1 undo_from_rows 跨会话回滚（真改名）", r1_undo_rows)
 
 
-# ───────── folder-builder：F1 预检 ─────────
-sys.path.insert(0, os.path.join(SRC, "pt-project-folder-builder"))
-import folder_builder_gui as fb                        # noqa: E402
-
-
-def f1_precheck():
-    # 场景1：模板根不存在 → 一条致命问题即返回
-    problems = fb.precheck_build("X:\\不存在\\模板", "X:\\不存在\\输出",
-                                 "X:\\不存在\\输出\\proj", [], "重命名")
-    assert problems and "模板路径不存在" in problems[0], problems
-    # 场景2：完整模板 + 可写输出 → 零问题
-    tpl = fresh("fb_tpl_ok")
-    os.makedirs(os.path.join(tpl, "文件夹模板", "Audio"), exist_ok=True)
-    os.makedirs(os.path.join(tpl, "Project模板"), exist_ok=True)
-    open(os.path.join(tpl, "Project模板", "T.ptx"), "w").write("x")
-    out = fresh("fb_out_ok")
-    problems2 = fb.precheck_build(tpl, out, os.path.join(out, "01-测试D"),
-                                  [], "重命名")
-    assert problems2 == [], problems2
-    # 场景3：ptx 选项≠none 但模板没有 .ptx → 命中
-    tpl2 = fresh("fb_tpl_noptx")
-    os.makedirs(tpl2, exist_ok=True)
-    problems3 = fb.precheck_build(tpl2, out, os.path.join(out, "02-x"),
-                                  [], "重命名")
-    assert any(".ptx" in p for p in problems3), problems3
-    return "缺模板/无ptx 命中，完整模板零问题"
-
-
-run("F1 precheck_build 建立前预检", f1_precheck)
-
-
 sys.exit(C.report("round06 新功能回归结果"))

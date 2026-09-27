@@ -135,12 +135,9 @@ def p4_banner():
     assert "self.pt_info" in app_src and "before=self.nb" in app_src
 
 
-# ───────── F3 尾巴：出厂提示不再带个人项目名 ─────────
-@case("F3 尾巴：folder-builder/ptools 出厂提示无「誓言」")
+# ───────── F3 尾巴：出厂提示不再带个人项目名（folder-builder 已退役，只查 ptools） ─────────
+@case("F3 尾巴：ptools 出厂提示无个人项目名")
 def f3_tail():
-    fb = open(os.path.join(SRC, "pt-project-folder-builder",
-                           "folder_builder_gui.py"), encoding="utf-8").read()
-    assert "誓言" not in fb, "folder-builder 提示仍带个人项目名"
     pt = open(os.path.join(SRC, "pt-tools", "ptools", "core", "i18n.py"),
               encoding="utf-8").read()
     assert "誓言24" not in pt and "ShiYan24" not in pt, "ptools 提示仍带个人项目名"

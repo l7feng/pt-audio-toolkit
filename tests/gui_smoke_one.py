@@ -13,12 +13,7 @@ which = sys.argv[1]
 try:
     import tkinter as tk
 
-    if which == "folder":
-        sys.path.insert(0, os.path.join(SRC, "pt-project-folder-builder"))
-        import folder_builder_gui as m
-        app = m.App()
-        win = app
-    elif which == "rename":
+    if which == "rename":
         sys.path.insert(0, os.path.join(SRC, "rename-unify", "code"))
         import main as m
         app = m.App()

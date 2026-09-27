@@ -22,65 +22,7 @@ run = C.run_case
 fresh = C.fresh
 
 
-# ───────── folder-builder ─────────
-sys.path.insert(0, os.path.join(SRC, "pt-project-folder-builder"))
-import folder_builder_gui as fb
-
-TPL = fresh("fb_gui_tpl")
-os.makedirs(os.path.join(TPL, "文件夹模板", "Audio"), exist_ok=True)
-os.makedirs(os.path.join(TPL, "Project模板"), exist_ok=True)
-open(os.path.join(TPL, "Project模板", "T.ptx"), "w").write("x")
-OUT = fresh("fb_gui_out")
-
-
-def fb_compute():
-    app = fb.App()
-    try:
-        app.var_template.set(TPL)
-        app.var_output.set(OUT)
-        app.var_eps.set("1-3")
-        app.var_name.set("誓言")
-        app.var_seq.set("10")
-        app.var_date.set("20260920")
-        app.var_user.set("7F")
-        got = app._compute()
-        assert len(got) == 6, "App._compute 返回 %d 元组（应为 6）" % len(got)
-        eps, errs, project_root, steps, warns, ep_names = got
-        assert eps == [1, 2, 3], eps
-        assert project_root.endswith("10-誓言D_20260920_7F"), project_root
-        app._refresh_preview()          # 不应抛异常
-        prev = app.preview.get("1.0", "end")
-        assert "项目根" in prev and "分类目录" in prev, prev[:120]
-        return "eps=%s steps=%d preview行=%d" % (eps, len(steps), prev.count("\n"))
-    finally:
-        app.destroy()
-
-
-run("folder-builder App._compute/_refresh_preview 接线（回归 unpack 修复）", fb_compute)
-
-
-def fb_apply():
-    """模拟 _on_build worker 的落地逻辑，验证 steps 能真正建成。"""
-    eps, errs, proj, steps, warns, ep_names = None, None, None, None, None, None
-    proj, steps, warns, ep_names = fb.plan_creation(
-        [1, 2, 3], "誓言", "10", "D", "20260920", "7F", OUT, TPL,
-        "项目根", "重命名", "name_num")
-    src_ptx = fb.locate_template_ptx(TPL)
-    os.makedirs(proj, exist_ok=True)
-    for action, path in steps:
-        if action == "mkdir":
-            os.makedirs(path, exist_ok=True)
-        elif action == "copy":
-            shutil.copy2(src_ptx, path)
-    assert os.path.isdir(os.path.join(proj, "Audio")), os.listdir(proj)
-    assert os.path.isfile(os.path.join(proj, "誓言1", "誓言1.ptx")), os.listdir(proj)
-    assert len(os.listdir(proj)) == 4, os.listdir(proj)   # Audio + 3 集
-    return "已建: %s" % sorted(os.listdir(proj))
-
-
-run("folder-builder plan→落地（真建目录到沙箱）", fb_apply)
-
-
+# (folder-builder 已并入 rename-unify 第5页签；GUI 接线归 rename-unify 冒烟覆盖)
 # ───────── pt-tools ─────────
 def pt_resolver():
     sys.path.insert(0, os.path.join(SRC, "pt-tools"))

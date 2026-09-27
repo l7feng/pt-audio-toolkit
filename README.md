@@ -11,7 +11,6 @@
 | 工具 | 作用 | 形态 |
 |---|---|---|
 | [**pt-tools**](src/pt-tools/) | Pro Tools 自动化工具箱 GUI：一个壳带三个技能（扫描 / 导出 / 清理），走 PTSL 连接 Pro Tools | 单 exe（tkinter，零第三方依赖） |
-| [**pt-project-folder-builder**](src/pt-project-folder-builder/) | 按视频文件或集数列表批量建 Pro Tools 工程文件夹，从模板复制 .ptx，已存在的自动跳过 | 单 exe |
 | [**jianying-draft-toolkit**](src/jianying-draft-toolkit/) | 剪映草稿工具箱：导入音频、导出音频、交付打包、AAF 输出 | 单 exe（多标签页） |
 | [**rename-unify**](src/rename-unify/) | 素材批量命名统一：按规则集重命名并生成清单 | 单 exe |
 

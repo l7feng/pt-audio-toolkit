@@ -3,7 +3,7 @@
 
 用法
 ----
-    python tools/verify_exe.py                  # 自动取出口根下最新的 audio-toolkit-v*
+    python tools/verify_exe.py                  # 自动取出口根下最新的「音频工具箱-v*」
     python tools/verify_exe.py --dir <出口目录>
     python tools/verify_exe.py --no-launch      # 只核清单，不启动 GUI
 
@@ -30,22 +30,36 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-# 2026-09-27（D 档合并）：folder-builder 并入 rename-unify 后退役；
-# script-splitter（原名「剧本双语拆分工具」，2026-09-27 改英文名）与本仓四工具同处一个出口目录，一并核验。
-APPS = ["pt-tools", "jianying-draft-toolkit", "rename-unify",
-        "script-splitter"]
+# 出口布局（2026-09-27 人类裁决①甲，与 tools/build.py 的 TARGETS/FAMILIES 同源）：
+#   <root>/音频工具箱-v<仓库版本>-<日期>/      ← PT 工具箱 + 剪映工具包
+#   <root>/统一命名工具-v<该工具版本>-<日期>/   ← 通用工具（独立家族）
+#   <root>/剧本双语拆分工具-v.../              ← 独立仓库 script-splitter 自建自检
+# 下面这份 (工具键, 中文展示名, 家族) 是 build.py TARGETS 的副本，改动必须两处同步。
+# ⚠️ rename-unify 现在**不在**「音频工具箱」目录里 —— 核验必须按家族分别定位，
+#    沿用「一个 --dir 管全部」的旧写法会把它误判成 MISS。
+APPS = [
+    ("pt-tools", "Pro Tools工具箱", "audio"),
+    ("jianying-draft-toolkit", "剪映工程工具包", "audio"),
+    ("rename-unify", "统一命名工具", "solo"),
+]
+# 家族 → 出口目录通配（含历史 ASCII 前缀，保证旧目录仍可核验）
+FAMILY_GLOBS = {
+    "audio": ("音频工具箱-v*", "audio-toolkit-v*", "pt-audio-toolkit-v*"),
+    "solo": ("统一命名工具-v*",),
+}
 EXE_ROOT = Path(os.environ.get("PT_EXE_ROOT", r"D:\Ai-Files\Agent-Preset\exe"))
 
 # 关键附属文件（打包后置动作的产物）—— 缺了工具仍能启动但功能不全
+# 元组：(说明, 所属工具的中文目录名, 相对路径, 家族)
 CHECKS = [
     ("pt-tools 内置技能 pt-scanner",
-     "pt-tools/_internal/skills/pt-scanner/scripts/pt_scan.py"),
+     "Pro Tools工具箱", "_internal/skills/pt-scanner/scripts/pt_scan.py", "audio"),
     ("pt-tools 内置技能 pt-exporter",
-     "pt-tools/_internal/skills/pt-exporter/scripts/pt_export.py"),
+     "Pro Tools工具箱", "_internal/skills/pt-exporter/scripts/pt_export.py", "audio"),
     ("pt-tools 内置技能 pt-cleaner",
-     "pt-tools/_internal/skills/pt-cleaner/scripts/pt_clean.py"),
+     "Pro Tools工具箱", "_internal/skills/pt-cleaner/scripts/pt_clean.py", "audio"),
     ("jianying 解密器 jy-draftc.exe",
-     "jianying-draft-toolkit/tools/jy-draftc/jy-draftc-amd64-windows/jy-draftc.exe"),
+     "剪映工程工具包", "tools/jy-draftc/jy-draftc-amd64-windows/jy-draftc.exe", "audio"),
 ]
 
 # 可选附属项：缺了不影响判定，只打 INFO。
@@ -53,7 +67,7 @@ CHECKS = [
 # 见 Q10），该依赖已不再需要；保留检查只为观察是否仍被打包进去。
 OPTIONAL_CHECKS = [
     ("jianying 拖拽依赖 tkinterdnd2（v2.6.2 起已不需要）",
-     "jianying-draft-toolkit/_internal/tkinterdnd2"),
+     "剪映工程工具包", "_internal/tkinterdnd2", "audio"),
 ]
 
 user32 = ctypes.windll.user32
@@ -95,13 +109,27 @@ def windows_of_pid(pid):
 
 
 def latest_exe_dir():
-    # 2026-09-27：出口目录改名 audio-toolkit-v<版本>-<日期>（去掉 pt- 前缀）；
-    # 新旧前缀都认，避免历史目录突然找不到。
+    # 2026-09-27（裁决①甲）：出口目录改中文并按家族分家 —— PT/剪映在
+    # 「音频工具箱-v<版本>-<日期>」，通用工具另立目录。旧的 ASCII 前缀也认，
+    # 避免历史目录突然找不到。
     cands = sorted(
-        [d for pat in ("audio-toolkit-v*", "pt-audio-toolkit-v*")
+        [d for pat in FAMILY_GLOBS["audio"]
          for d in EXE_ROOT.glob(pat) if d.is_dir()],
         key=lambda d: d.stat().st_mtime, reverse=True)
     return cands[0] if cands else None
+
+
+def family_roots(forced_audio=None):
+    """定位各家族的出口目录：{家族: 目录 或 None}。"""
+    out = {}
+    for fam, pats in FAMILY_GLOBS.items():
+        if fam == "audio" and forced_audio:
+            out[fam] = Path(forced_audio)
+            continue
+        cands = sorted([d for pat in pats for d in EXE_ROOT.glob(pat) if d.is_dir()],
+                       key=lambda d: d.stat().st_mtime, reverse=True)
+        out[fam] = cands[0] if cands else None
+    return out
 
 
 def dir_size_mb(d):
@@ -111,48 +139,56 @@ def dir_size_mb(d):
 
 def main():
     ap = argparse.ArgumentParser(description="核验打包好的 exe")
-    ap.add_argument("--dir", default=None, help="出口目录（缺省取最新的 pt-audio-toolkit-v*）")
+    ap.add_argument("--dir", default=None, help="出口目录（缺省取最新的 音频工具箱-v*）")
     ap.add_argument("--no-launch", action="store_true", help="只核清单，不启动 GUI")
     args = ap.parse_args()
 
-    out_root = Path(args.dir) if args.dir else latest_exe_dir()
-    if not out_root or not out_root.is_dir():
-        print("[FAIL] 找不到出口目录。用 --dir 指定，或设置 PT_EXE_ROOT。")
+    roots = family_roots(args.dir)
+    if not roots.get("audio") or not roots["audio"].is_dir():
+        print("[FAIL] 找不到「音频工具箱」出口目录。用 --dir 指定，或设置 PT_EXE_ROOT。")
         print("       出口根：%s" % EXE_ROOT)
         return 1
 
     ok_all = True
     print("=" * 76)
-    print("出口目录：%s" % out_root)
+    for fam in sorted(roots):
+        print("出口目录[%s]：%s" % (fam, roots[fam] or "（未找到）"))
     print("=" * 76)
     print("① 工具产物")
     print("-" * 76)
-    for a in APPS:
-        d = out_root / a
-        exe = d / (a + ".exe")
-        if not d.is_dir():
-            print("[MISS] %-28s 目录不存在" % a)
+
+    def app_dir(cn, fam):
+        r = roots.get(fam)
+        return (r / cn) if r else None
+
+    for key, cn, fam in APPS:
+        d = app_dir(cn, fam)
+        exe = (d / (cn + ".exe")) if d else None
+        if not d or not d.is_dir():
+            print("[MISS] %-28s 目录不存在（%s，家族 %s）" % (cn, key, fam))
             ok_all = False
             continue
         n = sum(len(fs) for _r, _dd, fs in os.walk(d))
         has = exe.is_file()
         ok_all = ok_all and has
         print("[%s] %-28s %6.1f MB  %4d 文件  exe=%s"
-              % ("OK" if has else "NO", a, dir_size_mb(d), n,
+              % ("OK" if has else "NO", cn, dir_size_mb(d), n,
                  ("%.2f MB" % (exe.stat().st_size / 1048576.0)) if has else "缺"))
 
     print()
     print("② 关键附属文件")
     print("-" * 76)
-    for label, rel in CHECKS:
-        p = out_root / rel
-        ok = p.exists()
+    for label, cn, rel, fam in CHECKS:
+        d = app_dir(cn, fam)
+        p = (d / rel) if d else None
+        ok = bool(p) and p.exists()
         ok_all = ok_all and ok
         print("[%s] %s" % ("OK" if ok else "MISS", label))
 
-    for label, rel in OPTIONAL_CHECKS:
-        p = out_root / rel
-        print("[%s] %s" % ("OK" if p.exists() else "INFO", label))
+    for label, cn, rel, fam in OPTIONAL_CHECKS:
+        d = app_dir(cn, fam)
+        p = (d / rel) if d else None
+        print("[%s] %s" % ("OK" if (p and p.exists()) else "INFO", label))
 
     if args.no_launch:
         print()
@@ -162,14 +198,15 @@ def main():
     print()
     print("③ 真实启动 + 顶层窗口枚举")
     print("-" * 76)
-    for a in APPS:
-        exe = out_root / a / (a + ".exe")
-        if not exe.is_file():
+    for key, cn, fam in APPS:
+        d = app_dir(cn, fam)
+        exe = (d / (cn + ".exe")) if d else None
+        if not exe or not exe.is_file():
             continue
         try:
             proc = subprocess.Popen([str(exe)], cwd=str(exe.parent))
         except Exception as e:
-            print("[FAIL] %-28s 启动异常：%s" % (a, e))
+            print("[FAIL] %-28s 启动异常：%s" % (cn, e))
             ok_all = False
             continue
         time.sleep(3.5)
@@ -188,7 +225,7 @@ def main():
             ok_all = False
         good = alive and not residual and not crash
         print("[%s] %-28s 进程存活=%s  顶层窗口=%d%s"
-              % ("OK" if good else "WARN", a, alive, len(wins),
+              % ("OK" if good else "WARN", cn, alive, len(wins),
                  "  ⚠崩溃框=%d" % len(crash) if crash else ""))
         for t, c, vis in wins:
             print("        · title=%-34r class=%-14s visible=%s" % (t, c, vis))

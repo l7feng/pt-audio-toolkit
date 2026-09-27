@@ -7,7 +7,7 @@
 `C:\\Users\\Administrator\\...\\Python312\\python.exe`、仓库
 `D:\\Ai-Files\\GitHub-warehouse\\pt-audio-toolkit\\src`、沙箱
 `D:\\My-Temporary\\pt-toolkit-test\\sandbox`。换到家用机（用户名 `32112`）
-即 FileNotFoundError —— 与 `pt-project-folder-builder/build.ps1` 曾经
+即 FileNotFoundError —— 与各工具目录的 `build.ps1` 曾经
 写死用户名是同一类缺陷，只是藏在测试资产里。
 
 本模块把机器相关路径一律收敛为「环境变量 → 合理默认 → 明确报错」：
@@ -191,25 +191,28 @@ EXE_ROOT = Path(os.environ.get("PT_EXE_ROOT", r"D:\Ai-Files\Agent-Preset\exe"))
 
 
 def exe_dir(version=None, date=None):
-    """定位 exe 出口目录。
+    """定位 exe 出口目录（PT 工具箱 + 剪映工具包共用的那个「音频工具箱」目录）。
 
-    给定 version（如 "1.1.0"）与 date（如 "20260923"）→ 拼出
-    `audio-toolkit-v<version>-<date>`；未给则取 EXE_ROOT 下最新的一个，
+    给定 version（如 "3.3.0"）与 date（如 "20260928"）→ 拼出
+    `音频工具箱-v<version>-<date>`；未给则取 EXE_ROOT 下最新的一个，
     让核验脚本不必随版本改代码。
+
+    2026-09-27（人类裁决①甲）：出口按家族分目录 —— PT/剪映共用
+    `音频工具箱-v*`，统一命名工具等通用工具各自独立目录
+    （`统一命名工具-v*`）。旧的 `audio-toolkit-v*` / `pt-audio-toolkit-v*`
+    一并识别，保证历史目录仍可被测到。
     """
-    # 2026-09-27：出口目录改名为 audio-toolkit-v<版本>-<日期>（去掉 pt- 前缀，
-    # 因目录里还有剪映/剧本工具）；新旧两种前缀都认，避免历史目录找不到。
+    patterns = ("音频工具箱-v*", "audio-toolkit-v*", "pt-audio-toolkit-v*")
     if version and date:
-        for prefix in ("audio-toolkit", "pt-audio-toolkit"):
+        for prefix in ("音频工具箱", "audio-toolkit", "pt-audio-toolkit"):
             p = EXE_ROOT / ("%s-v%s-%s" % (prefix, version, date))
             if p.is_dir():
                 return p
-        return EXE_ROOT / ("audio-toolkit-v%s-%s" % (version, date))
+        return EXE_ROOT / ("音频工具箱-v%s-%s" % (version, date))
     cands = sorted(
-        [d for pat in ("audio-toolkit-v*", "pt-audio-toolkit-v*")
-         for d in EXE_ROOT.glob(pat) if d.is_dir()],
+        [d for pat in patterns for d in EXE_ROOT.glob(pat) if d.is_dir()],
         key=lambda d: d.stat().st_mtime, reverse=True)
-    return cands[0] if cands else EXE_ROOT / "audio-toolkit-vUNKNOWN"
+    return cands[0] if cands else EXE_ROOT / "音频工具箱-vUNKNOWN"
 
 
 # ── 路径：剪映草稿根 ─────────────────────────────────────────

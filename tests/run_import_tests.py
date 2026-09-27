@@ -13,7 +13,6 @@ JY = os.path.join(SRC, "jianying-draft-toolkit", "code")
 
 CASES = [
     ("pt-tools/gui",            os.path.join(SRC, "pt-tools"),              "import pt_tools_gui"),
-    ("folder-builder/gui",      os.path.join(SRC, "pt-project-folder-builder"), "import folder_builder_gui"),
     ("rename-unify/config",     os.path.join(SRC, "rename-unify", "code"),  "import config"),
     ("rename-unify/core_rules", os.path.join(SRC, "rename-unify", "code"),  "import core_rules"),
     ("rename-unify/main",       os.path.join(SRC, "rename-unify", "code"),  "import main"),

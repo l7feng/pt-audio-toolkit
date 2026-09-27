@@ -5,9 +5,11 @@
 > 仓库级版本（`VERSION` 文件）= 发布出的这一整套 exe 的版本；
 > 工具级 `APP_VERSION` 各自独立演进。两者的对应关系见下表。
 
-| 仓库版本 | 日期 | 工具版本（pt-tools / folder-builder / jianying / rename-unify） | 要点 |
+| 仓库版本 | 日期 | 工具版本（pt-tools / jianying / rename-unify） | 要点 |
 |---|---|---|---|
-| **3.1.0** | 2026-09-27 | 1.6.3 / （已并入） / **2.10.0** / 1.7.1 | 剪映六项反馈整改：素材类型 UCS 码覆盖 · 断点续跑默认关 · AAF 打包缺 pyaaf2 根因修复 · 片段按集分包 · 导出主线程零重活（AppHang 修复）· 导入选错 json 硬拦截 |
+| **3.3.0** | 2026-09-27 | 1.6.3 / **2.10.0** / **1.7.2** | folder-builder 彻底退役（打包清单/源码/测试引用清零）· 出口按家族分家（音频工具箱 / 统一命名工具独立目录）· 工具文件夹与 exe 改中文 · 修页5 PTX 单选值错位（重命名/不复制两选项失效）· 集数命名下拉改中文标签 |
+| **3.2.0** | 2026-09-27 | 1.6.3 / **2.10.0** / 1.7.1 | 备份目录改名四同步（`Jianying-Backup`→`Backup-Jianying`、`PT-Tools-Backup`→`Backup-PT-Tools`、新增 `Backup-Deliver\{PT-Tools,Jianying}`）· settings 新增 `DEFAULT_DELIVERY_ROOT` 独立常量，交付包落点不再随输出目录漂移 |
+| **3.1.0** | 2026-09-27 | 1.6.3 / **2.10.0** / 1.7.1 | 剪映六项反馈整改：素材类型 UCS 码覆盖 · 断点续跑默认关 · AAF 打包缺 pyaaf2 根因修复 · 片段按集分包 · 导出主线程零重活（AppHang 修复）· 导入选错 json 硬拦截 |
 | **3.0.1** | 2026-09-27 | **1.6.3** / （已并入） / **2.9.2** / **1.7.1** | D2 全局滚动收口（修滚轮 bind_all 覆盖）· D3 J10 多工程横向导入 |
 | **3.0.0** | 2026-09-27 | 1.6.2 / （已并入） / 2.9.1 / **1.7.0** | D 档：folder-builder 并入 rename-unify 第 5 页签 · PT-Deliver 交付格式正式化（schema + 校验器）· 出口工具数 5→4 |
 | **2.9.0** | 2026-09-26 | **1.6.2** / 1.2.0 / **2.9.1** / 1.6.0 | 🔴 修 pt-tools 双击即崩（`_DND_BASE` 未定义，已发布三个版本的 exe 全中）· J11 人声分离页签落地（Demucs 两轨/四轨，模型外置）· 剪映启动崩溃回溯钩子 · 🔴 修 WAV 质检死循环（PT 真实 bounce 产物必挂）· verify_exe 增加崩溃框判据 |
@@ -29,6 +31,37 @@
 > ⚠️ 登记断档说明：**1.5.0 → 2.6.1 期间仓库版本直接沿用 jianying 的工具版本号带飞**，
 > 本表未逐条登记（可从 `git log` 回溯：`68b890c feat(v1.5.0)`、`3f40f29 v2.6.1`）。
 > 自 **2.6.2** 起恢复逐版登记，历史不补写、不臆造。
+
+---
+
+## 3.3.0 — 2026-09-27
+
+### folder-builder 彻底退役 + 出口分家 + 中文命名（S1）
+
+- **打包清单**：`tools/build.py` TARGETS 删除 pt-project-folder-builder（此前每次全量打包都把它重新烤出来的根因）；`src/pt-project-folder-builder/` 整目录删除（能力早已在 `rename-unify/code/foldertree.py`）。
+- **出口按家族分家**（裁决①甲）：PT 工具箱与剪映共用 `音频工具箱-v<仓库版本>-<日期>/`，统一命名工具独立 `统一命名工具-v<工具版本>-<日期>/`；剧本拆分工具在独立仓，本脚本不碰。
+- **中文命名**：PyInstaller `--name` 仍 ASCII，打包后由 build.py 统一把工具文件夹与 exe 改中文名（onedir 靠 `sys.executable` 相对定位 `_internal`，改名安全）。
+- **修页5 PTX 单选 bug**：原先 `value=显示标签`，导致「重命名」「不复制」两选项实际存成长标签、被 foldertree 判错分支（界面还显示英文 `none`）。改为 `value=内部键` + `norm_ptx_mode()` 兼容老配置错值。
+- **集数命名下拉中文化**：原来显示内部键 `num/name_num/...`，现显示中文标签、存回键。
+- 回归：14 套 + GUI 冒烟 3/3 全绿。
+
+---
+
+## 3.2.0 — 2026-09-27
+
+### 备份目录改名 · 路径四同步
+磁盘目录（`D:\My-Temporary`）与源码内 9 处写死路径同步改名，**不改代码语义**：
+
+| 旧名 | 新名 |
+|---|---|
+| `Jianying-Backup` | `Backup-Jianying` |
+| `PT-Tools-Backup` | `Backup-PT-Tools` |
+| （无） | `Backup-Deliver\PT-Tools`（新增，交付包专用区） |
+| （无） | `Backup-Deliver\Jianying`（新增，交付包专用区） |
+
+- `ptools/core/settings.py` 新增 `DEFAULT_DELIVERY_ROOT` **独立常量** —— 交付包落点不再从 `last_out_dir` 派生（原逻辑会让交付包位置随上一次导出目录漂移）。
+- `ptools/gui/app.py` 交付包落点改用该常量；`jianying import_pkg_out` 改指 `Backup-Deliver/Jianying`。
+- 回归：import 13/14 + core 30/30 + wiring 5/5 + deliver 5/6，0 失败 0 错误。
 
 ---
 
