@@ -43,13 +43,15 @@ def _seg(track_type="audio"):
 
 # ───────── Q1：素材类型手动覆盖 ─────────
 
-@case("Q1 空覆盖/不传 → 自动判定（voice 源）")
+@case("Q1 空覆盖/不传 → 自动判定（voice 源，R-码表按素材名归 DX）")
 def q1_auto():
     seg = _seg("voice")
     tpl = "{素材类型}_{原始名}"
-    assert core.render_name(tpl, seg, 1, type_override="") == "voice_AI配音_01", \
+    # v3.10.0（R-码表）：自动判定改为 classify_clip_type —— 素材名「AI配音」
+    # 命中「配音」→ DX（旧口径按 track_type 回落小写 voice，已退役）
+    assert core.render_name(tpl, seg, 1, type_override="") == "DX_AI配音_01", \
         core.render_name(tpl, seg, 1, type_override="")
-    assert core.render_name(tpl, seg, 1) == "voice_AI配音_01"
+    assert core.render_name(tpl, seg, 1) == "DX_AI配音_01"
 
 
 @case("Q1 UCS 码覆盖：FX/MX/DX/AMB/BG/DIA/MUS 全部生效")
@@ -125,8 +127,9 @@ def q3_logging():
 @case("Q3 AAF 落点仍为 03-AAF（非分包 + 分包按集，与 01-多条WAV 同级）")
 def q3_paths():
     src = open(os.path.join(CODE, "main.py"), encoding="utf-8").read()
-    assert 'output_root / draft_dir.name / "03-AAF"' in src
-    assert 'output_root / folder / "03-AAF"' in src
+    # v3.9.0（S9）：目录翻转 —— 分类在外、项目在内，源码写法随之更新
+    assert 'output_root / "03-AAF" / draft_dir.name' in src
+    assert 'output_root / "03-AAF" / folder' in src
 
 
 # ───────── Q4：片段按集分包门控放开 ─────────
@@ -144,7 +147,8 @@ def q4_gate():
 @case("Q4 片段按视频窗归夹逻辑在位（chunk_dir / 02-素材片段）")
 def q4_core_logic():
     src = open(os.path.join(CODE, "main.py"), encoding="utf-8").read()
-    assert 'chunk_dir / "02-素材片段"' in src
+    # v3.9.0（S9）：02-素材片段 常驻输出根，项目/chunk 归其内部
+    assert '"02-素材片段", chunk_dir or draft_dir.name' in src
     assert "chunk_index_for_tl" in src
 
 

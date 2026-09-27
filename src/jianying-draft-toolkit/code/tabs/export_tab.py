@@ -36,12 +36,13 @@ CONFLICT_MODES = {
 CONFLICT_LABEL_TO_KEY = {v: k for k, v in CONFLICT_MODES.items()}
 
 # v2.10.0（Q1）：片段命名 {素材类型} 的手动覆盖值。
-# 自动判定沿用 core.TYPE_CATEGORY（audio/voice/music/sfx，按源素材类型映射）；
-# 手动值用 UCS 分类码，供音效库归档工作流直接命名：
-#   FX=音效  MX=音乐  DX=对白  AMB=环境声  BG=背景  DIA=台词  MUS=音乐
-CLIP_TYPE_AUTO_LABEL = "自动判定（audio/voice/music/sfx）"
-CLIP_TYPE_VALUES = ("audio", "voice", "music", "sfx",
-                    "FX", "MX", "DX", "AMB", "BG", "DIA", "MUS")
+# v3.10.0（R-码表）：码表收敛为四桶（自动判定走 main.classify_clip_type，
+# 按素材命名信息归类；输入框仍可自由填，不限于下拉值）：
+#   DX=对白（台词/内心VO/画外音OS）  FX=音效（动效/拟音）
+#   BG=环境（背景）                  MX=音乐
+# 旧值 audio/voice/music/sfx/AMB/DIA/MUS 退役（导入方向 CATEGORY_MAP 不受影响）。
+CLIP_TYPE_AUTO_LABEL = "自动判定（按素材名归类 DX/FX/BG/MX）"
+CLIP_TYPE_VALUES = ("DX", "FX", "BG", "MX")
 
 
 def normalize_template_entry(e):
@@ -289,9 +290,9 @@ class ExportTab(BaseTab):
         ttk.Entry(row, textvariable=self.var_split_tpl, width=16).pack(side="left")
         ttk.Label(cfg_box,
                   text="分包时可用新占位符：{视频项目} {集数} {编号} {AiFX} {视频名}；"
-                       "整轨命名另可用 {轨道类别}（MX/DX/SFX/AiFX 自动判定）；"
-                       "「素材类型」可手动指定 {素材类型} 的取值（FX/MX/DX/AMB/BG/DIA/MUS 等，"
-                       "默认自动判定）；"
+                       "整轨命名另可用 {轨道类别}（MX/DX/FX 自动判定）；"
+                       "「素材类型」可手动指定 {素材类型} 的取值（DX对白 / FX音效 / BG环境 / MX音乐，"
+                       "默认按素材名自动判定，也可自由填写）；"
                        "视频名是纯数字或项目名超过 4 字时会弹窗请您补项目名。",
                   foreground="#888").grid(row=6, column=0, columnspan=4, sticky="w",
                                           padx=4, pady=(0, 4))

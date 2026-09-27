@@ -149,15 +149,64 @@ TYPE_CATEGORY = {
 }
 
 # 素材类型 → 轨道类别标签（v2.6.0：命名模板 {轨道类别} 的取值）
-# MX=Music 音乐 ｜ DX=Dialogue 对白 ｜ SFX=Sound FX 音效
+# v3.10.0（R-码表）：SFX 退役并入 FX —— 四桶口径 DX/FX/BG/MX（见 classify_clip_type）
 TYPE_CATEGORY_TRACK_LABEL = {
     "music": "MX",
     "voice": "DX",
-    "sfx": "SFX",
+    "sfx": "FX",
     "audio": "DX",
     "video": "DX",
     "video_original_sound": "DX",
 }
+
+# ── v3.10.0（R-码表）：{素材类型} 自动判定 —— 按素材**命名信息**归四桶 ──
+# DX=对白（台词/内心VO/画外音OS）  FX=音效（动效/拟音）  BG=环境（背景）  MX=音乐
+# 命中优先级 MX→BG→DX→FX：「BGM」同时含 BG 与 MX 词根，音乐更特异故先判。
+# 英文缩写按「词边界」匹配（前后不得是英文字母），避免 VOL（音量）误中 VO（画外音）；
+# 中文关键词按子串匹配。
+_CLIP_TYPE_WORDS = (
+    ("MX", ("mx", "mus", "music", "bgm", "score", "ost",
+            "配乐", "音乐", "音樂", "背景乐")),
+    ("BG", ("bg", "amb", "ambience", "atmos", "environment", "room", "wind",
+            "rain", "环境", "背景", "氛围", "風聲", "风声", "雨声")),
+    ("DX", ("dx", "dia", "dialog", "dialogue", "vo", "vox", "vocal", "adr",
+            "os", "对白", "台词", "旁白", "画外音", "独白", "内心", "配音",
+            "人声", "念白")),
+    ("FX", ("fx", "sfx", "eff", "fol", "foley", "hit", "impact", "whoosh",
+            "riser", "transition", "design", "音效", "动效", "拟音", "转场",
+            "打击")),
+)
+
+
+def _word_hit(word: str, s: str) -> bool:
+    """英文词按词边界（前后非英文字母）、中文词按子串，命中判据。"""
+    if not word.strip():
+        return False
+    if not word.isascii():
+        return word in s
+    start = s.find(word)
+    while start >= 0:
+        before = s[start - 1] if start > 0 else ""
+        after = s[start + len(word)] if start + len(word) < len(s) else ""
+        if not (before.isascii() and before.isalpha()) \
+                and not (after.isascii() and after.isalpha()):
+            return True
+        start = s.find(word, start + 1)
+    return False
+
+
+def classify_clip_type(name: str = "", track_type: str = "") -> str:
+    """按素材命名信息把 {素材类型} 归类为 DX/FX/BG/MX（R-码表 / v3.10.0）。
+
+    匹配：素材名小写后按 _CLIP_TYPE_WORDS 优先级找词根（UCS CatID 缩写 +
+    中英文关键词）；全不命中时按剪映素材内部类型回落（music→MX、voice→DX、
+    其余→FX）。
+    """
+    s = (name or "").lower()
+    for code, words in _CLIP_TYPE_WORDS:
+        if any(_word_hit(w, s) for w in words):
+            return code
+    return "MX" if track_type == "music" else "DX" if track_type == "voice" else "FX"
 
 # 文件名非法字符与长度限制
 ILLEGAL_CHARS = re.compile(r'[\\/:*?"<>|]')
@@ -1106,7 +1155,10 @@ def render_name(template: str, seg: AudioSegment, seq_index: int, remarks: str =
     override = (type_override or "").strip()
     fields = {
         "项目名": seg.project,
-        "素材类型": override if override else TYPE_CATEGORY.get(seg.track_type, "audio"),
+        # R-码表（v3.10.0）：自动判定按素材命名信息归 DX/FX/BG/MX 四桶；
+        # 手动覆盖值仍优先（可自由填，不限四桶）。
+        "素材类型": override if override else classify_clip_type(
+            seg.material_name, seg.track_type),
         "序号": seq_index,
         "原始名": Path(seg.material_name).stem if seg.material_name else Path(seg.source_path).stem,
         "日期": datetime.date.today().strftime("%Y%m%d"),
