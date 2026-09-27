@@ -43,7 +43,7 @@ from columns import fit_tree_columns  # S11：表格列宽按权重自适应（�
 from theme import (apply as apply_theme, initial_geometry, set_theme,
     PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL,
     list_themes, current_theme_name, buttonize,
-    ICON_PLAY, ICON_CROSS, ICON_PLUS, ICON_REFRESH, ParticleCanvas)  # S13/S12：共享主题与窗口几何（同源副本）
+    ICON_PLAY, ICON_CROSS, ICON_PLUS, ICON_REFRESH, ParticleCanvas, FONT_SMALL)  # S13/S12：共享主题与窗口几何（同源副本）
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 

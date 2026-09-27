@@ -36,7 +36,7 @@ from tabs.paths_dialog import PathsDialog
 from core.host import StatusProbe
 from core import menus as menu_actions
 from theme import (apply as apply_theme, initial_geometry, window_size,
-    PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL, FONT_TITLE,
+    PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL, FONT_TITLE, FONT_SMALL,
     set_theme, list_themes, current_theme_name, buttonize,
     ICON_PLAY, ICON_STOP, ICON_CROSS, ICON_REFRESH, ParticleCanvas)  # S13/S12：共享主题与窗口几何（同源副本）
 from columns import fit_tree_columns  # S11：表格列宽自适应（同源副本）

@@ -2,7 +2,7 @@
 """S11/S12/S13 专项测试：表格列宽自适应 · 窗口几何 · 多色彩主题。
 
 覆盖：
-  · theme.py 四套主题注册表完整性（每套 12 色键）
+  · theme.py 六套主题注册表完整性（每套 16 色键）
   · apply / set_theme / current_theme_name 运行时切换
   · 颜色工具函数（_lighten / _darken / _is_dark / _dim）
   · initial_geometry（有记录 / 无记录 / 钳到 minsize）
@@ -34,7 +34,7 @@ JY_COL = SRC / "jianying-draft-toolkit" / "code" / "columns.py"
 
 REQUIRED_COLOR_KEYS = {"BG", "SURFACE", "BORDER", "FG", "FG_DIM",
                         "ACCENT", "ACCENT_HV", "DANGER", "DANGER_HV",
-                        "SELECT_BG", "HEAD_BG", "label"}
+                        "SELECT_BG", "HEAD_BG", "SUCCESS", "WARNING", "INFO", "label"}
 
 
 def _md5(path):
@@ -43,18 +43,18 @@ def _md5(path):
 
 # ── 用例 ──
 
-@case("theme 注册表：四套主题齐全")
+@case("theme 注册表：六套主题齐全")
 def t_themes_count():
     sys.path.insert(0, str(PT_THEME.parent))
     import theme
     names = [k for k, _ in theme.list_themes()]
-    assert set(names) == {"warm", "cool", "dark", "contrast"}, \
-        "期望 4 套主题，实际: %s" % names
+    assert set(names) == {"warm", "emerald", "nord", "dark", "contrast", "ocean"}, \
+        "期望 6 套主题，实际: %s" % names
     assert theme.DEFAULT_THEME == "warm"
-    return "4 套: %s" % ", ".join(names)
+    return "6 套: %s" % ", ".join(names)
 
 
-@case("theme 每套主题 12 色键完整")
+@case("theme 每套主题 16 色键完整")
 def t_theme_keys():
     sys.path.insert(0, str(PT_THEME.parent))
     import theme
@@ -64,7 +64,7 @@ def t_theme_keys():
         if not REQUIRED_COLOR_KEYS.issubset(keys):
             missing.append("%s 缺: %s" % (name, REQUIRED_COLOR_KEYS - keys))
     assert not missing, "; ".join(missing)
-    return "4 套 × 12 色键全部齐全"
+    return "6 套 × 16 色键全部齐全"
 
 
 @case("theme 颜色值均为合法 #rrggbb")
@@ -102,7 +102,7 @@ def t_apply():
     return "apply(warm) 成功，Accent/Danger 样式已注册"
 
 
-@case("theme set_theme：运行时切换 warm→dark→cool")
+@case("theme set_theme：运行时切换 warm→dark→emerald→nord→ocean→contrast")
 def t_set_theme():
     sys.path.insert(0, str(PT_THEME.parent))
     import theme
@@ -110,7 +110,7 @@ def t_set_theme():
     root.withdraw()
     try:
         theme.apply(root, theme_name="warm")
-        for target in ("dark", "cool", "warm"):
+        for target in ("dark", "emerald", "nord", "ocean", "contrast", "warm"):
             actual = theme.set_theme(root, target)
             assert actual == target, "期望 %s，实际 %s" % (target, actual)
             assert theme.current_theme_name() == target
@@ -119,7 +119,7 @@ def t_set_theme():
         assert actual == "warm"
     finally:
         root.destroy()
-    return "warm→dark→cool→warm 切换成功，未知主题回落 warm"
+    return "6套主题循环切换成功，未知主题回落 warm"
 
 
 @case("theme 颜色工具：_lighten / _darken / _dim")

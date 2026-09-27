@@ -29,7 +29,7 @@ from ptools.core.paths import PathResolver
 from ptools.gui.columns import fit_tree_columns
 from ptools.gui.scrollable import ScrollableFrame
 from ptools.gui.theme import (apply as apply_theme, initial_geometry, window_size,
-    PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL,
+    PAD_XS, PAD_SM, PAD_MD, PAD_LG, PAD_XL, PAD_STATUSBAR, FONT_SMALL,
     set_theme, list_themes, current_theme_name, buttonize,
     ICON_PLAY, ICON_STOP, ICON_DOWN, ICON_GEAR, ICON_CHECK, ICON_CROSS,
     ICON_PLUS, ICON_REFRESH, ICON_FOLDER, ICON_SCAN, ICON_SAVE, ParticleCanvas)
@@ -512,19 +512,19 @@ class App(_DND_BASE):
             body.pack(fill="both", expand=False, pady=(2, 0))
 
     def _build_statusbar(self):
-        bar = ttk.Frame(self, padding=(8, 4))
+        bar = ttk.Frame(self, padding=PAD_STATUSBAR)
         bar.pack(fill="x")
         self.status_ptsl_var = tk.StringVar(value="…")
         self.status_sess_var = tk.StringVar(value=T("status_session") % "—")
         self.status_prof_var = tk.StringVar(value=T("status_profile") % "—")
         self.status_skills_var = tk.StringVar(value="…")
-        ttk.Label(bar, textvariable=self.status_ptsl_var).pack(side="left")
+        ttk.Label(bar, textvariable=self.status_ptsl_var, font=FONT_SMALL).pack(side="left")
         ttk.Label(bar, textvariable=self.status_sess_var,
-                  foreground="#555").pack(side="left", padx=16)
+                  style="Small.TLabel").pack(side="left", padx=PAD_MD)
         ttk.Label(bar, textvariable=self.status_prof_var,
-                  foreground="#555").pack(side="left", padx=16)
+                  style="Small.TLabel").pack(side="left", padx=PAD_MD)
         ttk.Label(bar, textvariable=self.status_skills_var,
-                  foreground="#888").pack(side="right")
+                  style="Small.TLabel").pack(side="right")
 
     # 日志滚动上限：批量几十集时 Text 行数是主线程卡顿的隐形来源
     LOG_MAX_LINES = 5000

@@ -31,73 +31,132 @@ import re
 import tkinter as tk
 from tkinter import ttk
 
-# ── 主题注册表 ────────────────────────────────────────────────────
-# 每套主题必须包含全部 12 个色键；切换时整组替换，不留半旧半新。
+# ── 主题注册表（v3.11.0：6套主题，参考 Claude/ChatGPT/Grok/OpenCode/Kimi）──
+# 每套主题必须包含全部色键；切换时整组替换。
 THEMES = {
+    # ── Claude 风：暖调人文 ──
     "warm": {
         "label":      "米白暖调",
-        "BG":         "#f5f3ef",   # 窗口底（稍暖，不晃眼）
-        "SURFACE":    "#fdfcfa",   # 卡片 / 输入框 / 表格底（极淡暖白，非纯白）
-        "BORDER":     "#e2dfda",   # 细边框
-        "FG":         "#2b2a28",   # 正文
-        "FG_DIM":     "#8a8781",   # 次要文字
-        "ACCENT":     "#c96442",   # 主按钮（陶橙）
-        "ACCENT_HV":  "#b4552f",   # 主按钮悬停 / 按下
-        "DANGER":     "#b3372f",   # 删除 / 清空 / 中止
-        "DANGER_HV":  "#992c25",
-        "SELECT_BG":  "#ece9e2",   # 选中底
-        "HEAD_BG":    "#f1efeb",   # 表头底
+        "BG":         "#f3f0ea",   # 窗口底（Claude #F0ECE0 微调）
+        "SURFACE":    "#fdfcfa",   # 卡片/输入框（极淡暖白，非纯白）
+        "BORDER":     "#e0ddd6",   # 细边框（Claude #E5E0D6）
+        "FG":         "#1a1a18",   # 正文（Claude #1a1a18）
+        "FG_DIM":     "#6b6860",   # 次要文字（Claude #5b5950 微调）
+        "ACCENT":     "#c96442",   # 主按钮（Claude 赤陶 #c96442）
+        "ACCENT_HV":  "#b4552f",   # 主按钮悬停
+        "DANGER":     "#dc2626",   # 删除（统一语义色）
+        "DANGER_HV":  "#b91c1c",
+        "SELECT_BG":  "#e8e4dc",   # 选中底
+        "HEAD_BG":    "#efece5",   # 表头底
+        "SUCCESS":    "#16a34a",   # 成功（统一语义色）
+        "WARNING":    "#d97706",   # 警告（统一语义色）
+        "INFO":       "#2563eb",   # 信息（统一语义色）
     },
-    "cool": {
-        "label":      "冷灰专业",
-        "BG":         "#f2f4f7",
-        "SURFACE":    "#fbfcfd",
-        "BORDER":     "#d8dde3",
-        "FG":         "#1f2937",
-        "FG_DIM":     "#6b7280",
-        "ACCENT":     "#2563eb",   # 主按钮（专业蓝）
-        "ACCENT_HV":  "#1d4ed8",
+    # ── ChatGPT 风：极简克制 + 翡翠绿 ──
+    "emerald": {
+        "label":      "翡翠极简",
+        "BG":         "#f7f7f8",   # 窗口底（ChatGPT #F7F7F8）
+        "SURFACE":    "#ffffff",   # 卡片/输入框（ChatGPT 纯白）
+        "BORDER":     "#e5e5e5",   # 细边框
+        "FG":         "#2d2d2d",   # 正文（ChatGPT #2D2D2D）
+        "FG_DIM":     "#6b6b6b",   # 次要文字
+        "ACCENT":     "#10a37f",   # 主按钮（ChatGPT 翡翠绿 #10A37F）
+        "ACCENT_HV":  "#0e8c6d",
         "DANGER":     "#dc2626",
         "DANGER_HV":  "#b91c1c",
-        "SELECT_BG":  "#dbeafe",
-        "HEAD_BG":    "#eef1f5",
+        "SELECT_BG":  "#e8f5f0",   # 选中底（淡翡翠）
+        "HEAD_BG":    "#f0f0f2",
+        "SUCCESS":    "#16a34a",
+        "WARNING":    "#d97706",
+        "INFO":       "#2563eb",
     },
+    # ── OpenCode Nord 风：蓝灰冷调 ──
+    "nord": {
+        "label":      "Nord蓝灰",
+        "BG":         "#eceff4",   # Nord nord6（窗口底）
+        "SURFACE":    "#ffffff",   # 卡片
+        "BORDER":     "#d8dee9",   # Nord nord4（边框）
+        "FG":         "#2e3440",   # Nord nord0（正文）
+        "FG_DIM":     "#4c566a",   # Nord nord3（次要）
+        "ACCENT":     "#5e81ac",   # Nord nord9（主按钮蓝）
+        "ACCENT_HV":  "#4c6f9a",
+        "DANGER":     "#bf616a",   # Nord nord11
+        "DANGER_HV":  "#a54e57",
+        "SELECT_BG":  "#d8dee9",   # Nord nord4
+        "HEAD_BG":    "#e5e9f0",   # Nord nord5
+        "SUCCESS":    "#a3be8c",   # Nord nord14
+        "WARNING":    "#d08770",   # Nord nord12
+        "INFO":       "#81a1c1",   # Nord nord9
+    },
+    # ── Grok 风：近纯黑深色 ──
     "dark": {
-        "label":      "深蓝夜间",
-        "BG":         "#1e2430",   # 深蓝灰底
-        "SURFACE":    "#272e3b",   # 卡片底
-        "BORDER":     "#3a4252",
-        "FG":         "#e4e7ec",
-        "FG_DIM":     "#8b95a5",
-        "ACCENT":     "#5b9cf6",   # 主按钮（亮蓝，深色下够亮）
-        "ACCENT_HV":  "#3b82f6",
+        "label":      "深夜纯黑",
+        "BG":         "#141414",   # Grok #141414（近纯黑）
+        "SURFACE":    "#1f1f1f",   # Grok #212121（输入区）
+        "BORDER":     "#2a2a2a",   # Grok #2a2a2a
+        "FG":         "#f5f5f5",   # 正文（接近纯白）
+        "FG_DIM":     "#8a8a8a",   # 次要文字（Grok #6b6b6b 微调亮）
+        "ACCENT":     "#4f8cff",   # 主按钮（亮蓝，黑底下够亮）
+        "ACCENT_HV":  "#3b7aef",
         "DANGER":     "#ef4444",
         "DANGER_HV":  "#dc2626",
-        "SELECT_BG":  "#2d3a4f",
-        "HEAD_BG":    "#232a36",
+        "SELECT_BG":  "#2a2a2a",
+        "HEAD_BG":    "#1a1a1a",
+        "SUCCESS":    "#22c55e",
+        "WARNING":    "#f59e0b",
+        "INFO":       "#3b82f6",
     },
+    # ── OpenCode 风：暖黑深色 ──
     "contrast": {
-        "label":      "墨黑高对比",
-        "BG":         "#0a0a0a",
-        "SURFACE":    "#171717",
-        "BORDER":     "#404040",
-        "FG":         "#fafafa",
-        "FG_DIM":     "#a3a3a3",
-        "ACCENT":     "#f59e0b",   # 主按钮（琥珀，黑底下最醒目）
-        "ACCENT_HV":  "#d97706",
-        "DANGER":     "#ff3b30",
-        "DANGER_HV":  "#e0241a",
-        "SELECT_BG":  "#374151",
-        "HEAD_BG":    "#1f1f1f",
+        "label":      "暖黑高对比",
+        "BG":         "#201d1d",   # OpenCode #201d1d（暖近黑）
+        "SURFACE":    "#2a2727",   # 卡片（暖黑提亮）
+        "BORDER":     "#3d3a3a",
+        "FG":         "#fdfcfc",   # OpenCode #fdfcfc（亮米白）
+        "FG_DIM":     "#9a9898",   # OpenCode #9a9898（暖灰）
+        "ACCENT":     "#007aff",   # OpenCode Apple 蓝 #007aff
+        "ACCENT_HV":  "#0066d6",
+        "DANGER":     "#ff3b30",   # OpenCode Apple 红
+        "DANGER_HV":  "#e02e24",
+        "SELECT_BG":  "#2a2a2a",
+        "HEAD_BG":    "#252222",
+        "SUCCESS":    "#30d158",   # OpenCode Apple 绿
+        "WARNING":    "#ff9500",   # Apple 橙
+        "INFO":       "#007aff",
+    },
+    # ── Kimi 风：蓝色专业浅色 ──
+    "ocean": {
+        "label":      "海洋蓝",
+        "BG":         "#f0f4f8",   # 浅蓝灰底
+        "SURFACE":    "#ffffff",
+        "BORDER":     "#d0d9e2",
+        "FG":         "#1a2332",   # 深蓝黑正文
+        "FG_DIM":     "#5a6a7a",
+        "ACCENT":     "#1565c0",   # Kimi 主色 #1565C0
+        "ACCENT_HV":  "#0d47a1",
+        "DANGER":     "#dc2626",
+        "DANGER_HV":  "#b91c1c",
+        "SELECT_BG":  "#dbeafe",   # 淡蓝选中
+        "HEAD_BG":    "#e8eef4",
+        "SUCCESS":    "#16a34a",
+        "WARNING":    "#d97706",
+        "INFO":       "#1565c0",
     },
 }
 
 DEFAULT_THEME = "warm"
 _state = {"current": None}   # 运行时当前主题名
 
-FONT       = ("Microsoft YaHei UI", 9)
-FONT_BOLD  = ("Microsoft YaHei UI", 9, "bold")
-FONT_TITLE = ("Microsoft YaHei UI", 13, "bold")
+# v3.11.0 字体层级系统（参考五款产品：标题/副标题/正文/辅助/等宽）
+FONT_TITLE    = ("Microsoft YaHei UI", 16, "bold")   # 窗口标题/页标题
+FONT_SUBTITLE = ("Microsoft YaHei UI", 12, "bold")   # 分组标题/LabelFrame标签
+FONT_BODY     = ("Microsoft YaHei UI", 10)            # 正文（从9pt升到10pt，更清晰）
+FONT_BOLD     = ("Microsoft YaHei UI", 10, "bold")    # 加粗正文/按钮
+FONT_SMALL    = ("Microsoft YaHei UI", 9)             # 辅助文字/状态栏/次要信息
+FONT_MONO     = ("Consolas", 10)                       # 等宽：日志/路径/代码/数据
+FONT_MONO_SM  = ("Consolas", 9)                        # 等宽小号
+# 兼容旧引用
+FONT = FONT_BODY
 
 MIN_W, MIN_H = 900, 620   # S12：三工具统一最小尺寸
 
@@ -163,14 +222,14 @@ def apply(root, theme_name=None):
     DANGER, DANGER_HV = pal["DANGER"], pal["DANGER_HV"]
     SELECT_BG, HEAD_BG = pal["SELECT_BG"], pal["HEAD_BG"]
 
-    st.configure(".", background=BG, foreground=FG, font=FONT,
+    st.configure(".", background=BG, foreground=FG, font=FONT_BODY,
                  bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER,
                  troughcolor=BG, selectbackground=SELECT_BG, selectforeground=FG)
     st.configure("TFrame", background=BG)
-    st.configure("TLabel", background=BG, foreground=FG)
-    st.configure("TButton", background=SURFACE, foreground=FG, font=FONT,
+    st.configure("TLabel", background=BG, foreground=FG, font=FONT_BODY)
+    st.configure("TButton", background=SURFACE, foreground=FG, font=FONT_BOLD,
                  bordercolor=BORDER, lightcolor=SURFACE, darkcolor=BORDER,
-                 relief="flat", padding=(10, 4), focusthickness=1)
+                 relief="flat", padding=(14, 6), focusthickness=1)
     # 普通按钮悬停色：浅色主题用稍深灰，深色主题用稍亮灰
     btn_hover = _lighten(BG, 8) if _is_dark(pal) else _darken(BG, 6)
     btn_press = _lighten(BG, 4) if _is_dark(pal) else _darken(BG, 10)
@@ -183,7 +242,7 @@ def apply(root, theme_name=None):
     # 主按钮（Accent）
     st.configure("Accent.TButton", background=ACCENT, foreground="#ffffff",
                  font=FONT_BOLD, bordercolor=ACCENT, lightcolor=ACCENT,
-                 darkcolor=ACCENT, relief="flat", padding=(14, 4))
+                 darkcolor=ACCENT, relief="flat", padding=(16, 7))
     st.map("Accent.TButton",
            background=[("disabled", _dim(ACCENT, BG)),
                        ("pressed", ACCENT_HV), ("active", ACCENT_HV)],
@@ -193,7 +252,7 @@ def apply(root, theme_name=None):
     # 危险按钮（Danger）
     st.configure("Danger.TButton", background=DANGER, foreground="#ffffff",
                  font=FONT_BOLD, bordercolor=DANGER, lightcolor=DANGER,
-                 darkcolor=DANGER, relief="flat", padding=(10, 4))
+                 darkcolor=DANGER, relief="flat", padding=(12, 6))
     st.map("Danger.TButton",
            background=[("disabled", _dim(DANGER, BG)),
                        ("pressed", DANGER_HV), ("active", DANGER_HV)],
@@ -206,21 +265,25 @@ def apply(root, theme_name=None):
     st.configure("TCombobox", fieldbackground=SURFACE, background=SURFACE,
                  foreground=FG, bordercolor=BORDER, lightcolor=BORDER,
                  arrowcolor=FG_DIM, padding=2)
+    st.map("TEntry",
+           bordercolor=[("focus", ACCENT), ("active", ACCENT)],
+           lightcolor=[("focus", ACCENT)])
     st.map("TCombobox",
            fieldbackground=[("readonly", SURFACE)],
-           bordercolor=[("active", ACCENT)])
+           bordercolor=[("focus", ACCENT), ("active", ACCENT)],
+           lightcolor=[("focus", ACCENT)])
     # 页签
     st.configure("TNotebook", background=BG, bordercolor=BORDER, tabmargins=(8, 6, 8, 0))
-    st.configure("TNotebook.Tab", background=BG, foreground=FG_DIM, padding=(14, 6),
-                 font=FONT)
+    st.configure("TNotebook.Tab", background=BG, foreground=FG_DIM, padding=(16, 8),
+                 font=FONT_BODY)
     st.map("TNotebook.Tab",
            background=[("selected", SURFACE)],
            foreground=[("selected", FG)])
     # 表格
     st.configure("Treeview", background=SURFACE, fieldbackground=SURFACE,
-                 foreground=FG, bordercolor=BORDER, rowheight=26, font=FONT)
+                 foreground=FG, bordercolor=BORDER, rowheight=28, font=FONT_BODY)
     st.configure("Treeview.Heading", background=HEAD_BG, foreground=FG_DIM,
-                 bordercolor=BORDER, relief="flat", font=FONT_BOLD, padding=(6, 4))
+                 bordercolor=BORDER, relief="flat", font=FONT_BOLD, padding=(8, 5))
     st.map("Treeview",
            background=[("selected", SELECT_BG)],
            foreground=[("selected", FG)])
@@ -233,7 +296,14 @@ def apply(root, theme_name=None):
     st.configure("TProgressbar", background=ACCENT, troughcolor=BG, bordercolor=BG)
     st.configure("Separator", background=BORDER)
     st.configure("TLabelframe", background=BG, bordercolor=BORDER, relief="solid", borderwidth=1)
-    st.configure("TLabelframe.Label", background=BG, foreground=FG, font=FONT_BOLD, padding=(PAD_MD, 0, PAD_MD, 0))
+    st.configure("TLabelframe.Label", background=BG, foreground=FG, font=FONT_SUBTITLE, padding=(PAD_MD, 0, PAD_MD, 0))
+    # v3.11.0 语义色标签（成功/警告/危险/信息）
+    st.configure("Success.TLabel", background=BG, foreground=pal.get("SUCCESS", "#16a34a"), font=FONT_BOLD)
+    st.configure("Warning.TLabel", background=BG, foreground=pal.get("WARNING", "#d97706"), font=FONT_BOLD)
+    st.configure("Danger.TLabel", background=BG, foreground=pal.get("DANGER", "#dc2626"), font=FONT_BOLD)
+    st.configure("Info.TLabel", background=BG, foreground=pal.get("INFO", "#2563eb"), font=FONT_BOLD)
+    st.configure("Small.TLabel", background=BG, foreground=FG_DIM, font=FONT_SMALL)
+    st.configure("Mono.TLabel", background=BG, foreground=FG, font=FONT_MONO)
     # 卡片式 Frame（SURFACE 背景，用于内容区突出）
     st.configure("Card.TFrame", background=SURFACE, relief="solid", borderwidth=1, bordercolor=BORDER)
     # 页签内容区（带内边距）
