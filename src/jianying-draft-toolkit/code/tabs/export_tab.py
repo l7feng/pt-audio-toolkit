@@ -106,7 +106,8 @@ class ExportTab(BaseTab):
         src_row2 = ttk.Frame(src_box)
         src_row2.grid(row=1, column=0, columnspan=2, sticky="w", pady=(3, 0))
         ttk.Button(src_row2, text="清空", width=6,
-                   command=self._clear_dropped).pack(side="left")
+                   command=self._clear_dropped,
+                   style="Danger.TButton").pack(side="left")
         ttk.Button(src_row2, text="重新识别", width=9,
                    command=self._refresh_input_summary).pack(side="left", padx=(6, 0))
         self.var_input_summary = tk.StringVar(value="")
@@ -157,17 +158,18 @@ class ExportTab(BaseTab):
         self.var_aaf = tk.BooleanVar(value=bool(self.cfg.get("export_aaf", False)))
         self.var_aaf_mode = tk.StringVar(value=self.cfg.get("aaf_media_mode", "media"))
         aaf_row = ttk.Frame(mode_box)
-        aaf_row.grid(row=4, column=0, columnspan=4, sticky="w", padx=4, pady=3)
+        aaf_row.grid(row=4, column=0, columnspan=4, sticky="we", padx=4, pady=3)
         self.chk_aaf = ttk.Checkbutton(
             aaf_row, text="同时导出 AAF（交给 Pro Tools 混音）",
             variable=self.var_aaf, command=self._sync_mode)
         self.chk_aaf.pack(side="left")
         ttk.Label(aaf_row, text="交付方式").pack(side="left", padx=(16, 4))
+        # S11：去掉写死 width=42（窗口一窄就撑出行），改随行弹性伸缩
         self.cb_aaf = ttk.Combobox(
-            aaf_row, textvariable=self.var_aaf_mode, state="readonly", width=42,
+            aaf_row, textvariable=self.var_aaf_mode, state="readonly",
             values=list(AAF_LABEL_TO_KEY))
         self._set_aaf_display()
-        self.cb_aaf.pack(side="left")
+        self.cb_aaf.pack(side="left", fill="x", expand=True)
 
         mode_box.columnconfigure(2, weight=1)
 
@@ -191,11 +193,13 @@ class ExportTab(BaseTab):
                                        exportselection=0)
         self.lb_templates.grid(row=0, column=0, columnspan=4, sticky="we", padx=(0, 4))
         row_nt = ttk.Frame(nt_frame)
-        row_nt.grid(row=1, column=0, columnspan=4, sticky="w", pady=(3, 0))
+        row_nt.grid(row=1, column=0, columnspan=4, sticky="we", pady=(3, 0))
         self.var_new_tpl = tk.StringVar()
-        ttk.Entry(row_nt, textvariable=self.var_new_tpl, width=42).pack(side="left", padx=(0, 4))
+        ttk.Entry(row_nt, textvariable=self.var_new_tpl).pack(
+            side="left", padx=(0, 4), fill="x", expand=True)
         ttk.Button(row_nt, text="添加模板", command=self._add_template).pack(side="left", padx=2)
-        ttk.Button(row_nt, text="删除选中", command=self._remove_template).pack(side="left", padx=2)
+        ttk.Button(row_nt, text="删除选中", command=self._remove_template,
+                   style="Danger.TButton").pack(side="left", padx=2)
         # v2.7.0（J1）：模板可命名 —— 三栏管理弹窗（模板名/内容/样例）
         ttk.Button(row_nt, text="管理…", command=self._manage_templates).pack(side="left", padx=2)
         ttk.Label(nt_frame,
@@ -307,7 +311,8 @@ class ExportTab(BaseTab):
                    command=lambda: self.save_config()).pack(side="left", padx=4)
         ttk.Button(btn_box, text="打开输出目录",
                    command=self.open_output_dir).pack(side="left", padx=4)
-        self.btn_run = ttk.Button(btn_box, text="▶ 开始导出", command=self.start_export)
+        self.btn_run = ttk.Button(btn_box, text="▶ 开始导出", command=self.start_export,
+                                   style="Accent.TButton")
         self.btn_run.pack(side="right", padx=4)
 
         # 日志
@@ -596,7 +601,8 @@ class ExportTab(BaseTab):
         btns.pack(fill="x", padx=10, pady=(6, 10))
         ttk.Button(btns, text="保存当前", command=save_cur).pack(side="left")
         ttk.Button(btns, text="新建", command=new_tpl).pack(side="left", padx=6)
-        ttk.Button(btns, text="删除", command=del_tpl).pack(side="left")
+        ttk.Button(btns, text="删除", command=del_tpl,
+                   style="Danger.TButton").pack(side="left")
         ttk.Button(btns, text="关闭", command=win.destroy).pack(side="right")
 
         reload_lb(0)

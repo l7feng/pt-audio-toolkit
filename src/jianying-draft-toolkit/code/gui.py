@@ -35,6 +35,8 @@ from tabs.separation_tab import SeparationTab
 from tabs.paths_dialog import PathsDialog
 from core.host import StatusProbe
 from core import menus as menu_actions
+from theme import apply as apply_theme, initial_geometry, window_size, set_theme, list_themes, current_theme_name  # S13/S12：共享主题与窗口几何（同源副本）
+from columns import fit_tree_columns  # S11：表格列宽自适应（同源副本）
 
 # 拖拽支持（tkinterdnd2）。未安装时优雅降级为普通选择。
 try:
@@ -153,8 +155,11 @@ class JianYingToolkitApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("900x780")
-        self.root.minsize(820, 680)
+        # S12：窗口几何统一 —— cfg 先载入，有 window 记录用记录（钳到 minsize），
+        # 无记录按屏幕自适应；minsize 820x680 → 900x620 与三工具统一。
+        self._load_cfg()
+        self.root.geometry(initial_geometry(self.cfg.get("window"), self.root))
+        self.root.minsize(900, 620)
 
         self.msg_queue = queue.Queue()
         self._tabs = []
@@ -167,7 +172,6 @@ class JianYingToolkitApp:
         # 各标签页构造时会调 refresh_states()，而它读的是 self.app._probe 的缓存。
         self._probe = StatusProbe()
 
-        self._load_cfg()
         self._build_menu()          # 必须在 _build_ui 之前：菜单挂在 root 上
         self._build_ui()
         self._setup_dnd()
@@ -228,6 +232,14 @@ class JianYingToolkitApp:
 
         # ── 设置 ──
         m_set = tk.Menu(bar, tearoff=0)
+        m_theme = tk.Menu(m_set, tearoff=0)
+        _cur = current_theme_name() or self.cfg.get("theme") or "warm"
+        for _key, _label in list_themes():
+            _tick = "✓ " if _key == _cur else ""
+            m_theme.add_command(label=_tick + _label,
+                                command=lambda k=_key: self._set_theme(k))
+        m_set.add_cascade(label="界面主题", menu=m_theme)
+        m_set.add_separator()
         m_set.add_command(label="默认路径设置…",
                           command=self._menu_paths)
         m_set.add_separator()
@@ -554,6 +566,19 @@ class JianYingToolkitApp:
         except Exception as e:
             messagebox.showerror("无法打开", f"打开失败：{e}\n{path}")
 
+    def _set_theme(self, name):
+        """S13：运行时切换界面主题，持久化到配置。"""
+        actual = set_theme(self.root, name)
+        self.cfg["theme"] = actual
+        try:
+            path = core.config_path()
+            disk = {k: self.cfg.get(k) for k in self.cfg}
+            path.write_text(json.dumps(disk, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+        except Exception:
+            pass
+        print("[theme] 界面主题 -> %s" % actual)
+
     def _menu_about(self):
         messagebox.showinfo(
             "关于",
@@ -574,6 +599,15 @@ class JianYingToolkitApp:
                     "还有任务正在执行，现在退出会中断它（已写入的文件不会回滚）。\n\n"
                     "确定退出？"):
                 return
+        # S12：关窗前把当前尺寸写回配置，下次启动原样恢复
+        try:
+            self.cfg["window"] = window_size(self.root)
+            path = core.config_path()
+            disk = {k: self.cfg.get(k) for k in self.cfg}
+            path.write_text(json.dumps(disk, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+        except Exception:
+            pass
         try:
             self.root.destroy()
         except Exception:
@@ -596,20 +630,15 @@ class JianYingToolkitApp:
     # ───────────── UI ─────────────
 
     def _setup_styles(self):
-        """定义自定义 ttk 样式。
+        """S13：共享主题（theme.py 同源副本）—— clam + 米白低饱和 + 细边框。
 
-        ``Accent.TButton`` 此前被三处 tab 引用但**从未定义** → ttk 静默回落到
-        默认样式（不报错，只是「主按钮」和普通按钮长得一样）。这里补上，
-        让「开始导出 / 导入到剪映草稿 / 保存」这几个主按钮真正突出。
+        旧实现：vista 主题 + 只加粗不上色的 ``Accent.TButton``（三处 tab 引用
+        但从未真正突出）。现在统一走 ``theme.apply``：Accent 真上色（陶橙）、
+        ``Danger.TButton``（删除/清空标红）可用，Treeview / 输入框 / 页签全套
+        换装；重复调用幂等。
         """
         try:
-            st = ttk.Style(self.root)
-            # 优先用 vista 主题（Windows 原生），拿不到就用默认
-            if "vista" in st.theme_names():
-                st.theme_use("vista")
-            st.configure("Accent.TButton", font=("Microsoft YaHei UI", 9, "bold"))
-            # 悬停/按下时也加粗，避免交互时字重跳变
-            st.map("Accent.TButton", foreground=[("disabled", "#8a8a8a")])
+            apply_theme(self.root, theme_name=self.cfg.get("theme"))
         except Exception:
             pass
 

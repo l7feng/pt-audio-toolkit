@@ -39,6 +39,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from scrollable import ScrollableFrame  # G2/J12：页内可滚动容器（同源副本，改一处同步三处）
+from columns import fit_tree_columns  # S11：表格列宽按权重自适应（同源副本，改一处同步两处）
+from theme import apply as apply_theme, initial_geometry, set_theme, list_themes, current_theme_name  # S13/S12：共享主题与窗口几何（同源副本）
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -173,16 +175,14 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.manual = {}
 
         self._load_targets_and_templates()
+        apply_theme(self, theme_name=self.cfg.get("theme"))   # S13：共享主题（读 cfg["theme"]，默认 warm）
         self._build_ui()
 
         self.title(CFG.title())
-        try:
-            self.geometry(self.cfg.get("window") or "1280x820")
-        except tk.TclError:
-            self.geometry("1280x820")
-        # R1（v2.6.6）：minsize 从 1080x700 下调 —— 页内树/列表各自带滚动，
-        # 小窗口依然可用，窗口可以随意收小放到屏幕边角（v1.5.0 时拉不小是痛点）
-        self.minsize(880, 560)
+        # S12：窗口几何统一 —— cfg 有记录用记录（钳到 minsize），无记录按屏幕自适应
+        # （替代旧固定 1280x820；minsize 880x560 → 900x620 与三工具统一）
+        self.geometry(initial_geometry(self.cfg.get("window"), self))
+        self.minsize(900, 620)
 
         self._center_on_screen()
         self.overrideredirect(False)
@@ -241,6 +241,16 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         bar.pack(fill="x", side="bottom", padx=10, pady=(0, 6))
         self.var_status = tk.StringVar(value="就绪")
         ttk.Label(bar, textvariable=self.var_status, style="Hint.TLabel").pack(side="left")
+        # S13：主题选择下拉（无菜单栏，放状态栏右侧）
+        self.var_theme = tk.StringVar(value=current_theme_name() or self.cfg.get("theme") or "warm")
+        theme_box = ttk.Frame(bar)
+        theme_box.pack(side="right", padx=(8, 0))
+        ttk.Label(theme_box, text="主题:").pack(side="left")
+        self.cb_theme = ttk.Combobox(theme_box, textvariable=self.var_theme,
+                                      values=[k for k, _ in list_themes()],
+                                      state="readonly", width=10)
+        self.cb_theme.pack(side="left", padx=(4, 0))
+        self.cb_theme.bind("<<ComboboxSelected>>", self._on_theme_change)
         ttk.Label(bar, text="配置文件: " + CFG.CONFIG_PATH,
                   foreground="#888").pack(side="right")
 
@@ -305,12 +315,15 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         ts.pack(side="right", fill="y", pady=6)
         self.tree_tpl.pack(fill="both", expand=True, side="left", padx=(8, 0), pady=6)
         self.tree_tpl.bind("<Double-Button-1>", self._on_tpl_dblclick)
+        fit_tree_columns(self.tree_tpl, min_widths={"no": 36, "name": 90,
+                                                    "tpl": 160, "sample": 120})
 
         b1 = ttk.Frame(f)
         b1.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(b1, text="保存为默认", command=self._save_cfg).pack(side="right", padx=4)
         ttk.Button(b1, text="恢复内置模板", command=self._reset_templates).pack(side="right", padx=4)
-        ttk.Button(b1, text="删除模板", command=self._del_template).pack(side="right", padx=4)
+        ttk.Button(b1, text="删除模板", command=self._del_template,
+                   style="Danger.TButton").pack(side="right", padx=4)
         ttk.Button(b1, text="编辑模板", command=self._edit_template).pack(side="right", padx=4)
         ttk.Button(b1, text="新增模板", command=self._add_template).pack(side="right", padx=4)
 
@@ -462,6 +475,9 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.tree_tgt.tag_configure("off", foreground="#9e9e9e")
         self.tree_tgt.tag_configure("limited", foreground=COLOR_WARN)
         self.tree_tgt.bind("<Double-Button-1>", self._on_target_dblclick)
+        fit_tree_columns(self.tree_tgt, min_widths={"enabled": 48, "name": 60,
+                                                    "dir": 60, "tpl": 90,
+                                                    "eps": 60, "note": 100})
 
         self._reload_targets()
 
@@ -469,7 +485,8 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         tb.grid(row=0, column=0, sticky="sew", padx=16, pady=(0, 16))
         ttk.Button(tb, text="保存为默认", command=self._save_cfg).pack(side="right", padx=4)
         ttk.Button(tb, text="恢复内置目标", command=self._reset_targets).pack(side="right", padx=4)
-        ttk.Button(tb, text="删除目标", command=self._del_target).pack(side="right", padx=4)
+        ttk.Button(tb, text="删除目标", command=self._del_target,
+                   style="Danger.TButton").pack(side="right", padx=4)
         ttk.Button(tb, text="新增目标", command=self._add_target).pack(side="right", padx=4)
         ttk.Button(tb, text="全不选", command=lambda: self._set_all_targets(False)).pack(side="right", padx=4)
         ttk.Button(tb, text="全选", command=lambda: self._set_all_targets(True)).pack(side="right", padx=4)
@@ -493,6 +510,9 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.tree_rules.configure(yscrollcommand=rsb.set)
         rsb.grid(row=0, column=1, sticky="ns", pady=6)
         self.tree_rules.grid(row=0, column=0, sticky="nsew", padx=(8, 0), pady=6)
+        fit_tree_columns(self.tree_rules, min_widths={"target": 60,
+                                                      "pattern": 200,
+                                                      "out": 80})
 
         self.rules = [list(r) for r in
                       (self.cfg["rules"] if self.cfg.get("rules") else CORE.DEFAULT_RULES)]
@@ -600,6 +620,15 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
             t["templates"] = [str(hit[0].get("tpl", ""))]
             t["tpl_name"] = picked
         return picked
+
+    def _on_theme_change(self, _event=None):
+        """S13：主题下拉切换 → 运行时换色 + 持久化。"""
+        name = self.var_theme.get()
+        actual = set_theme(self, name)
+        self.var_theme.set(actual)
+        self.cfg["theme"] = actual
+        CFG.save_config(self.cfg)
+        self.var_status.set("主题已切换: %s" % actual)
 
     def _choose_dialog(self, title, prompt, options, current=None):
         """通用单选对话框。options = [(value, label)]，取消返回 None。"""
@@ -743,7 +772,7 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         self.lbl_plan_state.pack(side="left")
 
         self.btn_apply = ttk.Button(act, text="执行重命名", command=self._on_apply,
-                                    state="disabled")
+                                    style="Accent.TButton", state="disabled")
         self.btn_apply.pack(side="right", padx=4)
         self.btn_plan = ttk.Button(act, text="生成计划", command=self._refresh_preview)
         self.btn_plan.pack(side="right", padx=4)
@@ -774,6 +803,10 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         vs.pack(side="right", fill="y", pady=6)
         self.tree_plan.pack(fill="both", expand=True, side="left", padx=(6, 0), pady=6)
         self.tree_plan.bind("<Double-Button-1>", self._on_plan_dblclick)
+        # S11：变更计划表列宽合计原为 1100px（横条元凶），现按权重自适应
+        fit_tree_columns(self.tree_plan, min_widths={"st": 60, "old": 140,
+                                                     "new": 140, "target": 60,
+                                                     "note": 80})
 
         lg = ttk.LabelFrame(f, text="日志")
         lg.pack(fill="both", padx=10, pady=(0, 10))
@@ -1059,7 +1092,8 @@ class App(TkinterDnD.Tk if _TKDND_OK else tk.Tk):
         row = ttk.Frame(top)
         row.grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
         ttk.Button(row, text="列出目录下的日志", command=self._list_logs).pack(side="left", padx=(0, 8))
-        ttk.Button(row, text="清空日志目录", command=self._clear_logs).pack(side="left")
+        ttk.Button(row, text="清空日志目录", command=self._clear_logs,
+                   style="Danger.TButton").pack(side="left")
 
         un = ttk.LabelFrame(f, text="撤销（把「新文件名」改回「原文件名」）")
         un.pack(fill="both", expand=True, padx=10, pady=6)

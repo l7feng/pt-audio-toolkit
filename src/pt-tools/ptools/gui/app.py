@@ -26,7 +26,9 @@ from ptools.core.naming import (
 )
 from ptools.core.notify import toast
 from ptools.core.paths import PathResolver
+from ptools.gui.columns import fit_tree_columns
 from ptools.gui.scrollable import ScrollableFrame
+from ptools.gui.theme import apply as apply_theme, initial_geometry, window_size, set_theme, list_themes, current_theme_name
 from ptools.core.settings import (
     APP_DIR, BIT_DEPTHS, CREATE_NO_WINDOW, DEFAULT_DELIVERY_ROOT,
     DEFAULT_EXPORT_FORMAT, DEFAULT_FALLBACK_DURATION, DEFAULT_VIDEO_MARGIN,
@@ -180,9 +182,15 @@ class App(_DND_BASE):
     # ---------------- UI 构建 / 重建 ----------------
 
     def _build_ui(self):
+        apply_theme(self, theme_name=self.cfg.get("theme"))   # S13：共享主题（读 cfg["theme"]，默认 warm）
         self.title(T("app_title"))
-        self.geometry("860x680")
-        self.minsize(780, 600)
+        # S12：窗口几何 —— cfg 有记录用记录（钳到 minsize）；无记录按屏幕自适应；
+        # 语言切换重建 UI 时窗口已在屏上，保留当前几何不重置。
+        if self.cfg.get("window"):
+            self.geometry(initial_geometry(self.cfg["window"], self))
+        elif not self.winfo_ismapped():
+            self.geometry(initial_geometry(None, self))
+        self.minsize(900, 620)
         self._build_menubar()
         # P4（v1.5.2 / B批）：PT 版本适配说明常驻条 —— 面向开源用户的版本边界
         # 声明（已验证版本 / 协议风险 / 换设备说明）。与 P1 离线黄条并存：
@@ -295,6 +303,13 @@ class App(_DND_BASE):
         en_label = ("✓ " if get_lang() == LANG_EN else "") + T("sett_lang_en")
         m_lang.add_command(label=zh_label, command=lambda: self.set_language(LANG_ZH))
         m_lang.add_command(label=en_label, command=lambda: self.set_language(LANG_EN))
+        m_theme = tk.Menu(m_sett, tearoff=0)
+        _cur = current_theme_name() or self.cfg.get("theme") or "warm"
+        for _key, _label in list_themes():
+            _tick = "✓ " if _key == _cur else ""
+            m_theme.add_command(label=_tick + _label,
+                                command=lambda k=_key: self._set_theme(k))
+        m_sett.add_cascade(label="界面主题", menu=m_theme)
         m_sett.add_cascade(label=T("sett_lang"), menu=m_lang)
         m_sett.add_separator()
         m_sett.add_command(label=T("sett_skills"), command=self._browse_skills_root)
@@ -361,6 +376,13 @@ class App(_DND_BASE):
         set_lang(lang)
         self._rebuild_ui()
         self.log(T("lang_changed"))
+
+    def _set_theme(self, name):
+        """S13：运行时切换界面主题，持久化到 cfg["theme"]。"""
+        actual = set_theme(self, name)
+        self.cfg["theme"] = actual
+        save_config(self.cfg)
+        self.log("[theme] 界面主题 -> %s\n" % actual)
 
     # ---------------- 日志 / 状态栏 ----------------
 
@@ -459,7 +481,7 @@ class App(_DND_BASE):
         # v1.3.0 卡死专项：中止按钮 + 运行时长 / 无输出看门狗读数
         self.abort_btn = ttk.Button(btn_row, text=T("log_abort"),
                                     command=self._abort_worker, width=12,
-                                    state="disabled")
+                                    style="Danger.TButton", state="disabled")
         self.abort_btn.pack(side="left", padx=(8, 0))
         self.run_time_var = tk.StringVar(value="")
         ttk.Label(btn_row, textvariable=self.run_time_var,
@@ -640,6 +662,12 @@ class App(_DND_BASE):
                     pass
             for w in running:
                 w.join(timeout=3)
+        # S12：关窗前把当前尺寸写回 cfg，下次启动原样恢复
+        try:
+            self.cfg["window"] = window_size(self)
+            save_config(self.cfg)
+        except Exception:
+            pass
         try:
             self.destroy()
         except Exception:
@@ -784,7 +812,8 @@ class ScanTab(ttk.Frame):
         self.name_var = app.v("scan_name", "pt-profile.json")
         ttk.Entry(row2, textvariable=self.name_var, width=24).pack(side="left", padx=6)
         self.scan_btn = ttk.Button(row2, text=T("s_scan_btn"),
-                                   command=self.do_scan)
+                                   command=self.do_scan,
+                                   style="Accent.TButton")
         self.scan_btn.pack(side="left", padx=6)
 
         # —— P1（v2.7.0 / C批）：生成交付包（扫描 + 打包一步完成）——
@@ -806,7 +835,8 @@ class ScanTab(ttk.Frame):
                    command=self._browse_deliv).pack(side="left")
         drow2 = ttk.Frame(deliv)
         drow2.pack(fill="x", pady=(0, 2))
-        self.deliv_btn = ttk.Button(drow2, text=T("d_run"), command=self.do_delivery)
+        self.deliv_btn = ttk.Button(drow2, text=T("d_run"), command=self.do_delivery,
+                                    style="Accent.TButton")
         self.deliv_btn.pack(side="left")
         ttk.Label(drow2, text=T("d_note"), foreground="#888").pack(side="left", padx=8)
 
@@ -1118,6 +1148,10 @@ class ExportTab(ttk.Frame):
         self.src_tree.pack(in_=tree_wrap, side="left", fill="both", expand=True)
         sb.pack(in_=tree_wrap, side="left", fill="y")
         self.src_tree.bind("<Button-1>", self._on_track_click)
+        # S11：列宽按权重自适应（权重缺省按上面初始列宽比例，窗口缩放不出横条）
+        fit_tree_columns(self.src_tree,
+                         min_widths={"sel": 40, "name": 140, "type": 48,
+                                     "clips": 40, "fmt": 60})
         # 勾选集合（轨道名）与排除名单解析缓存
         self.track_checked = set()
         self._exclude_pats = []
@@ -1230,7 +1264,8 @@ class ExportTab(ttk.Frame):
                                       command=self.do_preview)
         self.preview_btn.pack(side="left")
         self.export_btn = ttk.Button(btnrow, text=T("e_export"),
-                                     command=self.do_export)
+                                     command=self.do_export,
+                                     style="Accent.TButton")
         self.export_btn.pack(side="left", padx=8)
         self.batch_btn = ttk.Button(btnrow, text=T("e_batch"),
                                     command=self.open_batch_dialog)
@@ -1771,6 +1806,7 @@ class ExportTab(ttk.Frame):
         tree.column("dur", width=70, anchor="center", stretch=False)
         tree.column("path", width=380)
         tree.pack(fill="both", expand=True, padx=10, pady=10)
+        fit_tree_columns(tree, min_widths={"name": 140, "dur": 56, "path": 180})
         for i, v in enumerate(videos):
             tree.insert("", "end", iid=str(i), values=(
                 v.get("name", ""), "%.1fs" % v.get("duration_sec", 0),
@@ -2102,8 +2138,8 @@ class BatchExportDialog(tk.Toplevel):
         btns = ttk.Frame(box)
         btns.pack(fill="x")
         ttk.Button(btns, text=T("b_add"), command=self._add_sessions).pack(side="left")
-        ttk.Button(btns, text=T("b_remove"), command=self._remove_selected).pack(
-            side="left", padx=6)
+        ttk.Button(btns, text=T("b_remove"), command=self._remove_selected,
+                   style="Danger.TButton").pack(side="left", padx=6)
         ttk.Button(btns, text=T("b_rescan"), command=self._rescan_all).pack(side="left")
         self.tree = ttk.Treeview(box, columns=("session", "video", "status"),
                                  show="headings", height=10)
@@ -2115,6 +2151,8 @@ class BatchExportDialog(tk.Toplevel):
         self.tree.column("status", width=160, anchor="center")
         self.tree.pack(fill="both", expand=True, pady=(4, 0))
         self.tree.bind("<Double-1>", self._on_double)
+        fit_tree_columns(self.tree, min_widths={"session": 180, "video": 140,
+                                                "status": 80})
 
         # -- 策略
         pol = ttk.LabelFrame(self, text="  " + T("b_policy_frame") + " / "
@@ -2143,7 +2181,8 @@ class BatchExportDialog(tk.Toplevel):
         # W8（v1.5.0）：白天空好任务清单存盘，夜里 `pt-tools --batch jobs.json` 执行
         ttk.Button(start_row, text=T("b_save_jobs"),
                    command=self._save_jobs).pack(side="left")
-        ttk.Button(start_row, text=T("b_start"), command=self._start).pack(side="right")
+        ttk.Button(start_row, text=T("b_start"), command=self._start,
+                   style="Accent.TButton").pack(side="right")
 
     # ---- 行管理 ----
 
@@ -2469,8 +2508,8 @@ class LibraryTab(ttk.Frame):
         row.pack(fill="x", pady=(8, 0))
         ttk.Label(row, text=T("lib_dir")).pack(side="left")
         self.var_dir = tk.StringVar(value=app.cfg.get("profile_dir", ""))
-        ttk.Label(row, textvariable=self.var_dir, foreground="#555",
-                  width=52).pack(side="left", padx=6)
+        ttk.Label(row, textvariable=self.var_dir, foreground="#555").pack(
+            side="left", padx=6, fill="x", expand=True)
         ttk.Button(row, text=T("lib_refresh"), width=10,
                    command=self.refresh).pack(side="left")
         row2 = ttk.Frame(self)
@@ -2500,6 +2539,8 @@ class LibraryTab(ttk.Frame):
         sb.pack(side="right", fill="y")
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda _e: self._load_selected())
+        fit_tree_columns(self.tree, min_widths={"file": 140, "project": 100,
+                                                "mtime": 90, "size": 60})
 
         btns = ttk.Frame(self)
         btns.pack(fill="x", pady=(6, 0))
@@ -2508,7 +2549,8 @@ class LibraryTab(ttk.Frame):
         ttk.Button(btns, text=T("lib_open_dir"),
                    command=self._open_dir).pack(side="left", padx=8)
         ttk.Button(btns, text=T("lib_delete"),
-                   command=self._delete_selected).pack(side="left")
+                   command=self._delete_selected,
+                   style="Danger.TButton").pack(side="left")
 
         # —— 导出历史（P4）——
         hist = ttk.LabelFrame(self, text="  " + T("lib_hist_title") + "  ", padding=6)
@@ -2524,6 +2566,7 @@ class LibraryTab(ttk.Frame):
         hsb.pack(side="right", fill="y")
         self.hist_tree.pack(side="left", fill="both", expand=True)
         self.hist_tree.bind("<Double-1>", self._open_hist_item)
+        fit_tree_columns(self.hist_tree, min_widths={"name": 200, "mtime": 90})
         ttk.Button(hist, text=T("lib_open_outroot"), width=14,
                    command=self._open_outroot).pack(side="right", padx=4)
 
@@ -2704,6 +2747,7 @@ class CleanTab(ttk.Frame):
         self.track_tree.heading("name", text=T("c_track_col"))
         self.track_tree.column("name", width=420)
         self.track_tree.grid(row=1, column=0, columnspan=2, sticky="we", pady=4)
+        fit_tree_columns(self.track_tree, min_widths={"name": 200})
         ttk.Label(form, text=T("c_target_out")).grid(row=2, column=0, sticky="w")
         ttk.Label(form, text=T("c_backup")).grid(row=3, column=0, sticky="w", pady=(8, 0))
         self.track_tree.state(["disabled"])

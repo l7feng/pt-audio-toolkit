@@ -723,8 +723,9 @@ class _BatchPickDialog(tk.Toplevel):
         dbox = ttk.LabelFrame(frm, text="目标草稿（每个工程各选一个）", padding=8)
         dbox.pack(fill="x", pady=(8, 0))
         self.var_draft = tk.StringVar(value=cur_draft)
-        ttk.Combobox(dbox, textvariable=self.var_draft, values=draft_names,
-                     width=46).grid(row=0, column=0, sticky="we", padx=4)
+        # S11：去掉写死 width=46（列已配 weight=1），改随格弹性伸缩
+        ttk.Combobox(dbox, textvariable=self.var_draft,
+                     values=draft_names).grid(row=0, column=0, sticky="we", padx=4)
         dbox.columnconfigure(0, weight=1)
 
         btns = ttk.Frame(frm)
