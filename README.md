@@ -20,8 +20,8 @@
 
 ### 方式一：直接下载 exe（推荐给非开发用户）
 
-到 [**Releases**](../../releases) 下载对应版本的四个工具包
-（`pt-audio-toolkit-v<版本>-<工具名>.zip`，一工具一包），解压后双击 `.exe` 即可运行，
+到 [**Releases**](../../releases) 下载对应版本的三个工具包
+（`<工具名>-v<版本>.zip`，一工具一包），解压后双击 `.exe` 即可运行，
 **无需安装 Python**。
 
 > ⚠️ 每个工具要**整个文件夹一起用**（`_internal\` 必须与 exe 同级），不要只拷 exe。
@@ -33,9 +33,6 @@
 ```bash
 # pt-tools
 python src/pt-tools/pt_tools_gui.py
-
-# pt-project-folder-builder
-python src/pt-project-folder-builder/folder_builder_gui.py
 
 # jianying-draft-toolkit
 python src/jianying-draft-toolkit/code/main.py
@@ -51,13 +48,14 @@ python src/rename-unify/code/main.py
 统一入口（推荐）：
 
 ```bash
-python tools/build.py                   # 构建全部四个工具
+python tools/build.py                   # 构建全部三个工具
 python tools/build.py pt-tools          # 只构建指定工具
-python tools/build.py --version 1.1.0 --date 20260923 --out-root D:\somewhere\exe
+python tools/build.py --date 20260923 --out-root D:\somewhere\exe
 ```
 
-产物默认落在 `D:\Ai-Files\Agent-Preset\exe\pt-audio-toolkit-v<版本>-<日期>\<工具名>\`，
-结构为 `exe` + `_internal\`，**整个文件夹一起分发**。
+产物默认落在 `D:\Ai-Files\Agent-Preset\exe\<工具名>-v<工具版本>-<日期>\`，
+结构为 `<中文展示名>.exe` + `_internal\`，**整个文件夹一起分发**。
+每个工具用各自源码里的 `APP_VERSION`，不共用仓库版本。
 
 构建解释器需带 **tkinter**（官方 Windows 安装版自带）与 **PyInstaller**；剪映工具另需
 `tkinterdnd2`。`tools/build.py` 会在构建前自检并给出明确报错。
@@ -73,7 +71,6 @@ python tools/build.py --version 1.1.0 --date 20260923 --out-root D:\somewhere\ex
 | 工具 | 前置条件 |
 |---|---|
 | pt-tools | 本机装有 **Pro Tools**（脚本通过 PTSL 连接 `127.0.0.1:31416`）；py-ptsl 相关依赖在首次使用时按提示安装 |
-| pt-project-folder-builder | 需有一个 `.ptx` 模板工程文件 |
 | jianying-draft-toolkit | 本机装有 **剪映**（依赖 `videoeditor.dll` 解密草稿）；`ffmpeg` 用于切片转码；`tools\jy-draftc\` 为第三方草稿解密工具（自带 exe） |
 | rename-unify | 无，纯 Python 标准库 |
 
@@ -85,11 +82,11 @@ python tools/build.py --version 1.1.0 --date 20260923 --out-root D:\somewhere\ex
 pt-audio-toolkit/
 ├── README.md                 本文件
 ├── CHANGELOG.md              版本与变更
-├── VERSION                   仓库级版本（tools/build.py 用它命名出口目录）
+├── VERSION                   仓库级版本（历史遗留，build.py 现读各工具 APP_VERSION）
 ├── LICENSE                   MIT
 ├── .gitignore
 ├── tools/                    构建与核验
-│   ├── build.py              统一打包入口（四工具，一条命令）
+│   ├── build.py              统一打包入口（三工具，一条命令）
 │   └── verify_exe.py         exe 产物核验（清单 + 真启动 + 窗口枚举，查 tk 残留空窗）
 ├── tests/                    回归测试（跑法见 tests/README.md）
 │   ├── _common.py            跨机路径解析 + PASS/SKIP/FAIL/ERROR 分级
@@ -107,10 +104,6 @@ pt-audio-toolkit/
     │       ├── pt-cleaner/
     │       ├── pt-exporter/      （scripts/ 为正式脚本，env/ 为调试探针）
     │       └── pt-scanner/
-    ├── pt-project-folder-builder/
-    │   ├── folder_builder_gui.py
-    │   ├── build.ps1             → 转发 tools/build.py
-    │   └── README.md
     ├── jianying-draft-toolkit/
     │   ├── code/                 主程序 + core/ + tabs/
     │   ├── config.json
